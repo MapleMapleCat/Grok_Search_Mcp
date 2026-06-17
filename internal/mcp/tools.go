@@ -3,11 +3,10 @@ package mcpserver
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
 	"strings"
 
 	"github.com/grok-mcp/internal/grok"
+	"github.com/grok-mcp/internal/logx"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -27,23 +26,26 @@ type SearchOutput struct {
 	Usage     *grok.Usage   `json:"usage,omitempty" jsonschema:"Token usage reported by upstream"`
 }
 
-func RegisterTools(server *mcp.Server, client *grok.Client) {
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "grok_web_search",
-		Description: "Search the public web in real time via Grok (through CPA /v1/responses + web_search tool). Returns an answer with source URLs.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
-		return runSearch(ctx, req, client, grok.ToolTypeWebSearch, input)
-	})
+func RegisterTools(server *mcp.Server, client *grok.Client, debug bool) {
+	log := logx.New("mcp", debug)
+	registerSearchTool(server, client, log, "grok_web_search",
+		"Search the public web in real time via Grok (through CPA /v1/responses + web_search tool). Returns an answer with source URLs.",
+		grok.ToolTypeWebSearch)
+	registerSearchTool(server, client, log, "grok_x_search",
+		"Search posts on X in real time via Grok (through CPA /v1/responses + x_search tool). Returns an answer with source URLs.",
+		grok.ToolTypeXSearch)
+}
 
+func registerSearchTool(server *mcp.Server, client *grok.Client, log *logx.Logger, name, description string, toolType grok.ToolType) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "grok_x_search",
-		Description: "Search posts on X in real time via Grok (through CPA /v1/responses + x_search tool). Returns an answer with source URLs.",
+		Name:        name,
+		Description: description,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
-		return runSearch(ctx, req, client, grok.ToolTypeXSearch, input)
+		return runSearch(ctx, req, client, log, toolType, input)
 	})
 }
 
-func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Client, toolType grok.ToolType, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
+func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Client, log *logx.Logger, toolType grok.ToolType, input SearchInput) (*mcp.CallToolResult, SearchOutput, error) {
 	query := strings.TrimSpace(input.Query)
 	if query == "" {
 		return toolError("query is required"), SearchOutput{}, nil
@@ -65,7 +67,7 @@ func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Clien
 		token = req.Params.GetProgressToken()
 	}
 
-	debugf("search start tool=%s query=%q", toolType, truncateQuery(query, 80))
+	log.Debugf("search start tool=%s query=%q", toolType, logx.Truncate(query, 80))
 	result, err := client.SearchStream(ctx, searchReq, func(round grok.SearchRound) {
 		if token == nil || req == nil {
 			return
@@ -78,11 +80,11 @@ func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Clien
 		})
 	})
 	if err != nil {
-		debugf("search failed tool=%s: %v", toolType, err)
+		log.Debugf("search failed tool=%s: %v", toolType, err)
 		return toolError(err.Error()), SearchOutput{}, nil
 	}
 
-	debugf("search done tool=%s citations=%d sources=%d", toolType, len(result.Citations), len(result.Sources))
+	log.Debugf("search done tool=%s citations=%d sources=%d", toolType, len(result.Citations), len(result.Sources))
 	output := SearchOutput{
 		Answer:    result.Answer,
 		Citations: result.Citations,
@@ -107,24 +109,4 @@ func toolError(message string) *mcp.CallToolResult {
 		IsError: true,
 		Content: []mcp.Content{&mcp.TextContent{Text: message}},
 	}
-}
-
-func debugf(format string, args ...any) {
-	if !parseBoolEnv("GROK_MCP_DEBUG") {
-		return
-	}
-	log.SetOutput(os.Stderr)
-	log.Printf("[mcp] "+format, args...)
-}
-
-func truncateQuery(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
-}
-
-func parseBoolEnv(key string) bool {
-	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	return raw == "1" || raw == "true" || raw == "yes"
 }

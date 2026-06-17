@@ -3,8 +3,8 @@ package mcpserver
 import (
 	"testing"
 
-	"github.com/grok-mcp/internal/grok"
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/grok-mcp/internal/grok"
 )
 
 // TestSearchInputSchema 锁住 L1 修复：query 的 required 由 json tag（无 omitempty）自动推断，

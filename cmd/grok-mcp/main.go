@@ -17,8 +17,6 @@ import (
 )
 
 func main() {
-	log.SetOutput(os.Stderr)
-
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -34,7 +32,7 @@ func main() {
 
 	client := grok.NewClient(cfg)
 	server := mcp.NewServer(&mcp.Implementation{Name: "grok-mcp", Version: version.Version}, nil)
-	mcpserver.RegisterTools(server, client)
+	mcpserver.RegisterTools(server, client, cfg.Debug)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -141,7 +141,7 @@ func TestBuildSearchRequestBodyWebSearchTopLevelDomains(t *testing.T) {
 		Query:          "test",
 		ToolType:       ToolTypeWebSearch,
 		AllowedDomains: []string{"a.com", "b.com"},
-	}, true)
+	})
 	if err != nil {
 		t.Fatalf("buildSearchRequestBody failed: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestBuildSearchRequestBodyXSearchNoWebFields(t *testing.T) {
 		Query:          "test",
 		ToolType:       ToolTypeXSearch,
 		AllowedDomains: []string{"a.com"},
-	}, true)
+	})
 	if err != nil {
 		t.Fatalf("buildSearchRequestBody failed: %v", err)
 	}
