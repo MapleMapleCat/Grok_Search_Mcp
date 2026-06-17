@@ -1,4 +1,4 @@
-package grok
+package grok_test
 
 import (
 	"bytes"
@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/grok-mcp/internal/config"
+	"github.com/grok-mcp/internal/grok"
 )
 
 func TestIntegrationSearchLiveCPA(t *testing.T) {
@@ -21,15 +22,15 @@ func TestIntegrationSearchLiveCPA(t *testing.T) {
 		t.Fatalf("config load failed: %v", err)
 	}
 
-	client := NewClient(cfg)
+	client := grok.NewClient(cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
-	var webRounds []SearchRound
-	webResult, err := client.SearchStream(ctx, SearchRequest{
+	var webRounds []grok.SearchRound
+	webResult, err := client.SearchStream(ctx, grok.SearchRequest{
 		Query:    "What is the capital of France?",
-		ToolType: ToolTypeWebSearch,
-	}, func(round SearchRound) {
+		ToolType: grok.ToolTypeWebSearch,
+	}, func(round grok.SearchRound) {
 		webRounds = append(webRounds, round)
 		t.Logf("web search round %d: query=%q url=%q", round.Round, round.Query, round.URL)
 	})
@@ -46,11 +47,11 @@ func TestIntegrationSearchLiveCPA(t *testing.T) {
 	t.Logf("web search sources (%d): %+v", len(webResult.Sources), webResult.Sources)
 	t.Logf("web search raw response (stream): %s", prettyJSON(webResult.RawResponse))
 
-	var xRounds []SearchRound
-	xResult, err := client.SearchStream(ctx, SearchRequest{
+	var xRounds []grok.SearchRound
+	xResult, err := client.SearchStream(ctx, grok.SearchRequest{
 		Query:    "What did Elon Musk post about SpaceX recently?",
-		ToolType: ToolTypeXSearch,
-	}, func(round SearchRound) {
+		ToolType: grok.ToolTypeXSearch,
+	}, func(round grok.SearchRound) {
 		xRounds = append(xRounds, round)
 		t.Logf("x search round %d: query=%q url=%q", round.Round, round.Query, round.URL)
 	})
