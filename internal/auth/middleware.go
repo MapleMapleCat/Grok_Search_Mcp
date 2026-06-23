@@ -1,9 +1,8 @@
-// Package auth 提供 HTTP Bearer 鉴权：面向 MCP 的 API Key 与面向 /admin 的静态管理令牌。
+// Package auth 提供 HTTP Bearer 鉴权：MCP API Key、面板 X-Panel-Key 与 JWT。
 package auth
 
 import (
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"strings"
@@ -58,22 +57,19 @@ func APIKeyMiddleware(st store.Store) func(http.Handler) http.Handler {
 				return
 			}
 
-			next.ServeHTTP(w, r.WithContext(WithAPIKey(r.Context(), key)))
-		})
-	}
-}
-
-// AdminTokenMiddleware 用配置中的 GROK_ADMIN_TOKEN 保护管理 API；使用恒定时间比较以防时序侧信道。
-func AdminTokenMiddleware(adminToken string) func(http.Handler) http.Handler {
-	expected := strings.TrimSpace(adminToken)
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token, ok := bearerToken(r)
-			if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+			user, err := st.GetUserByID(r.Context(), key.UserID)
+			if err != nil {
+				http.Error(w, "authentication failed", http.StatusInternalServerError)
 				return
 			}
-			next.ServeHTTP(w, r)
+			if !user.Enabled {
+				http.Error(w, "user disabled", http.StatusForbidden)
+				return
+			}
+
+			ctx := WithAPIKey(r.Context(), key)
+			ctx = WithUser(ctx, user)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

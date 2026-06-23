@@ -89,7 +89,7 @@ func scanAPIKey(row interface {
 	var lastUsed sql.NullString
 
 	err := row.Scan(
-		&k.ID, &k.Name, &k.KeyHash, &k.KeyPrefix, &k.RateLimit, &enabled,
+		&k.ID, &k.UserID, &k.Name, &k.KeyHash, &k.KeyPrefix, &k.RateLimit, &enabled,
 		&createdAt, &updatedAt, &lastUsed, &k.TotalCalls,
 	)
 	if err != nil {
@@ -115,13 +115,17 @@ func scanAPIKey(row interface {
 	return &k, nil
 }
 
-const keyColumns = `id, name, key_hash, key_prefix, rate_limit, enabled, created_at, updated_at, last_used_at, total_calls`
+const keyColumns = `id, user_id, name, key_hash, key_prefix, rate_limit, enabled, created_at, updated_at, last_used_at, total_calls`
 
 // CreateKey 插入新密钥并返回元数据与一次性明文 raw（调用方须妥善保存）。
-func (s *SQLiteStore) CreateKey(ctx context.Context, name string, rateLimit int) (*APIKey, string, error) {
+func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string, rateLimit int) (*APIKey, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, "", fmt.Errorf("name is required")
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, "", fmt.Errorf("user_id is required")
 	}
 
 	raw, err := generateRawKey()
@@ -140,9 +144,9 @@ func (s *SQLiteStore) CreateKey(ctx context.Context, name string, rateLimit int)
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO apikeys (id, name, key_hash, key_prefix, rate_limit, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
-		id, name, hashKey(raw), prefix, rateLimit, formatTime(now), formatTime(now),
+		`INSERT INTO apikeys (id, user_id, name, key_hash, key_prefix, rate_limit, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+		id, userID, name, hashKey(raw), prefix, rateLimit, formatTime(now), formatTime(now),
 	)
 	if err != nil {
 		return nil, "", fmt.Errorf("insert apikey: %w", err)
@@ -164,6 +168,25 @@ func (s *SQLiteStore) GetKeyByHash(ctx context.Context, hash string) (*APIKey, e
 		return nil, nil
 	}
 	return k, err
+}
+
+func (s *SQLiteStore) ListKeysByUser(ctx context.Context, userID string) ([]*APIKey, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+keyColumns+` FROM apikeys WHERE user_id = ? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []*APIKey
+	for rows.Next() {
+		k, err := scanAPIKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	return keys, rows.Err()
 }
 
 func (s *SQLiteStore) ListKeys(ctx context.Context) ([]*APIKey, error) {
@@ -252,9 +275,13 @@ func (s *SQLiteStore) DeleteKey(ctx context.Context, id string) error {
 }
 
 func (s *SQLiteStore) RecordUsage(ctx context.Context, record UsageRecord) error {
+	success := 0
+	if record.Success {
+		success = 1
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO usage_log (key_id, tool_name, timestamp, duration_ms) VALUES (?, ?, ?, ?)`,
-		record.KeyID, record.ToolName, formatTime(record.Timestamp.UTC()), record.DurationMs,
+		`INSERT INTO usage_log (key_id, tool_name, timestamp, duration_ms, success) VALUES (?, ?, ?, ?, ?)`,
+		record.KeyID, record.ToolName, formatTime(record.Timestamp.UTC()), record.DurationMs, success,
 	)
 	return err
 }
@@ -272,6 +299,10 @@ func (s *SQLiteStore) TouchKeyUsage(ctx context.Context, keyID string) error {
 
 func (s *SQLiteStore) GetUsageStats(ctx context.Context, keyID string, since time.Time) (*UsageStats, error) {
 	return s.queryUsageStats(ctx, `key_id = ?`, []any{keyID}, since)
+}
+
+func (s *SQLiteStore) GetUserUsageStats(ctx context.Context, userID string, since time.Time) (*UsageStats, error) {
+	return s.queryUsageStats(ctx, `key_id IN (SELECT id FROM apikeys WHERE user_id = ?)`, []any{userID}, since)
 }
 
 func (s *SQLiteStore) GetGlobalStats(ctx context.Context, since time.Time) (*UsageStats, error) {
@@ -305,7 +336,7 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, where string, whereAr
 	rows.Close()
 
 	recRows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_id, tool_name, timestamp, duration_ms FROM usage_log WHERE `+where+` AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500`,
+		`SELECT id, key_id, tool_name, timestamp, duration_ms, success FROM usage_log WHERE `+where+` AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500`,
 		args...,
 	)
 	if err != nil {
@@ -316,16 +347,30 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, where string, whereAr
 	for recRows.Next() {
 		var r UsageRecord
 		var ts string
-		if err := recRows.Scan(&r.ID, &r.KeyID, &r.ToolName, &ts, &r.DurationMs); err != nil {
+		var success int
+		if err := recRows.Scan(&r.ID, &r.KeyID, &r.ToolName, &ts, &r.DurationMs, &success); err != nil {
 			return nil, err
 		}
+		r.Success = success != 0
 		r.Timestamp, err = parseTime(ts)
 		if err != nil {
 			return nil, err
 		}
 		stats.Records = append(stats.Records, r)
 	}
-	return stats, recRows.Err()
+	if err := recRows.Err(); err != nil {
+		return nil, err
+	}
+
+	var succCount int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM usage_log WHERE `+where+` AND timestamp >= ? AND success = 1`,
+		args...,
+	).Scan(&succCount); err != nil {
+		return nil, err
+	}
+	stats.SuccessCalls = succCount
+	return stats, nil
 }
 
 // HashAPIKey 暴露哈希算法，供鉴权相关单元测试断言。

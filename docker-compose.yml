@@ -1,8 +1,8 @@
 # grok-mcp HTTP 服务一键编排。
 # 使用：
-#   1. cp .env.example .env 并填入真实值（至少 CPA_API_KEY、GROK_ADMIN_TOKEN）
+#   1. cp .env.example .env 并填入真实值（至少 CPA_API_KEY、GROK_PANEL_KEY、GROK_JWT_SECRET）
 #   2. docker compose up -d --build
-#   3. 用 GROK_ADMIN_TOKEN 调 /admin/v1/keys 创建客户端 Key，再带该 Key 调 /mcp
+#   3. 用面板 API 注册/登录，创建客户端 Key，再带该 Key 调 /mcp
 services:
   grok-mcp:
     build:

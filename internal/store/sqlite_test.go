@@ -18,11 +18,21 @@ func openTestDB(t *testing.T) *SQLiteStore {
 	return s
 }
 
+func testUserID(t *testing.T, s *SQLiteStore) string {
+	t.Helper()
+	u, err := s.CreateUser(context.Background(), "keyowner", "hash", RoleUser, 60, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.ID
+}
+
 func TestCreateAndGetKeyByHash(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
+	uid := testUserID(t, s)
 
-	k, raw, err := s.CreateKey(ctx, "test-key", 30)
+	k, raw, err := s.CreateKey(ctx, uid, "test-key", 30)
 	if err != nil {
 		t.Fatalf("CreateKey: %v", err)
 	}
@@ -41,7 +51,8 @@ func TestCreateAndGetKeyByHash(t *testing.T) {
 
 func TestCreateKeyRequiresName(t *testing.T) {
 	s := openTestDB(t)
-	_, _, err := s.CreateKey(context.Background(), "  ", 0)
+	uid := testUserID(t, s)
+	_, _, err := s.CreateKey(context.Background(), uid, "  ", 0)
 	if err == nil {
 		t.Fatal("expected error for empty name")
 	}
@@ -50,8 +61,9 @@ func TestCreateKeyRequiresName(t *testing.T) {
 func TestListUpdateDeleteKey(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
+	uid := testUserID(t, s)
 
-	k, _, err := s.CreateKey(ctx, "one", 0)
+	k, _, err := s.CreateKey(ctx, uid, "one", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +97,7 @@ func TestUsageStats(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
-	k, _, err := s.CreateKey(ctx, "usage", 0)
+	k, _, err := s.CreateKey(ctx, testUserID(t, s), "usage", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

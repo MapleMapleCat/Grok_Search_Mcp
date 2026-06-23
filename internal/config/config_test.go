@@ -12,8 +12,17 @@ func setEnv(t *testing.T, key, value string) {
 	t.Setenv(key, value)
 }
 
+func panelEnv(t *testing.T) {
+	t.Helper()
+	setEnv(t, "CPA_API_KEY", "test-key")
+	setEnv(t, "GROK_PANEL_KEY", "panel-key")
+	setEnv(t, "GROK_JWT_SECRET", "jwt-secret")
+}
+
 func TestLoadRequiresAPIKey(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "")
+	setEnv(t, "GROK_PANEL_KEY", "panel-key")
+	setEnv(t, "GROK_JWT_SECRET", "jwt-secret")
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "CPA_API_KEY is required") {
 		t.Fatalf("expected CPA_API_KEY error, got %v", err)
@@ -21,8 +30,7 @@ func TestLoadRequiresAPIKey(t *testing.T) {
 }
 
 func TestLoadDefaults(t *testing.T) {
-	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
+	panelEnv(t)
 	setEnv(t, "CPA_BASE_URL", "")
 	setEnv(t, "GROK_MODEL", "")
 	setEnv(t, "GROK_HTTP_TIMEOUT", "")
@@ -47,8 +55,7 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadCustomTimeout(t *testing.T) {
-	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
+	panelEnv(t)
 	setEnv(t, "GROK_HTTP_TIMEOUT", "45")
 
 	cfg, err := Load()
@@ -61,8 +68,7 @@ func TestLoadCustomTimeout(t *testing.T) {
 }
 
 func TestLoadInvalidTimeout(t *testing.T) {
-	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
+	panelEnv(t)
 	setEnv(t, "GROK_HTTP_TIMEOUT", "abc")
 
 	_, err := Load()
@@ -72,8 +78,7 @@ func TestLoadInvalidTimeout(t *testing.T) {
 }
 
 func TestLoadDebugParsing(t *testing.T) {
-	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
+	panelEnv(t)
 
 	for _, value := range []string{"1", "true", "yes"} {
 		setEnv(t, "GROK_MCP_DEBUG", value)
@@ -96,25 +101,36 @@ func TestLoadDebugParsing(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresAdminToken(t *testing.T) {
+func TestLoadRequiresPanelKey(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_ADMIN_TOKEN", "")
+	setEnv(t, "GROK_PANEL_KEY", "")
+	setEnv(t, "GROK_JWT_SECRET", "jwt-secret")
 
 	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "GROK_ADMIN_TOKEN is required") {
-		t.Fatalf("expected admin token error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "GROK_PANEL_KEY is required") {
+		t.Fatalf("expected panel key error, got %v", err)
+	}
+}
+
+func TestLoadRequiresJWTSecret(t *testing.T) {
+	setEnv(t, "CPA_API_KEY", "test-key")
+	setEnv(t, "GROK_PANEL_KEY", "panel-key")
+	setEnv(t, "GROK_JWT_SECRET", "")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "GROK_JWT_SECRET is required") {
+		t.Fatalf("expected jwt secret error, got %v", err)
 	}
 }
 
 func TestLoadHTTPDefaults(t *testing.T) {
-	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
+	panelEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if cfg.HTTPAddr != ":8080" || cfg.DBPath != "./grok-mcp.db" || cfg.DefaultRateLimit != 60 {
+	if cfg.HTTPAddr != ":8080" || cfg.DBPath != "./grok-mcp.db" || cfg.DefaultUserRPM != 60 {
 		t.Fatalf("unexpected http defaults: %+v", cfg)
 	}
 }

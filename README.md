@@ -29,10 +29,9 @@ xAI / Grok
 ## 功能
 
 - Streamable HTTP MCP 端点：`/mcp`
-- 管理 API：`/admin/v1/*`
-- 客户端 API Key 鉴权
-- 管理端 Bearer Token 鉴权
-- 按 API Key 的每分钟限流
+- 管理面板 API：`/panel/v1/*`（`X-Panel-Key` + JWT；注册/登录仅需面板 Key）
+- 客户端 API Key 鉴权（Key 归属用户）
+- 按用户汇总的 RPM、总请求上限、成功请求上限
 - SQLite 持久化 API Key 与调用明细
 - 仅统计真实 `tools/call` 调用，握手和工具列表请求不计入用量
 - 上游 SSE 流式解析，并把搜索轮次转成 MCP progress 通知
@@ -62,7 +61,8 @@ go build -ldflags "-X github.com/grok-mcp/internal/version.Version=1.2.3" -o gro
 ```powershell
 $env:CPA_BASE_URL = "http://127.0.0.1:8317"
 $env:CPA_API_KEY = "replace-with-your-cpa-api-key"
-$env:GROK_ADMIN_TOKEN = "replace-with-a-strong-random-token"
+$env:GROK_PANEL_KEY = "replace-with-a-strong-random-panel-key"
+$env:GROK_JWT_SECRET = "replace-with-a-strong-random-jwt-secret"
 $env:GROK_HTTP_ADDR = ":8080"
 $env:GROK_DB_PATH = "./grok-mcp.db"
 
@@ -72,20 +72,23 @@ $env:GROK_DB_PATH = "./grok-mcp.db"
 启动后：
 
 - MCP 端点：`http://127.0.0.1:8080/mcp`
-- 管理 API：`http://127.0.0.1:8080/admin/v1/*`
+- 面板 API：`http://127.0.0.1:8080/panel/v1/*`
 
-### 3. 创建客户端 API Key
+### 3. 注册、登录并创建客户端 API Key
 
 ```powershell
-$headers = @{ Authorization = "Bearer $env:GROK_ADMIN_TOKEN" }
-$body = @{ name = "local-client"; rate_limit = 60 } | ConvertTo-Json
+$panel = @{ "X-Panel-Key" = $env:GROK_PANEL_KEY }
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/auth/register" `
+  -Headers $panel -ContentType "application/json" `
+  -Body '{"username":"you","password":"your-password"}'
 
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://127.0.0.1:8080/admin/v1/keys" `
-  -Headers $headers `
-  -ContentType "application/json" `
-  -Body $body
+$login = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/auth/login" `
+  -Headers $panel -ContentType "application/json" `
+  -Body '{"username":"you","password":"your-password"}'
+
+$auth = @{ "X-Panel-Key" = $env:GROK_PANEL_KEY; Authorization = "Bearer $($login.token)" }
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/keys" `
+  -Headers $auth -ContentType "application/json" -Body '{"name":"local-client"}'
 ```
 
 响应里的 `api_key` 只返回一次。后续 MCP 客户端访问 `/mcp` 时使用：
@@ -113,7 +116,8 @@ docker compose up -d --build
 `.env` 至少需要设置：
 
 - `CPA_API_KEY`
-- `GROK_ADMIN_TOKEN`
+- `GROK_PANEL_KEY`
+- `GROK_JWT_SECRET`
 
 容器默认监听 `:8080`，SQLite 数据保存到命名卷 `grok-mcp-data`。
 
@@ -122,14 +126,19 @@ docker compose up -d --build
 | 环境变量 | 必填 | 默认值 | 说明 |
 |---|:---:|---|---|
 | `CPA_API_KEY` | 是 | 无 | 调用 CPA 的 Bearer Key |
-| `GROK_ADMIN_TOKEN` | 是 | 无 | 管理 API 的静态 Bearer Token |
+| `GROK_PANEL_KEY` | 是 | 无 | 面板 API 请求头 `X-Panel-Key` |
+| `GROK_JWT_SECRET` | 是 | 无 | 面板 JWT HS256 签名密钥 |
+| `GROK_DEFAULT_USER_RPM` | 否 | `60` | 新用户默认每分钟请求数 |
+| `GROK_DEFAULT_USER_TOTAL_LIMIT` | 否 | `0` | 新用户默认总 `tools/call` 上限（0=不限） |
+| `GROK_DEFAULT_USER_SUCCESS_LIMIT` | 否 | `0` | 新用户默认成功调用上限（0=不限） |
 | `CPA_BASE_URL` | 否 | `http://127.0.0.1:8317` | CPA 根地址，不含尾部 `/` |
 | `GROK_MODEL` | 否 | `grok-4.3` | 默认模型，可被工具参数 `model` 覆盖 |
 | `GROK_HTTP_TIMEOUT` | 否 | `120` | 上游 HTTP 超时，单位秒 |
 | `GROK_MCP_DEBUG` | 否 | 无 | 设为 `1`、`true` 或 `yes` 时输出调试日志 |
 | `GROK_HTTP_ADDR` | 否 | `:8080` | HTTP 监听地址 |
 | `GROK_DB_PATH` | 否 | `./grok-mcp.db` | SQLite 数据库路径 |
-| `GROK_DEFAULT_RATE_LIMIT` | 否 | `60` | 新 Key 未单独设置时的每分钟请求数 |
+
+（已移除 `GROK_ADMIN_TOKEN` 与 `/admin/v1`；请使用 `/panel/v1`。）
 
 ## MCP 工具
 
@@ -179,71 +188,52 @@ docker compose up -d --build
 }
 ```
 
-## 管理 API
+## 面板 API（`/panel/v1`）
 
-所有管理 API 都需要：
-
-```text
-Authorization: Bearer <GROK_ADMIN_TOKEN>
-```
-
-路由：
+除注册/登录外，请求需同时携带：
 
 ```text
-POST   /admin/v1/keys
-GET    /admin/v1/keys
-GET    /admin/v1/keys/{id}
-PATCH  /admin/v1/keys/{id}
-DELETE /admin/v1/keys/{id}
-GET    /admin/v1/keys/{id}/usage
-GET    /admin/v1/stats
+X-Panel-Key: <GROK_PANEL_KEY>
+Authorization: Bearer <JWT>
 ```
 
-创建 Key：
-
-```json
-{
-  "name": "client-name",
-  "rate_limit": 60
-}
-```
-
-更新 Key：
-
-```json
-{
-  "name": "new-name",
-  "rate_limit": 120,
-  "enabled": true
-}
-```
-
-用量查询支持可选 `since` 参数，格式为 RFC3339：
+认证与用户 Key：
 
 ```text
-GET /admin/v1/keys/{id}/usage?since=2026-06-23T00:00:00Z
+POST   /panel/v1/auth/register
+POST   /panel/v1/auth/login
+GET    /panel/v1/me
+GET    /panel/v1/keys
+POST   /panel/v1/keys
+PATCH  /panel/v1/keys/{id}
+DELETE /panel/v1/keys/{id}
+GET    /panel/v1/keys/{id}/usage
 ```
+
+管理员（`role=admin`）：
+
+```text
+GET    /panel/v1/admin/users
+GET    /panel/v1/admin/users/{id}
+PATCH  /panel/v1/admin/users/{id}
+GET    /panel/v1/admin/users/{id}/usage
+```
+
+首个注册用户自动为 `admin`。管理员可调整用户的 `rpm`、`total_limit`、`success_limit` 等。
 
 ## 代码结构
 
 ```text
 cmd/grok-mcp/
-  main.go                 进程入口，固定启动 HTTP 服务
-  http.go                 /mcp 与 /admin 路由组装
+  main.go                 进程入口
+  http.go                 /mcp 与 /panel 路由组装
 
-internal/config/          环境变量加载与校验
-internal/mcp/             MCP 工具注册与工具调用入口
-internal/grok/            CPA /v1/responses 请求、SSE 解析、结果汇总
-internal/auth/            API Key 与 Admin Token 鉴权
-internal/ratelimit/       按 API Key 的内存限流器
-internal/usage/           MCP tools/call 用量统计中间件
-internal/store/           SQLite 存储、迁移、异步 usage writer
-internal/admin/           Key 管理和统计查询 REST API
-internal/logx/            调试日志辅助
-internal/version/         版本号
-
-test/http/                HTTP 鉴权与管理流程集成测试
-test/grok/                上游请求和解析相关测试
+internal/panel/           面板 REST API
+internal/quota/           用户汇总额度（tools/call）
+internal/auth/            API Key、X-Panel-Key、JWT
+internal/ratelimit/       按用户的内存 RPM 限流
+internal/usage/           MCP tools/call 用量与 success 标记
+internal/store/           SQLite、002 迁移、用户与 Key
 ```
 
 ## 测试

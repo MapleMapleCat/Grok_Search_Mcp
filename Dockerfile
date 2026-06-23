@@ -53,13 +53,12 @@ USER app
 # 容器内固定以 HTTP 模式运行；真实密钥/CPA 地址由运行时环境变量或 .env 注入。
 ENV GROK_HTTP_ADDR=:8080 \
     GROK_DB_PATH=/app/data/grok-mcp.db \
-    GROK_DEFAULT_RATE_LIMIT=60
+    GROK_DEFAULT_USER_RPM=60
 
 EXPOSE 8080
 VOLUME ["/app/data"]
 
-# /mcp 未带凭证会返回 401，/admin 未带 token 也非 200；这里只判断「收到了 HTTP 响应行」即视为进程存活，
-# 因此用 wget -S 抓响应头再 grep，避免被 4xx 退出码误判为不健康。
+# /mcp 未带凭证会返回 401；健康检查只判断收到 HTTP 响应行。
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
         CMD wget -q -S -O /dev/null http://127.0.0.1:8080/mcp 2>&1 | grep -qE 'HTTP/[0-9.]+ [0-9]{3}' || exit 1
 

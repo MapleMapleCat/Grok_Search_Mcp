@@ -5,47 +5,38 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/grok-mcp/internal/store"
 )
 
 type memStore struct {
+	store.TestStore
 	byHash map[string]*store.APIKey
+	users  map[string]*store.User
 }
 
-func (m *memStore) Close() error { return nil }
-func (m *memStore) CreateKey(ctx context.Context, name string, rateLimit int) (*store.APIKey, string, error) {
-	return nil, "", nil
-}
-func (m *memStore) GetKeyByHash(ctx context.Context, hash string) (*store.APIKey, error) {
+func (m *memStore) GetKeyByHash(_ context.Context, hash string) (*store.APIKey, error) {
 	return m.byHash[hash], nil
 }
-func (m *memStore) ListKeys(ctx context.Context) ([]*store.APIKey, error) { return nil, nil }
-func (m *memStore) GetKeyByID(ctx context.Context, id string) (*store.APIKey, error) {
-	return nil, nil
+
+func (m *memStore) GetUserByID(_ context.Context, id string) (*store.User, error) {
+	if u, ok := m.users[id]; ok {
+		return u, nil
+	}
+	return nil, store.ErrUserNotFound
 }
-func (m *memStore) UpdateKey(ctx context.Context, id string, updates store.KeyUpdates) (*store.APIKey, error) {
-	return nil, nil
-}
-func (m *memStore) DeleteKey(ctx context.Context, id string) error { return nil }
-func (m *memStore) RecordUsage(ctx context.Context, record store.UsageRecord) error {
-	return nil
-}
-func (m *memStore) GetUsageStats(ctx context.Context, keyID string, since time.Time) (*store.UsageStats, error) {
-	return nil, nil
-}
-func (m *memStore) GetGlobalStats(ctx context.Context, since time.Time) (*store.UsageStats, error) {
-	return nil, nil
-}
-func (m *memStore) TouchKeyUsage(ctx context.Context, keyID string) error { return nil }
 
 func TestAPIKeyMiddleware(t *testing.T) {
 	raw := "grok_testtoken"
 	hash := store.HashAPIKey(raw)
-	st := &memStore{byHash: map[string]*store.APIKey{
-		hash: {ID: "id-1", Enabled: true},
-	}}
+	st := &memStore{
+		byHash: map[string]*store.APIKey{
+			hash: {ID: "id-1", UserID: "u1", Enabled: true},
+		},
+		users: map[string]*store.User{
+			"u1": {ID: "u1", Enabled: true},
+		},
+	}
 
 	var gotID string
 	h := APIKeyMiddleware(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,20 +64,20 @@ func TestAPIKeyMiddleware(t *testing.T) {
 	}
 }
 
-func TestAdminTokenMiddleware(t *testing.T) {
-	h := AdminTokenMiddleware("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestPanelKeyMiddleware(t *testing.T) {
+	h := PanelKeyMiddleware("panel-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/admin", nil)
-	req.Header.Set("Authorization", "Bearer secret")
+	req := httptest.NewRequest(http.MethodGet, "/panel", nil)
+	req.Header.Set("X-Panel-Key", "panel-secret")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", rec.Code)
 	}
 
-	req2 := httptest.NewRequest(http.MethodGet, "/admin", nil)
+	req2 := httptest.NewRequest(http.MethodGet, "/panel", nil)
 	rec2 := httptest.NewRecorder()
 	h.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusUnauthorized {

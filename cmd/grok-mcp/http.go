@@ -7,22 +7,17 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/grok-mcp/internal/admin"
 	"github.com/grok-mcp/internal/auth"
 	"github.com/grok-mcp/internal/config"
+	"github.com/grok-mcp/internal/panel"
+	"github.com/grok-mcp/internal/quota"
 	"github.com/grok-mcp/internal/ratelimit"
 	"github.com/grok-mcp/internal/store"
 	"github.com/grok-mcp/internal/usage"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// runHTTP 启动 HTTP 模式：/mcp 为 MCP 协议端点，/admin 为密钥与统计管理 API。
-//
-// MCP 请求中间件链（由外到内）：
-//  1. auth.APIKeyMiddleware — Bearer API Key，校验后把密钥写入 context；
-//  2. ratelimit — 按密钥的 rate_limit 做令牌桶限流；
-//  3. usage.MCPMiddleware — 记录调用次数与工具名、耗时（异步写库）；
-//  4. mcp.StreamableHTTPHandler — 实际 MCP 会话处理。
+// runHTTP 启动 HTTP 模式：/mcp 为 MCP 端点，/panel 为管理面板 API。
 func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error {
 	st, err := store.OpenSQLite(cfg.DBPath)
 	if err != nil {
@@ -30,12 +25,11 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 	}
 	defer st.Close()
 
-	// 用量明细写入走后台队列，避免 MCP 热路径被 SQLite 阻塞。
 	usageWriter := store.NewAsyncUsageWriter(st, 256)
 	defer usageWriter.Close()
 
-	lim := ratelimit.New(cfg.DefaultRateLimit)
-	defer lim.Close()
+	userLim := ratelimit.NewUserLimiter(cfg.DefaultUserRPM)
+	defer userLim.Close()
 
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return server
@@ -43,17 +37,26 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 
 	var mcpChain http.Handler = mcpHandler
 	mcpChain = usage.MCPMiddleware(st, usageWriter)(mcpChain)
-	mcpChain = lim.Middleware()(mcpChain)
+	mcpChain = quota.MCPMiddleware(st)(mcpChain)
+	mcpChain = userLim.UserMiddleware()(mcpChain)
 	mcpChain = auth.APIKeyMiddleware(st)(mcpChain)
 
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/mcp/", mcpChain)
 	rootMux.Handle("/mcp", mcpChain)
 
-	adminMux := admin.NewMux(&admin.Handler{Store: st})
-	adminHandler := auth.AdminTokenMiddleware(cfg.AdminToken)(adminMux)
-	rootMux.Handle("/admin/", adminHandler)
-	rootMux.Handle("/admin", adminHandler)
+	panelHandler := &panel.Handler{Store: st, Config: cfg}
+	panelMux := panel.NewMux(panelHandler)
+	jwtSkip := map[string]struct{}{
+		"/panel/v1/auth/register": {},
+		"/panel/v1/auth/login":    {},
+	}
+	var panelChain http.Handler = panelMux
+	panelChain = auth.AdminRoleMiddleware()(panelChain)
+	panelChain = auth.JWTMiddleware(cfg.JWTSecret, st, jwtSkip)(panelChain)
+	panelChain = auth.PanelKeyMiddleware(cfg.PanelKey)(panelChain)
+	rootMux.Handle("/panel/", panelChain)
+	rootMux.Handle("/panel", panelChain)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

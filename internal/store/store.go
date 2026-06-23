@@ -1,14 +1,52 @@
-// Package store 定义 API Key 与用量日志的持久化抽象及领域模型（HTTP 模式使用 SQLite 实现）。
+// Package store 定义 API Key、用户与用量日志的持久化抽象及领域模型（HTTP 模式使用 SQLite 实现）。
 package store
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrUserNotFound 表示按 ID 未找到用户。
+var ErrUserNotFound = errors.New("user not found")
+
+// ErrUsernameTaken 表示用户名已存在。
+var ErrUsernameTaken = errors.New("username already taken")
+
+// ErrQuotaTotal 表示用户总请求额度已耗尽。
+var ErrQuotaTotal = errors.New("total request limit exceeded")
+
+// ErrQuotaSuccess 表示用户成功请求额度已耗尽。
+var ErrQuotaSuccess = errors.New("success request limit exceeded")
+
+// UserRole 面板用户角色。
+type UserRole string
+
+const (
+	RoleAdmin UserRole = "admin"
+	RoleUser  UserRole = "user"
+)
+
+// User 表示面板注册用户及其汇总额度与计数。
+type User struct {
+	ID           string
+	Username     string
+	PasswordHash string
+	Role         UserRole
+	Enabled      bool
+	RPM          int
+	TotalLimit   int
+	SuccessLimit int
+	TotalCalls   int64
+	SuccessCalls int64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
 
 // APIKey 表示一条已发放的客户端密钥。数据库只存 SHA-256 哈希；明文仅在 CreateKey 时返回一次。
 type APIKey struct {
 	ID         string
+	UserID     string
 	Name       string
 	KeyHash    string
 	KeyPrefix  string
@@ -20,18 +58,20 @@ type APIKey struct {
 	TotalCalls int64
 }
 
-// UsageRecord 为单次 MCP 工具调用的明细日志（工具名、耗时等）。
+// UsageRecord 为单次 MCP 工具调用的明细日志（工具名、耗时、是否成功等）。
 type UsageRecord struct {
 	ID         int64
 	KeyID      string
 	ToolName   string
 	Timestamp  time.Time
 	DurationMs int64
+	Success    bool
 }
 
 // UsageStats 聚合某段时间内的调用统计；Records 最多返回最近 500 条明细。
 type UsageStats struct {
 	TotalCalls   int64
+	SuccessCalls int64
 	ByTool       map[string]int64
 	Records      []UsageRecord
 }
@@ -43,17 +83,44 @@ type KeyUpdates struct {
 	Enabled   *bool
 }
 
-// Store 是密钥 CRUD 与用量读写的接口，便于测试注入 mock。
+// UserUpdates 用于管理员 PATCH 用户；指针字段为 nil 表示不修改。
+type UserUpdates struct {
+	Enabled      *bool
+	Role         *UserRole
+	RPM          *int
+	TotalLimit   *int
+	SuccessLimit *int
+}
+
+// Store 是用户、密钥 CRUD 与用量读写的接口，便于测试注入 mock。
 type Store interface {
 	Close() error
-	CreateKey(ctx context.Context, name string, rateLimit int) (*APIKey, string, error)
+
+	CreateUser(ctx context.Context, username, passwordHash string, role UserRole, rpm, totalLimit, successLimit int) (*User, error)
+	// RegisterUser 自助注册：在同一事务内判断是否为首个用户并赋 admin，避免并发双管理员。
+	RegisterUser(ctx context.Context, username, passwordHash string, rpm, totalLimit, successLimit int) (*User, error)
+	GetUserByUsername(ctx context.Context, username string) (*User, error)
+	GetUserByID(ctx context.Context, id string) (*User, error)
+	ListUsers(ctx context.Context) ([]*User, error)
+	UpdateUser(ctx context.Context, id string, updates UserUpdates) (*User, error)
+	CountUsers(ctx context.Context) (int64, error)
+	ReserveTotalCall(ctx context.Context, userID string, totalLimit int) error
+	ReleaseTotalCall(ctx context.Context, userID string) error
+	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) error
+	ReleaseSuccessCall(ctx context.Context, userID string) error
+	TryIncrementUserSuccessCalls(ctx context.Context, userID string, successLimit int) error
+	CheckUserSuccessQuota(ctx context.Context, user *User) error
+
+	CreateKey(ctx context.Context, userID, name string, rateLimit int) (*APIKey, string, error)
 	GetKeyByHash(ctx context.Context, hash string) (*APIKey, error)
 	ListKeys(ctx context.Context) ([]*APIKey, error)
+	ListKeysByUser(ctx context.Context, userID string) ([]*APIKey, error)
 	GetKeyByID(ctx context.Context, id string) (*APIKey, error)
 	UpdateKey(ctx context.Context, id string, updates KeyUpdates) (*APIKey, error)
 	DeleteKey(ctx context.Context, id string) error
 	RecordUsage(ctx context.Context, record UsageRecord) error
 	GetUsageStats(ctx context.Context, keyID string, since time.Time) (*UsageStats, error)
+	GetUserUsageStats(ctx context.Context, userID string, since time.Time) (*UsageStats, error)
 	GetGlobalStats(ctx context.Context, since time.Time) (*UsageStats, error)
 	TouchKeyUsage(ctx context.Context, keyID string) error
 }
