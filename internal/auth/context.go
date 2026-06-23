@@ -14,7 +14,7 @@ func WithAPIKey(ctx context.Context, key *store.APIKey) context.Context {
 	return context.WithValue(ctx, ctxKey{}, key)
 }
 
-// APIKeyFromContext 返回 APIKeyMiddleware 注入的密钥；第二个值为 false 表示未鉴权（如 stdio 模式无此中间件）。
+// APIKeyFromContext 返回 APIKeyMiddleware 注入的密钥；第二个值为 false 表示当前请求未经过 API Key 鉴权。
 func APIKeyFromContext(ctx context.Context) (*store.APIKey, bool) {
 	k, ok := ctx.Value(ctxKey{}).(*store.APIKey)
 	return k, ok

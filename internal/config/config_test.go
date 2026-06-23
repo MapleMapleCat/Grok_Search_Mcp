@@ -22,6 +22,7 @@ func TestLoadRequiresAPIKey(t *testing.T) {
 
 func TestLoadDefaults(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "test-key")
+	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
 	setEnv(t, "CPA_BASE_URL", "")
 	setEnv(t, "GROK_MODEL", "")
 	setEnv(t, "GROK_HTTP_TIMEOUT", "")
@@ -47,6 +48,7 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadCustomTimeout(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "test-key")
+	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
 	setEnv(t, "GROK_HTTP_TIMEOUT", "45")
 
 	cfg, err := Load()
@@ -60,6 +62,7 @@ func TestLoadCustomTimeout(t *testing.T) {
 
 func TestLoadInvalidTimeout(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "test-key")
+	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
 	setEnv(t, "GROK_HTTP_TIMEOUT", "abc")
 
 	_, err := Load()
@@ -70,6 +73,7 @@ func TestLoadInvalidTimeout(t *testing.T) {
 
 func TestLoadDebugParsing(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "test-key")
+	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
 
 	for _, value := range []string{"1", "true", "yes"} {
 		setEnv(t, "GROK_MCP_DEBUG", value)
@@ -92,9 +96,8 @@ func TestLoadDebugParsing(t *testing.T) {
 	}
 }
 
-func TestLoadHTTPRequiresAdminToken(t *testing.T) {
+func TestLoadRequiresAdminToken(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_TRANSPORT", "http")
 	setEnv(t, "GROK_ADMIN_TOKEN", "")
 
 	_, err := Load()
@@ -105,7 +108,6 @@ func TestLoadHTTPRequiresAdminToken(t *testing.T) {
 
 func TestLoadHTTPDefaults(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_TRANSPORT", "http")
 	setEnv(t, "GROK_ADMIN_TOKEN", "secret")
 
 	cfg, err := Load()

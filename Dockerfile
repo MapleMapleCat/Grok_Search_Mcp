@@ -50,9 +50,8 @@ COPY --from=builder /out/grok-mcp /app/grok-mcp
 
 USER app
 
-# 容器内默认以 HTTP 模式运行；真实密钥/CPA 地址由运行时环境变量或 .env 注入。
-ENV GROK_TRANSPORT=http \
-    GROK_HTTP_ADDR=:8080 \
+# 容器内固定以 HTTP 模式运行；真实密钥/CPA 地址由运行时环境变量或 .env 注入。
+ENV GROK_HTTP_ADDR=:8080 \
     GROK_DB_PATH=/app/data/grok-mcp.db \
     GROK_DEFAULT_RATE_LIMIT=60
 

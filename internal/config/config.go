@@ -13,7 +13,6 @@ const (
 	defaultBaseURL          = "http://127.0.0.1:8317"
 	defaultModel            = "grok-4.3"
 	defaultTimeout          = 120 * time.Second
-	defaultTransport        = "stdio"
 	defaultHTTPAddr         = ":8080"
 	defaultDBPath           = "./grok-mcp.db"
 	defaultDefaultRateLimit = 60
@@ -27,25 +26,23 @@ const (
 //   - GROK_MODEL — 默认模型名
 //   - GROK_HTTP_TIMEOUT — 上游 HTTP 超时（秒）
 //   - GROK_MCP_DEBUG — 为 1/true/yes 时输出调试日志
-//   - GROK_TRANSPORT — stdio 或 http
-//   - GROK_HTTP_ADDR — HTTP 监听地址（http 模式）
-//   - GROK_DB_PATH — SQLite 路径（http 模式）
-//   - GROK_ADMIN_TOKEN — 管理 API 的静态 Bearer（http 模式必填）
+//   - GROK_HTTP_ADDR — HTTP 监听地址
+//   - GROK_DB_PATH — SQLite 路径
+//   - GROK_ADMIN_TOKEN — 管理 API 的静态 Bearer（必填）
 //   - GROK_DEFAULT_RATE_LIMIT — 新密钥未单独设置时的默认「次/分钟」
 type Config struct {
-	CPABaseURL        string
-	CPAAPIKey         string
-	Model             string
-	Timeout           time.Duration
-	Debug             bool
-	Transport         string
-	HTTPAddr          string
-	DBPath            string
-	AdminToken        string
-	DefaultRateLimit  int
+	CPABaseURL       string
+	CPAAPIKey        string
+	Model            string
+	Timeout          time.Duration
+	Debug            bool
+	HTTPAddr         string
+	DBPath           string
+	AdminToken       string
+	DefaultRateLimit int
 }
 
-// Load 读取并校验配置；缺少 CPA_API_KEY 或 http 模式缺少 GROK_ADMIN_TOKEN 时会返回错误。
+// Load 读取并校验配置；缺少 CPA_API_KEY 或 GROK_ADMIN_TOKEN 时会返回错误。
 func Load() (*Config, error) {
 	cfg := &Config{
 		CPABaseURL:       strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
@@ -53,7 +50,6 @@ func Load() (*Config, error) {
 		Model:            envOrDefault("GROK_MODEL", defaultModel),
 		Timeout:          defaultTimeout,
 		Debug:            parseBoolEnv("GROK_MCP_DEBUG"),
-		Transport:        strings.ToLower(envOrDefault("GROK_TRANSPORT", defaultTransport)),
 		HTTPAddr:         envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
 		DBPath:           envOrDefault("GROK_DB_PATH", defaultDBPath),
 		AdminToken:       strings.TrimSpace(os.Getenv("GROK_ADMIN_TOKEN")),
@@ -85,12 +81,8 @@ func Load() (*Config, error) {
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("GROK_MODEL must not be empty")
 	}
-
-	if cfg.Transport != "stdio" && cfg.Transport != "http" {
-		return nil, fmt.Errorf("GROK_TRANSPORT must be stdio or http, got %q", cfg.Transport)
-	}
-	if cfg.Transport == "http" && cfg.AdminToken == "" {
-		return nil, fmt.Errorf("GROK_ADMIN_TOKEN is required when GROK_TRANSPORT=http")
+	if cfg.AdminToken == "" {
+		return nil, fmt.Errorf("GROK_ADMIN_TOKEN is required")
 	}
 
 	return cfg, nil
