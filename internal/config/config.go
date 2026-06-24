@@ -29,7 +29,6 @@ type Config struct {
 	Debug                   bool
 	HTTPAddr                string
 	DBPath                  string
-	PanelKey                string
 	JWTSecret               string
 	DefaultUserRPM          int
 	DefaultUserTotalLimit   int
@@ -46,7 +45,6 @@ func Load() (*Config, error) {
 		Debug:                   parseBoolEnv("GROK_MCP_DEBUG"),
 		HTTPAddr:                envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
 		DBPath:                  envOrDefault("GROK_DB_PATH", defaultDBPath),
-		PanelKey:                strings.TrimSpace(os.Getenv("GROK_PANEL_KEY")),
 		JWTSecret:               strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
 		DefaultUserRPM:          defaultDefaultUserRPM,
 		DefaultUserTotalLimit:   defaultDefaultUserTotal,
@@ -91,9 +89,6 @@ func Load() (*Config, error) {
 	}
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("GROK_MODEL must not be empty")
-	}
-	if cfg.PanelKey == "" {
-		return nil, fmt.Errorf("GROK_PANEL_KEY is required")
 	}
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("GROK_JWT_SECRET is required")

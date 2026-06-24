@@ -19,7 +19,7 @@ type Handler struct {
 	Config *config.Config
 }
 
-// NewMux 注册 /panel/v1 路由（外层需套 PanelKey + JWT + 可选 Admin 中间件）。
+// NewMux 注册 /panel/v1 路由（外层需套 JWT + 可选 Admin 中间件）。
 func NewMux(h *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /panel/v1/auth/register", h.register)

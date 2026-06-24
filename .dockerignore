@@ -22,6 +22,10 @@ coverage.txt
 .vscode
 .idea
 
+# 本地设计参考素材，不进入镜像上下文
+stitch_mcp_management_panel/
+stitch_mcp_management_panel.zip
+
 # Docker 自身文件，无需进入构建上下文
 Dockerfile
 .dockerignore

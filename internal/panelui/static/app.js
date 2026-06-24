@@ -1,0 +1,1419 @@
+(function () {
+  const API_BASE = "/panel/v1";
+  const storage = {
+    token: "grok_mcp_panel_token",
+    user: "grok_mcp_panel_user"
+  };
+
+  const routes = ["dashboard", "keys", "usage", "users", "account"];
+  const routeMeta = {
+    dashboard: { label: "Dashboard", icon: "dashboard" },
+    keys: { label: "Keys", icon: "vpn_key" },
+    usage: { label: "Usage Stats", icon: "bar_chart" },
+    users: { label: "User Management", icon: "group", admin: true },
+    account: { label: "Account Settings", icon: "settings", bottom: true }
+  };
+
+  const state = {
+    ready: false,
+    loading: false,
+    authMode: "login",
+    route: readRoute(),
+    token: getStored(storage.token),
+    user: readJSON(storage.user),
+    keys: [],
+    users: [],
+    usage: emptyUsage(),
+    selectedKeyID: "all",
+    sinceMode: "24h",
+    search: "",
+    modal: null,
+    toast: null
+  };
+
+  const app = document.getElementById("app");
+
+  document.addEventListener("submit", onSubmit);
+  document.addEventListener("click", onClick);
+  document.addEventListener("change", onChange);
+  document.addEventListener("input", onInput);
+  window.addEventListener("hashchange", async () => {
+    state.route = readRoute();
+    await loadRouteData();
+    render();
+  });
+
+  bootstrap();
+
+  async function bootstrap() {
+    if (!state.token) {
+      state.ready = true;
+      render();
+      return;
+    }
+    try {
+      state.user = await api("/me");
+      setStored(storage.user, JSON.stringify(state.user));
+      await loadRouteData();
+    } catch (err) {
+      clearSession();
+      notify(errorText(err), "error");
+    } finally {
+      state.ready = true;
+      render();
+    }
+  }
+
+  async function loadRouteData() {
+    if (!state.token || !state.user) {
+      return;
+    }
+    state.loading = true;
+    render();
+    try {
+      state.user = await api("/me");
+      setStored(storage.user, JSON.stringify(state.user));
+      if (state.route === "dashboard") {
+        await loadKeys();
+        state.usage = await loadAggregatedUsage("24h");
+      } else if (state.route === "keys") {
+        await loadKeys();
+      } else if (state.route === "usage") {
+        await loadKeys();
+        state.usage = await loadUsageForSelection();
+      } else if (state.route === "users" && isAdmin()) {
+        await loadUsers();
+      }
+    } catch (err) {
+      handleAPIError(err);
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  async function loadKeys() {
+    const data = await api("/keys");
+    state.keys = Array.isArray(data.keys) ? data.keys : [];
+  }
+
+  async function loadUsers() {
+    const data = await api("/admin/users");
+    state.users = Array.isArray(data.users) ? data.users : [];
+  }
+
+  async function loadAggregatedUsage(mode) {
+    if (!state.keys.length) {
+      return emptyUsage();
+    }
+    const since = sinceQuery(mode);
+    const parts = await Promise.all(state.keys.map((key) => api(`/keys/${encodeURIComponent(key.id)}/usage${since}`)));
+    return aggregateUsage(parts);
+  }
+
+  async function loadUsageForSelection() {
+    const since = sinceQuery(state.sinceMode);
+    if (state.selectedKeyID === "all") {
+      return loadAggregatedUsage(state.sinceMode);
+    }
+    const data = await api(`/keys/${encodeURIComponent(state.selectedKeyID)}/usage${since}`);
+    return normalizeUsage(data);
+  }
+
+  async function api(path, options = {}) {
+    const headers = {
+      "Accept": "application/json"
+    };
+    if (options.body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+    if (options.auth !== false && state.token) {
+      headers.Authorization = `Bearer ${state.token}`;
+    }
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: options.method || "GET",
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body)
+    });
+    if (res.status === 204) {
+      return null;
+    }
+    const text = await res.text();
+    let data = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { error: text };
+      }
+    }
+    if (!res.ok) {
+      const err = new Error(data && data.error ? data.error : `HTTP ${res.status}`);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  }
+
+  function render() {
+    if (!state.ready) {
+      app.innerHTML = renderLoading("加载管理面板...");
+      return;
+    }
+    if (!state.token || !state.user) {
+      app.innerHTML = renderAuth() + renderToast();
+      return;
+    }
+    app.innerHTML = renderShell() + renderModal() + renderToast();
+  }
+
+  function renderAuth() {
+    const active = state.authMode;
+    return `
+      <main class="auth-screen">
+        <section class="auth-card" aria-label="MCP Central 登录">
+          <div class="auth-head">
+            <div class="auth-logo"><span class="material-symbols-outlined">hub</span></div>
+            <h1 class="auth-title">MCP Central</h1>
+            <p class="auth-subtitle">Protocol Management Platform</p>
+          </div>
+          <div class="auth-body">
+            <div class="auth-tabs" data-active="${active}">
+              <span class="tab-indicator"></span>
+              <button class="tab-button ${active === "login" ? "active" : ""}" data-action="auth-tab" data-tab="login" type="button">Login</button>
+              <button class="tab-button ${active === "register" ? "active" : ""}" data-action="auth-tab" data-tab="register" type="button">Register</button>
+            </div>
+            <form id="login-form" class="form-stack ${active === "login" ? "" : "hidden"}">
+              <div class="field">
+                <label for="login-username">Username / ID</label>
+                <div class="input-shell">
+                  <span class="material-symbols-outlined">person</span>
+                  <input id="login-username" name="username" class="input with-icon mono" autocomplete="username" placeholder="admin" required>
+                </div>
+              </div>
+              <div class="field">
+                <label for="login-password">Password</label>
+                <div class="input-shell">
+                  <span class="material-symbols-outlined">lock</span>
+                  <input id="login-password" name="password" class="input with-icon mono" type="password" autocomplete="current-password" placeholder="••••••••" required>
+                </div>
+              </div>
+              <button class="button" type="submit">
+                <span>Authenticate</span>
+                <span class="material-symbols-outlined">arrow_forward</span>
+              </button>
+            </form>
+            <form id="register-form" class="form-stack ${active === "register" ? "" : "hidden"}">
+              <div class="field">
+                <label for="register-username">Desired Username</label>
+                <div class="input-shell">
+                  <span class="material-symbols-outlined">badge</span>
+                  <input id="register-username" name="username" class="input with-icon mono" autocomplete="username" placeholder="new_user" required>
+                </div>
+              </div>
+              <div class="field">
+                <label for="register-password">Create Password</label>
+                <div class="input-shell">
+                  <span class="material-symbols-outlined">key</span>
+                  <input id="register-password" name="password" class="input with-icon mono" type="password" autocomplete="new-password" placeholder="至少 8 位" minlength="8" required>
+                </div>
+              </div>
+              <button class="button secondary" type="submit">
+                <span class="material-symbols-outlined">person_add</span>
+                <span>Create Account</span>
+              </button>
+            </form>
+          </div>
+        </section>
+      </main>`;
+  }
+
+  function renderShell() {
+    return `
+      <div class="app-shell">
+        ${renderSidebar()}
+        <header class="topbar">
+          <button class="icon-button mobile-menu" data-action="go" data-route="dashboard" title="Dashboard" type="button">
+            <span class="material-symbols-outlined">developer_board</span>
+          </button>
+          <label class="search-box">
+            <span class="material-symbols-outlined">search</span>
+            <input id="global-search" value="${escapeHTML(state.search)}" placeholder="Search resources, logs..." autocomplete="off">
+          </label>
+          <div class="top-actions">
+            <button class="icon-button" data-action="refresh" title="刷新" type="button"><span class="material-symbols-outlined">notifications</span></button>
+            <button class="avatar" data-action="go" data-route="account" title="${escapeHTML(state.user.username)}" type="button">${escapeHTML(initials(state.user.username))}</button>
+          </div>
+        </header>
+        <main class="main">
+          <div class="content">
+            ${state.loading ? renderInlineLoading() : renderRoute()}
+          </div>
+        </main>
+      </div>`;
+  }
+
+  function renderSidebar() {
+    const top = routes.filter((route) => !routeMeta[route].bottom).map(renderNavLink).join("");
+    const bottom = routes.filter((route) => routeMeta[route].bottom).map(renderNavLink).join("");
+    return `
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark ${state.route === "keys" ? "text" : ""}">
+            ${state.route === "keys" ? "M" : '<span class="material-symbols-outlined">developer_board</span>'}
+          </div>
+          <div class="brand-copy">
+            <h1>MCP Central</h1>
+            <p>Protocol Management</p>
+          </div>
+        </div>
+        <nav class="nav-list" aria-label="主导航">
+          ${top}
+          <div class="nav-bottom">${bottom}</div>
+        </nav>
+      </aside>`;
+  }
+
+  function renderNavLink(route) {
+    const meta = routeMeta[route];
+    const locked = meta.admin && !isAdmin();
+    return `
+      <a class="nav-link ${state.route === route ? "active" : ""} ${locked ? "locked" : ""}" href="#/${route}" title="${escapeHTML(meta.label)}">
+        <span class="material-symbols-outlined">${meta.icon}</span>
+        <span>${escapeHTML(meta.label)}</span>
+      </a>`;
+  }
+
+  function renderRoute() {
+    if (state.route === "dashboard") return renderDashboard();
+    if (state.route === "keys") return renderKeys();
+    if (state.route === "usage") return renderUsage();
+    if (state.route === "users") return renderUsers();
+    if (state.route === "account") return renderAccount();
+    return renderDashboard();
+  }
+
+  function renderDashboard() {
+    const usage = state.usage;
+    const totalPct = percentOf(state.user.total_calls, state.user.total_limit);
+    const successPct = percentOf(state.user.success_calls, state.user.success_limit);
+    const successRate = state.user.total_calls > 0 ? Math.round((state.user.success_calls / state.user.total_calls) * 1000) / 10 : 100;
+    const risk = quotaRisk();
+    return `
+      ${risk ? renderAlert(risk) : ""}
+      <section class="grid metric-grid">
+        ${metricCard("Rate Per Minute<br>(RPM)", formatNumber(state.user.rpm), "speed", "用户级共享限流", "good", 100)}
+        ${metricCard("Total Requests", `${formatNumber(state.user.total_calls)} <span class="muted">/ ${limitText(state.user.total_limit)}</span>`, "data_usage", quotaNote(totalPct), totalPct >= 90 ? "bad" : "good", totalPct)}
+        ${metricCard("Success Rate", `${successRate}%`, "check_circle", state.user.total_calls ? "Based on completed calls" : "No traffic yet", "good", null)}
+        ${metricCard("Success Quota", `${remainingText(state.user.success_calls, state.user.success_limit)}`, "task_alt", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct)}
+      </section>
+      <section class="grid viz-grid">
+        <div class="card panel">
+          <div class="panel-head">
+            <h3>Traffic Volume</h3>
+            <button class="button secondary small" data-action="go" data-route="usage" type="button">Last 24 Hours</button>
+          </div>
+          ${renderBars(usage.records)}
+        </div>
+        ${renderToolUsage(usage)}
+      </section>
+      ${renderRecentActivity(usage.records, true)}`;
+  }
+
+  function renderKeys() {
+    const filtered = filteredKeys();
+    return `
+      <div class="page-head">
+        <div>
+          <h2>API Keys</h2>
+          <p>Manage your active Model Context Protocol keys and permissions.</p>
+        </div>
+        <button class="button" data-action="open-create-key" type="button">
+          <span class="material-symbols-outlined">add</span>
+          <span>Create New Key</span>
+        </button>
+      </div>
+      <section class="card table-card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Prefix</th>
+                <th>Status</th>
+                <th>Created Date</th>
+                <th>Last Used</th>
+                <th class="right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.length ? filtered.map(renderKeyRow).join("") : renderEmptyRow("vpn_key", "No API keys yet", "Create a key to connect an MCP client.")}
+            </tbody>
+          </table>
+        </div>
+      </section>`;
+  }
+
+  function renderKeyRow(key) {
+    return `
+      <tr>
+        <td><strong>${escapeHTML(key.name || "Untitled Key")}</strong></td>
+        <td class="mono muted">${escapeHTML(key.key_prefix || "mcp_...")}</td>
+        <td>
+          <label class="toggle" title="${key.enabled ? "Enabled" : "Disabled"}">
+            <input type="checkbox" data-key-toggle="${escapeAttr(key.id)}" ${key.enabled ? "checked" : ""}>
+            <span></span>
+          </label>
+        </td>
+        <td>${formatDate(key.created_at)}</td>
+        <td class="muted">${key.last_used_at ? relativeTime(key.last_used_at) : "Never"}</td>
+        <td class="right">
+          <span class="row-actions">
+            <button class="mini-icon" data-action="key-usage" data-key-id="${escapeAttr(key.id)}" title="Usage" type="button"><span class="material-symbols-outlined">bar_chart</span></button>
+            <button class="mini-icon" data-action="edit-key" data-key-id="${escapeAttr(key.id)}" title="Edit" type="button"><span class="material-symbols-outlined">edit</span></button>
+            <button class="mini-icon danger" data-action="delete-key" data-key-id="${escapeAttr(key.id)}" title="Delete" type="button"><span class="material-symbols-outlined">delete</span></button>
+          </span>
+        </td>
+      </tr>`;
+  }
+
+  function renderUsage() {
+    const usage = state.usage;
+    return `
+      <div class="page-head">
+        <div>
+          <h2>Usage Stats</h2>
+          <p>Review MCP tool calls, latency and success counters.</p>
+        </div>
+        <div class="toolbar">
+          <select class="select" id="usage-key-select" aria-label="选择 Key">
+            <option value="all" ${state.selectedKeyID === "all" ? "selected" : ""}>All Keys</option>
+            ${state.keys.map((key) => `<option value="${escapeAttr(key.id)}" ${state.selectedKeyID === key.id ? "selected" : ""}>${escapeHTML(key.name || key.key_prefix)}</option>`).join("")}
+          </select>
+          <select class="select" id="usage-since-select" aria-label="选择时间范围">
+            <option value="24h" ${state.sinceMode === "24h" ? "selected" : ""}>Last 24 Hours</option>
+            <option value="7d" ${state.sinceMode === "7d" ? "selected" : ""}>Last 7 Days</option>
+            <option value="all" ${state.sinceMode === "all" ? "selected" : ""}>All Time</option>
+          </select>
+          <button class="button secondary" data-action="refresh" type="button"><span class="material-symbols-outlined">refresh</span><span>Refresh</span></button>
+        </div>
+      </div>
+      <section class="grid metric-grid">
+        ${metricCard("Total Calls", formatNumber(usage.total_calls), "data_usage", "Selected range", "good", null)}
+        ${metricCard("Success Calls", formatNumber(usage.success_calls), "check_circle", `${successPercent(usage)} success`, "good", null)}
+        ${metricCard("Failed Calls", formatNumber(Math.max(0, usage.total_calls - usage.success_calls)), "error", "Not counted as success quota", usage.total_calls === usage.success_calls ? "good" : "bad", null)}
+        ${metricCard("Active Keys", formatNumber(state.keys.filter((k) => k.enabled).length), "vpn_key", `${state.keys.length} total keys`, "good", null)}
+      </section>
+      <section class="grid viz-grid">
+        <div class="card panel">
+          <div class="panel-head">
+            <h3>Traffic Volume</h3>
+            <span class="mono muted">${escapeHTML(rangeLabel(state.sinceMode))}</span>
+          </div>
+          ${renderBars(usage.records)}
+        </div>
+        ${renderToolUsage(usage)}
+      </section>
+      ${renderRecentActivity(filteredRecords(usage.records), false)}`;
+  }
+
+  function renderUsers() {
+    if (!isAdmin()) {
+      return `
+        <div class="page-head">
+          <div>
+            <h2>User Management</h2>
+            <p>Admin role is required to view and edit users.</p>
+          </div>
+        </div>
+        <section class="card empty">
+          <div>
+            <span class="material-symbols-outlined">lock</span>
+            <h3>Admin required</h3>
+            <p>当前账号没有管理员权限。</p>
+          </div>
+        </section>`;
+    }
+    const users = filteredUsers();
+    return `
+      <div class="page-head">
+        <div>
+          <h2>User Management</h2>
+          <p>Adjust user status, roles and aggregate quotas.</p>
+        </div>
+        <button class="button secondary" data-action="refresh" type="button"><span class="material-symbols-outlined">refresh</span><span>Refresh</span></button>
+      </div>
+      <section class="card table-card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>RPM</th>
+                <th>Total Calls</th>
+                <th>Success Calls</th>
+                <th class="right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${users.length ? users.map(renderUserRow).join("") : renderEmptyRow("group", "No users", "Registered users will appear here.")}
+            </tbody>
+          </table>
+        </div>
+      </section>`;
+  }
+
+  function renderUserRow(user) {
+    return `
+      <tr>
+        <td>
+          <strong>${escapeHTML(user.username)}</strong>
+          <div class="hint mono">${escapeHTML(shortID(user.id))}</div>
+        </td>
+        <td><span class="badge ${user.role === "admin" ? "" : "off"}">${escapeHTML(user.role)}</span></td>
+        <td><span class="badge ${user.enabled ? "" : "error"}">${user.enabled ? "Enabled" : "Disabled"}</span></td>
+        <td class="mono">${formatNumber(user.rpm)}</td>
+        <td>${formatNumber(user.total_calls)} <span class="muted">/ ${limitText(user.total_limit)}</span></td>
+        <td>${formatNumber(user.success_calls)} <span class="muted">/ ${limitText(user.success_limit)}</span></td>
+        <td class="right">
+          <span class="row-actions">
+            <button class="mini-icon" data-action="user-usage" data-user-id="${escapeAttr(user.id)}" title="Usage" type="button"><span class="material-symbols-outlined">bar_chart</span></button>
+            <button class="mini-icon" data-action="edit-user" data-user-id="${escapeAttr(user.id)}" title="Edit" type="button"><span class="material-symbols-outlined">edit</span></button>
+          </span>
+        </td>
+      </tr>`;
+  }
+
+  function renderAccount() {
+    return `
+      <div class="page-head">
+        <div>
+          <h2>Account Settings</h2>
+          <p>Review the active session and quotas.</p>
+        </div>
+        <button class="button secondary" data-action="logout" type="button"><span class="material-symbols-outlined">logout</span><span>Logout</span></button>
+      </div>
+      <section class="grid settings-grid">
+        <div class="card panel">
+          <div class="panel-head">
+            <h3>Profile</h3>
+            <span class="badge ${state.user.enabled ? "" : "error"}">${state.user.enabled ? "Enabled" : "Disabled"}</span>
+          </div>
+          <div class="summary-list">
+            ${summaryItem("Username", escapeHTML(state.user.username))}
+            ${summaryItem("Role", `<span class="badge ${state.user.role === "admin" ? "" : "off"}">${escapeHTML(state.user.role)}</span>`)}
+            ${summaryItem("User ID", `<span class="mono">${escapeHTML(state.user.id)}</span>`)}
+            ${summaryItem("Created", formatDateTime(state.user.created_at))}
+            ${summaryItem("Updated", formatDateTime(state.user.updated_at))}
+          </div>
+        </div>
+        <div class="card panel">
+          <div class="panel-head">
+            <h3>Quotas</h3>
+          </div>
+          <div class="quota-list">
+            ${quotaProgress("RPM", state.user.rpm, 0, "per minute")}
+            ${quotaProgress("Total Requests", state.user.total_calls, state.user.total_limit, "all keys")}
+            ${quotaProgress("Success Requests", state.user.success_calls, state.user.success_limit, "successful calls")}
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function metricCard(title, value, icon, note, tone, progress) {
+    return `
+      <div class="card metric-card">
+        <div class="metric-top">
+          <span class="metric-title">${title}</span>
+          <span class="material-symbols-outlined muted">${icon}</span>
+        </div>
+        <div>
+          <div class="metric-value">${value}</div>
+          ${progress === null ? "" : `<div class="progress" style="margin-top: 16px;"><div class="progress-bar" style="width: ${clamp(progress, 0, 100)}%;"></div></div>`}
+          <div class="metric-note ${tone || ""}">
+            <span class="material-symbols-outlined" style="font-size: 16px;">${tone === "bad" ? "trending_up" : "trending_flat"}</span>
+            <span>${escapeHTML(note || "Stable")}</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderAlert(risk) {
+    return `
+      <section class="alert">
+        <span class="material-symbols-outlined">warning</span>
+        <div>
+          <h3>${escapeHTML(risk.title)}</h3>
+          <p>${escapeHTML(risk.body)}</p>
+        </div>
+        <button class="button secondary" data-action="go" data-route="account" type="button">Review Quotas</button>
+      </section>`;
+  }
+
+  function renderBars(records) {
+    const buckets = bucketRecords(records || []);
+    const max = Math.max(1, ...buckets);
+    return `
+      <div class="bar-chart" aria-label="流量柱状图">
+        ${buckets.map((value) => `<div class="bar" title="${value} calls" style="height: ${Math.max(8, Math.round((value / max) * 92))}%;"></div>`).join("")}
+      </div>
+      <div class="chart-axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>Now</span></div>`;
+  }
+
+  function renderToolUsage(usage) {
+    const rows = Object.entries(usage.by_tool || {}).sort((a, b) => b[1] - a[1]);
+    const total = rows.reduce((sum, row) => sum + row[1], 0);
+    const top = rows[0] || ["No Data", 0];
+    const pct = total ? Math.round((top[1] / total) * 100) : 0;
+    const rest = Math.max(0, 100 - pct);
+    return `
+      <div class="card panel donut-wrap">
+        <div class="panel-head">
+          <h3>Tool Usage</h3>
+        </div>
+        <div class="donut" style="--donut-value: ${pct}%">
+          <div class="donut-inner">
+            <div>
+              <strong>${pct}%</strong>
+              <span>${escapeHTML(trimToolName(top[0]))}</span>
+            </div>
+          </div>
+        </div>
+        <div class="legend">
+          <div class="legend-row">
+            <span class="legend-name"><span class="dot"></span>${escapeHTML(top[0])}</span>
+            <span class="mono">${pct}%</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-name"><span class="dot light"></span>Other Tools</span>
+            <span class="mono">${rest}%</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function renderRecentActivity(records, compact) {
+    const rows = filteredRecords(records || []).slice(0, compact ? 5 : 500);
+    return `
+      <section class="card table-card">
+        <div class="table-head">
+          <h3>Recent Activity</h3>
+          <button class="button ghost small" data-action="go" data-route="usage" type="button">View All Logs</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>TOOL NAME</th>
+                <th>REQUEST ID</th>
+                <th>TIMESTAMP</th>
+                <th>LATENCY</th>
+                <th class="right">STATUS</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.length ? rows.map(renderActivityRow).join("") : renderEmptyRow("receipt_long", "No usage records", "MCP tools/call activity will appear here.")}
+            </tbody>
+          </table>
+        </div>
+      </section>`;
+  }
+
+  function renderActivityRow(record) {
+    return `
+      <tr>
+        <td class="mono" style="color: var(--primary);">${escapeHTML(record.tool_name || "unknown")}</td>
+        <td class="muted">${escapeHTML(`req_${String(record.id || "").padStart(8, "0").slice(-8)}`)}</td>
+        <td>${relativeTime(record.timestamp)}</td>
+        <td>${record.duration_ms ? `${formatNumber(record.duration_ms)}ms` : "--"}</td>
+        <td class="right"><span class="badge ${record.success ? "" : "error"}">${record.success ? "Success" : "Failed"}</span></td>
+      </tr>`;
+  }
+
+  function renderEmptyRow(icon, title, text) {
+    return `
+      <tr>
+        <td colspan="8">
+          <div class="empty">
+            <div>
+              <span class="material-symbols-outlined">${icon}</span>
+              <h3>${escapeHTML(title)}</h3>
+              <p>${escapeHTML(text)}</p>
+            </div>
+          </div>
+        </td>
+      </tr>`;
+  }
+
+  function renderModal() {
+    if (!state.modal) return "";
+    if (state.modal.type === "create-key") return renderCreateKeyModal();
+    if (state.modal.type === "key-created") return renderKeyCreatedModal(state.modal);
+    if (state.modal.type === "edit-key") return renderEditKeyModal(state.modal.key);
+    if (state.modal.type === "edit-user") return renderEditUserModal(state.modal.user);
+    if (state.modal.type === "user-usage") return renderUserUsageModal(state.modal.user, state.modal.usage);
+    return "";
+  }
+
+  function renderCreateKeyModal() {
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-label="Create New Key" data-modal>
+          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+          <div class="modal-body">
+            <h3>Create New Key</h3>
+            <p>Create a client key for the current user. The raw key will be shown once.</p>
+            <form id="create-key-form" class="form-stack" style="margin-top: 24px;">
+              <div class="field">
+                <label for="key-name">Key Name</label>
+                <input id="key-name" name="name" class="input" placeholder="Production Backend" required>
+              </div>
+              <div class="modal-actions">
+                <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+                <button class="button" type="submit"><span class="material-symbols-outlined">add</span><span>Create</span></button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function renderKeyCreatedModal(modal) {
+    return `
+      <div class="modal-backdrop">
+        <section class="modal" role="dialog" aria-modal="true" aria-label="New API Key Created" data-modal>
+          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+          <div class="modal-body">
+            <h3>New API Key Created</h3>
+            <p>Your new key '${escapeHTML(modal.key.name)}' is ready to use.</p>
+            <div class="warning-box">
+              <span class="material-symbols-outlined">warning</span>
+              <div>
+                <strong>Save this key now.</strong>
+                <p>For your security, it will only be shown once. If you lose it, you will need to generate a new key.</p>
+              </div>
+            </div>
+            <div class="key-copy">
+              <label class="field-label" for="created-api-key">Secret Key</label>
+              <div class="copy-shell">
+                <input id="created-api-key" class="input mono subtle" value="${escapeAttr(modal.apiKey)}" readonly>
+                <button class="mini-icon" data-action="copy-created-key" title="Copy" type="button"><span class="material-symbols-outlined">content_copy</span></button>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button class="button secondary" data-action="close-modal" type="button">I've Saved It</button>
+              <button class="button" data-action="copy-created-key" type="button"><span class="material-symbols-outlined">content_copy</span><span>Copy Key</span></button>
+            </div>
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function renderEditKeyModal(key) {
+    if (!key) return "";
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Key" data-modal>
+          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+          <div class="modal-body">
+            <h3>Edit API Key</h3>
+            <p>Update the key label or disable access immediately.</p>
+            <form id="edit-key-form" class="form-stack" style="margin-top: 24px;">
+              <input type="hidden" name="id" value="${escapeAttr(key.id)}">
+              <div class="field">
+                <label for="edit-key-name">Name</label>
+                <input id="edit-key-name" name="name" class="input" value="${escapeAttr(key.name || "")}" required>
+              </div>
+              <div class="field-row">
+                <span>
+                  <strong>Enabled</strong>
+                  <span class="hint" style="display: block;">Disabled keys cannot call /mcp.</span>
+                </span>
+                <label class="toggle">
+                  <input type="checkbox" name="enabled" ${key.enabled ? "checked" : ""}>
+                  <span></span>
+                </label>
+              </div>
+              <div class="modal-actions">
+                <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+                <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function renderEditUserModal(user) {
+    if (!user) return "";
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-label="Edit User" data-modal>
+          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+          <div class="modal-body">
+            <h3>Edit User</h3>
+            <p>${escapeHTML(user.username)} quota and access controls.</p>
+            <form id="edit-user-form" class="form-stack" style="margin-top: 24px;">
+              <input type="hidden" name="id" value="${escapeAttr(user.id)}">
+              <div class="field-row">
+                <span>
+                  <strong>Enabled</strong>
+                  <span class="hint" style="display: block;">Disabled users cannot log in or use keys.</span>
+                </span>
+                <label class="toggle"><input type="checkbox" name="enabled" ${user.enabled ? "checked" : ""}><span></span></label>
+              </div>
+              <div class="field">
+                <label for="edit-user-role">Role</label>
+                <select id="edit-user-role" name="role" class="select">
+                  <option value="user" ${user.role === "user" ? "selected" : ""}>user</option>
+                  <option value="admin" ${user.role === "admin" ? "selected" : ""}>admin</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="edit-user-rpm">RPM</label>
+                <input id="edit-user-rpm" name="rpm" class="input mono" type="number" min="0" value="${Number(user.rpm) || 0}">
+              </div>
+              <div class="field">
+                <label for="edit-user-total">Total Limit</label>
+                <input id="edit-user-total" name="total_limit" class="input mono" type="number" min="0" value="${Number(user.total_limit) || 0}">
+                <span class="hint">0 means unlimited.</span>
+              </div>
+              <div class="field">
+                <label for="edit-user-success">Success Limit</label>
+                <input id="edit-user-success" name="success_limit" class="input mono" type="number" min="0" value="${Number(user.success_limit) || 0}">
+                <span class="hint">0 means unlimited.</span>
+              </div>
+              <div class="modal-actions">
+                <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+                <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function renderUserUsageModal(user, usage) {
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-label="User Usage" data-modal>
+          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+          <div class="modal-body">
+            <h3>User Usage</h3>
+            <p>${escapeHTML(user.username)} aggregate usage.</p>
+            <div class="grid metric-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 24px 0;">
+              ${metricCard("Total Calls", formatNumber(usage.total_calls), "data_usage", "All user keys", "good", null)}
+              ${metricCard("Success Calls", formatNumber(usage.success_calls), "check_circle", `${successPercent(usage)} success`, "good", null)}
+            </div>
+            ${renderRecentActivity(usage.records || [], true)}
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function renderInlineLoading() {
+    return `<section class="card empty"><div><div class="spinner"></div><p>Loading current view...</p></div></section>`;
+  }
+
+  function renderLoading(text) {
+    return `<main class="loading-screen"><div><div class="spinner"></div><p>${escapeHTML(text)}</p></div></main>`;
+  }
+
+  function renderToast() {
+    if (!state.toast) return "";
+    return `
+      <aside class="toast ${state.toast.type}">
+        <span class="material-symbols-outlined">${state.toast.type === "error" ? "error" : "check_circle"}</span>
+        <div>${escapeHTML(state.toast.message)}</div>
+      </aside>`;
+  }
+
+  async function onSubmit(event) {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    event.preventDefault();
+
+    if (form.id === "login-form") {
+      await submitLogin(form);
+    } else if (form.id === "register-form") {
+      await submitRegister(form);
+    } else if (form.id === "create-key-form") {
+      await submitCreateKey(form);
+    } else if (form.id === "edit-key-form") {
+      await submitEditKey(form);
+    } else if (form.id === "edit-user-form") {
+      await submitEditUser(form);
+    }
+  }
+
+  async function submitLogin(form) {
+    const data = new FormData(form);
+    try {
+      const resp = await api("/auth/login", {
+        method: "POST",
+        auth: false,
+        body: {
+          username: String(data.get("username") || "").trim(),
+          password: String(data.get("password") || "")
+        }
+      });
+      state.token = resp.token;
+      state.user = resp.user;
+      setStored(storage.token, state.token);
+      setStored(storage.user, JSON.stringify(state.user));
+      notify("登录成功。", "success");
+      navigate("dashboard");
+      await loadRouteData();
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function submitRegister(form) {
+    const data = new FormData(form);
+    const username = String(data.get("username") || "").trim();
+    const password = String(data.get("password") || "");
+    try {
+      await api("/auth/register", {
+        method: "POST",
+        auth: false,
+        body: { username, password }
+      });
+      notify("注册成功，正在登录。", "success");
+      const loginForm = new FormData();
+      loginForm.set("username", username);
+      loginForm.set("password", password);
+      const resp = await api("/auth/login", {
+        method: "POST",
+        auth: false,
+        body: { username, password }
+      });
+      state.token = resp.token;
+      state.user = resp.user;
+      setStored(storage.token, state.token);
+      setStored(storage.user, JSON.stringify(state.user));
+      navigate("dashboard");
+      await loadRouteData();
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function submitCreateKey(form) {
+    const data = new FormData(form);
+    try {
+      const resp = await api("/keys", {
+        method: "POST",
+        body: { name: String(data.get("name") || "").trim() }
+      });
+      await loadKeys();
+      state.modal = { type: "key-created", key: resp.key, apiKey: resp.api_key };
+      notify("Key 已创建。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function submitEditKey(form) {
+    const data = new FormData(form);
+    const id = String(data.get("id") || "");
+    try {
+      await api(`/keys/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: {
+          name: String(data.get("name") || "").trim(),
+          enabled: data.get("enabled") === "on"
+        }
+      });
+      state.modal = null;
+      await loadKeys();
+      notify("Key 已更新。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function submitEditUser(form) {
+    const data = new FormData(form);
+    const id = String(data.get("id") || "");
+    try {
+      await api(`/admin/users/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: {
+          enabled: data.get("enabled") === "on",
+          role: String(data.get("role") || "user"),
+          rpm: Number(data.get("rpm") || 0),
+          total_limit: Number(data.get("total_limit") || 0),
+          success_limit: Number(data.get("success_limit") || 0)
+        }
+      });
+      state.modal = null;
+      await loadUsers();
+      notify("用户已更新。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function onClick(event) {
+    const actionEl = event.target.closest("[data-action]");
+    if (!actionEl) return;
+    const action = actionEl.dataset.action;
+
+    if (action === "auth-tab") {
+      state.authMode = actionEl.dataset.tab === "register" ? "register" : "login";
+      render();
+    } else if (action === "go") {
+      navigate(actionEl.dataset.route || "dashboard");
+    } else if (action === "refresh") {
+      await loadRouteData();
+      render();
+    } else if (action === "open-create-key") {
+      state.modal = { type: "create-key" };
+      render();
+    } else if (action === "close-modal") {
+      if (!event.target.closest("[data-modal]") || actionEl.classList.contains("modal-close") || actionEl.classList.contains("button")) {
+        state.modal = null;
+        render();
+      }
+    } else if (action === "copy-created-key") {
+      await copyCreatedKey();
+    } else if (action === "edit-key") {
+      const key = state.keys.find((item) => item.id === actionEl.dataset.keyId);
+      state.modal = { type: "edit-key", key };
+      render();
+    } else if (action === "delete-key") {
+      await deleteKey(actionEl.dataset.keyId);
+    } else if (action === "key-usage") {
+      state.selectedKeyID = actionEl.dataset.keyId || "all";
+      navigate("usage");
+    } else if (action === "edit-user") {
+      const user = state.users.find((item) => item.id === actionEl.dataset.userId);
+      state.modal = { type: "edit-user", user };
+      render();
+    } else if (action === "user-usage") {
+      await openUserUsage(actionEl.dataset.userId);
+    } else if (action === "logout") {
+      clearSession();
+      notify("已退出登录。", "success");
+      render();
+    }
+  }
+
+  async function onChange(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    if (target.matches("[data-key-toggle]")) {
+      const checkbox = target;
+      await updateKeyEnabled(checkbox.dataset.keyToggle, checkbox.checked);
+    } else if (target.id === "usage-key-select") {
+      state.selectedKeyID = target.value;
+      await loadRouteData();
+      render();
+    } else if (target.id === "usage-since-select") {
+      state.sinceMode = target.value;
+      await loadRouteData();
+      render();
+    }
+  }
+
+  function onInput(event) {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.id === "global-search") {
+      state.search = target.value;
+      render();
+      const next = document.getElementById("global-search");
+      if (next) {
+        next.focus();
+        next.setSelectionRange(next.value.length, next.value.length);
+      }
+    }
+  }
+
+  async function updateKeyEnabled(id, enabled) {
+    try {
+      await api(`/keys/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { enabled }
+      });
+      const key = state.keys.find((item) => item.id === id);
+      if (key) key.enabled = enabled;
+      notify(enabled ? "Key 已启用。" : "Key 已禁用。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      await loadKeys();
+      render();
+    }
+  }
+
+  async function deleteKey(id) {
+    const key = state.keys.find((item) => item.id === id);
+    if (!key) return;
+    if (!window.confirm(`Delete API key "${key.name || key.key_prefix}"?`)) return;
+    try {
+      await api(`/keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await loadKeys();
+      notify("Key 已删除。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function openUserUsage(id) {
+    const user = state.users.find((item) => item.id === id);
+    if (!user) return;
+    try {
+      const usage = await api(`/admin/users/${encodeURIComponent(id)}/usage`);
+      state.modal = { type: "user-usage", user, usage: normalizeUsage(usage) };
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function copyCreatedKey() {
+    const input = document.getElementById("created-api-key");
+    const value = input ? input.value : state.modal && state.modal.apiKey;
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      notify("已复制到剪贴板。", "success");
+    } catch {
+      if (input) {
+        input.focus();
+        input.select();
+      }
+      notify("浏览器拒绝自动复制，请手动复制。", "error");
+    }
+    render();
+  }
+
+  function navigate(route) {
+    const next = routes.includes(route) ? route : "dashboard";
+    if (routeMeta[next].admin && !isAdmin()) {
+      state.route = next;
+      window.location.hash = `#/${next}`;
+      render();
+      return;
+    }
+    if (window.location.hash !== `#/${next}`) {
+      window.location.hash = `#/${next}`;
+    } else {
+      state.route = next;
+      loadRouteData().then(render);
+    }
+  }
+
+  function handleAPIError(err) {
+    if (err && err.status === 401) {
+      clearSession();
+      notify("登录已失效，请重新登录。", "error");
+    } else {
+      notify(errorText(err), "error");
+    }
+  }
+
+  function clearSession() {
+    state.token = "";
+    state.user = null;
+    state.keys = [];
+    state.users = [];
+    state.usage = emptyUsage();
+    removeStored(storage.token);
+    removeStored(storage.user);
+  }
+
+  function notify(message, type) {
+    const id = `${Date.now()}-${Math.random()}`;
+    state.toast = { id, message, type: type || "success" };
+    window.clearTimeout(notify.timer);
+    notify.timer = window.setTimeout(() => {
+      if (state.toast && state.toast.id === id) {
+        state.toast = null;
+        render();
+      }
+    }, 3600);
+  }
+
+  function readRoute() {
+    const raw = window.location.hash.replace(/^#\/?/, "");
+    return routes.includes(raw) ? raw : "dashboard";
+  }
+
+  function isAdmin() {
+    return state.user && state.user.role === "admin";
+  }
+
+  function emptyUsage() {
+    return { total_calls: 0, success_calls: 0, by_tool: {}, records: [] };
+  }
+
+  function normalizeUsage(data) {
+    return {
+      total_calls: Number(data && data.total_calls) || 0,
+      success_calls: Number(data && data.success_calls) || 0,
+      by_tool: data && data.by_tool ? data.by_tool : {},
+      records: Array.isArray(data && data.records) ? data.records : []
+    };
+  }
+
+  function aggregateUsage(parts) {
+    const usage = emptyUsage();
+    for (const part of parts.map(normalizeUsage)) {
+      usage.total_calls += part.total_calls;
+      usage.success_calls += part.success_calls;
+      for (const [tool, count] of Object.entries(part.by_tool || {})) {
+        usage.by_tool[tool] = (usage.by_tool[tool] || 0) + Number(count || 0);
+      }
+      usage.records.push(...(part.records || []));
+    }
+    usage.records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    return usage;
+  }
+
+  function sinceQuery(mode) {
+    if (mode === "all") return "";
+    const now = Date.now();
+    const ms = mode === "7d" ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    return `?since=${encodeURIComponent(new Date(now - ms).toISOString())}`;
+  }
+
+  function rangeLabel(mode) {
+    if (mode === "7d") return "Last 7 Days";
+    if (mode === "all") return "All Time";
+    return "Last 24 Hours";
+  }
+
+  function bucketRecords(records) {
+    const buckets = new Array(8).fill(0);
+    const now = Date.now();
+    const start = now - 24 * 60 * 60 * 1000;
+    for (const record of records) {
+      const ts = new Date(record.timestamp).getTime();
+      if (!Number.isFinite(ts) || ts < start || ts > now) continue;
+      const index = Math.min(7, Math.max(0, Math.floor(((ts - start) / (now - start)) * 8)));
+      buckets[index] += 1;
+    }
+    if (buckets.every((item) => item === 0)) {
+      return [1, 2, 3, 5, 4, 6, 3, 2].map(() => 0);
+    }
+    return buckets;
+  }
+
+  function filteredKeys() {
+    const q = state.search.trim().toLowerCase();
+    if (!q) return state.keys;
+    return state.keys.filter((key) => [key.name, key.key_prefix, key.id].some((value) => String(value || "").toLowerCase().includes(q)));
+  }
+
+  function filteredUsers() {
+    const q = state.search.trim().toLowerCase();
+    if (!q) return state.users;
+    return state.users.filter((user) => [user.username, user.role, user.id].some((value) => String(value || "").toLowerCase().includes(q)));
+  }
+
+  function filteredRecords(records) {
+    const q = state.search.trim().toLowerCase();
+    const sorted = [...(records || [])].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    if (!q) return sorted;
+    return sorted.filter((record) => [record.tool_name, record.key_id, record.id, record.success ? "success" : "failed"].some((value) => String(value || "").toLowerCase().includes(q)));
+  }
+
+  function quotaRisk() {
+    const totalPct = percentOf(state.user.total_calls, state.user.total_limit);
+    const successPct = percentOf(state.user.success_calls, state.user.success_limit);
+    if (totalPct >= 90) {
+      return {
+        title: "Request Limit Near Capacity",
+        body: `You are currently using ${Math.round(totalPct)}% of your allocated total request quota.`
+      };
+    }
+    if (successPct >= 90) {
+      return {
+        title: "Success Limit Near Capacity",
+        body: `You are currently using ${Math.round(successPct)}% of your allocated success request quota.`
+      };
+    }
+    if (state.user.rpm > 0 && state.usage.total_calls >= Math.max(1, Math.round(state.user.rpm * 0.9))) {
+      return {
+        title: "Rate Limit Near Capacity",
+        body: "Recent traffic is approaching the configured user-level RPM limit. Review keys or quotas before throttling occurs."
+      };
+    }
+    return null;
+  }
+
+  function quotaProgress(label, used, limit, note) {
+    const pct = percentOf(used, limit);
+    return `
+      <div class="quota-item">
+        <div class="field-row">
+          <span class="field-label">${escapeHTML(label)}</span>
+          <span class="mono">${formatNumber(used)}${limit ? ` / ${formatNumber(limit)}` : " / unlimited"}</span>
+        </div>
+        <div class="progress"><div class="progress-bar" style="width: ${limit ? clamp(pct, 0, 100) : 100}%;"></div></div>
+        <span class="hint">${escapeHTML(note)}</span>
+      </div>`;
+  }
+
+  function summaryItem(label, value) {
+    return `<div class="summary-item"><span class="summary-label">${escapeHTML(label)}</span><span>${value}</span></div>`;
+  }
+
+  function quotaNote(pct) {
+    if (!Number.isFinite(pct) || pct === 0) return "Unlimited or unused";
+    return `${Math.round(pct)}% used`;
+  }
+
+  function percentOf(value, limit) {
+    const n = Number(value) || 0;
+    const l = Number(limit) || 0;
+    if (l <= 0) return 0;
+    return (n / l) * 100;
+  }
+
+  function remainingText(used, limit) {
+    const l = Number(limit) || 0;
+    if (l <= 0) return "Unlimited";
+    return formatNumber(Math.max(0, l - (Number(used) || 0)));
+  }
+
+  function successPercent(usage) {
+    if (!usage.total_calls) return "100%";
+    return `${Math.round((usage.success_calls / usage.total_calls) * 1000) / 10}%`;
+  }
+
+  function limitText(limit) {
+    const n = Number(limit) || 0;
+    return n <= 0 ? "∞" : formatNumber(n);
+  }
+
+  function formatNumber(value) {
+    const n = Number(value) || 0;
+    return new Intl.NumberFormat("en-US").format(n);
+  }
+
+  function formatDate(value) {
+    if (!value) return "--";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "--";
+    return date.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "2-digit" });
+  }
+
+  function formatDateTime(value) {
+    if (!value) return "--";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "--";
+    return date.toLocaleString("en-US");
+  }
+
+  function relativeTime(value) {
+    if (!value) return "Never";
+    const ts = new Date(value).getTime();
+    if (!Number.isFinite(ts)) return "Never";
+    const diff = Date.now() - ts;
+    const abs = Math.abs(diff);
+    const minute = 60 * 1000;
+    const hour = 60 * minute;
+    const day = 24 * hour;
+    const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+    if (abs < minute) return "Just now";
+    if (abs < hour) return rtf.format(-Math.round(diff / minute), "minute");
+    if (abs < day) return rtf.format(-Math.round(diff / hour), "hour");
+    return rtf.format(-Math.round(diff / day), "day");
+  }
+
+  function trimToolName(name) {
+    if (!name || name === "No Data") return name || "No Data";
+    const parts = String(name).split(".");
+    return parts[parts.length - 1] || name;
+  }
+
+  function shortID(id) {
+    const text = String(id || "");
+    return text.length > 12 ? `${text.slice(0, 6)}...${text.slice(-4)}` : text;
+  }
+
+  function initials(username) {
+    const text = String(username || "U").trim();
+    return text ? text[0].toUpperCase() : "U";
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, Number(value) || 0));
+  }
+
+  function escapeHTML(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function escapeAttr(value) {
+    return escapeHTML(value);
+  }
+
+  function getStored(key) {
+    try {
+      return window.localStorage.getItem(key) || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function setStored(key, value) {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {
+      return undefined;
+    }
+  }
+
+  function removeStored(key) {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      return undefined;
+    }
+  }
+
+  function readJSON(key) {
+    const raw = getStored(key);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  function errorText(err) {
+    if (!err) return "请求失败。";
+    if (err.status === 401) return "认证失败，请检查账号、密码或 Token。";
+    if (err.status === 403) return "权限不足或用户已被禁用。";
+    if (err.status === 409) return "用户名已存在。";
+    if (err.status === 429) return "请求被限流或额度已耗尽。";
+    return err.message || "请求失败。";
+  }
+})();

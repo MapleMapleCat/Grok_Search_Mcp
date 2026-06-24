@@ -63,24 +63,3 @@ func TestAPIKeyMiddleware(t *testing.T) {
 		t.Fatalf("expected 401, got %d", rec2.Code)
 	}
 }
-
-func TestPanelKeyMiddleware(t *testing.T) {
-	h := PanelKeyMiddleware("panel-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/panel", nil)
-	req.Header.Set("X-Panel-Key", "panel-secret")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", rec.Code)
-	}
-
-	req2 := httptest.NewRequest(http.MethodGet, "/panel", nil)
-	rec2 := httptest.NewRecorder()
-	h.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", rec2.Code)
-	}
-}

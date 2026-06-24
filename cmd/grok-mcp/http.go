@@ -10,6 +10,7 @@ import (
 	"github.com/grok-mcp/internal/auth"
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/panel"
+	"github.com/grok-mcp/internal/panelui"
 	"github.com/grok-mcp/internal/quota"
 	"github.com/grok-mcp/internal/ratelimit"
 	"github.com/grok-mcp/internal/store"
@@ -54,9 +55,12 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 	var panelChain http.Handler = panelMux
 	panelChain = auth.AdminRoleMiddleware()(panelChain)
 	panelChain = auth.JWTMiddleware(cfg.JWTSecret, st, jwtSkip)(panelChain)
-	panelChain = auth.PanelKeyMiddleware(cfg.PanelKey)(panelChain)
-	rootMux.Handle("/panel/", panelChain)
-	rootMux.Handle("/panel", panelChain)
+	rootMux.Handle("/panel/v1/", panelChain)
+	rootMux.Handle("/panel/v1", panelChain)
+
+	panelUI := panelui.Handler()
+	rootMux.Handle("/panel/", panelUI)
+	rootMux.Handle("/panel", panelUI)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

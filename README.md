@@ -29,7 +29,7 @@ xAI / Grok
 ## 功能
 
 - Streamable HTTP MCP 端点：`/mcp`
-- 管理面板 API：`/panel/v1/*`（`X-Panel-Key` + JWT；注册/登录仅需面板 Key）
+- 管理面板 API：`/panel/v1/*`（注册/登录开放；其他接口需 JWT；管理员接口需 `role=admin`）
 - 客户端 API Key 鉴权（Key 归属用户）
 - 按用户汇总的 RPM、总请求上限、成功请求上限
 - SQLite 持久化 API Key 与调用明细
@@ -61,7 +61,6 @@ go build -ldflags "-X github.com/grok-mcp/internal/version.Version=1.2.3" -o gro
 ```powershell
 $env:CPA_BASE_URL = "http://127.0.0.1:8317"
 $env:CPA_API_KEY = "replace-with-your-cpa-api-key"
-$env:GROK_PANEL_KEY = "replace-with-a-strong-random-panel-key"
 $env:GROK_JWT_SECRET = "replace-with-a-strong-random-jwt-secret"
 $env:GROK_HTTP_ADDR = ":8080"
 $env:GROK_DB_PATH = "./grok-mcp.db"
@@ -72,21 +71,21 @@ $env:GROK_DB_PATH = "./grok-mcp.db"
 启动后：
 
 - MCP 端点：`http://127.0.0.1:8080/mcp`
+- 管理面板前端：`http://127.0.0.1:8080/panel/`
 - 面板 API：`http://127.0.0.1:8080/panel/v1/*`
 
 ### 3. 注册、登录并创建客户端 API Key
 
 ```powershell
-$panel = @{ "X-Panel-Key" = $env:GROK_PANEL_KEY }
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/auth/register" `
-  -Headers $panel -ContentType "application/json" `
+  -ContentType "application/json" `
   -Body '{"username":"you","password":"your-password"}'
 
 $login = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/auth/login" `
-  -Headers $panel -ContentType "application/json" `
+  -ContentType "application/json" `
   -Body '{"username":"you","password":"your-password"}'
 
-$auth = @{ "X-Panel-Key" = $env:GROK_PANEL_KEY; Authorization = "Bearer $($login.token)" }
+$auth = @{ Authorization = "Bearer $($login.token)" }
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/keys" `
   -Headers $auth -ContentType "application/json" -Body '{"name":"local-client"}'
 ```
@@ -116,7 +115,6 @@ docker compose up -d --build
 `.env` 至少需要设置：
 
 - `CPA_API_KEY`
-- `GROK_PANEL_KEY`
 - `GROK_JWT_SECRET`
 
 容器默认监听 `:8080`，SQLite 数据保存到命名卷 `grok-mcp-data`。
@@ -126,7 +124,6 @@ docker compose up -d --build
 | 环境变量 | 必填 | 默认值 | 说明 |
 |---|:---:|---|---|
 | `CPA_API_KEY` | 是 | 无 | 调用 CPA 的 Bearer Key |
-| `GROK_PANEL_KEY` | 是 | 无 | 面板 API 请求头 `X-Panel-Key` |
 | `GROK_JWT_SECRET` | 是 | 无 | 面板 JWT HS256 签名密钥 |
 | `GROK_DEFAULT_USER_RPM` | 否 | `60` | 新用户默认每分钟请求数 |
 | `GROK_DEFAULT_USER_TOTAL_LIMIT` | 否 | `0` | 新用户默认总 `tools/call` 上限（0=不限） |
@@ -190,10 +187,17 @@ docker compose up -d --build
 
 ## 面板 API（`/panel/v1`）
 
-除注册/登录外，请求需同时携带：
+后端内置一个无构建步骤的管理面板前端，访问：
 
 ```text
-X-Panel-Key: <GROK_PANEL_KEY>
+GET /panel/
+```
+
+前端页面会在浏览器本地保存登录 JWT，用于调用 `/panel/v1`。
+
+除注册/登录外，请求需携带：
+
+```text
 Authorization: Bearer <JWT>
 ```
 
@@ -230,7 +234,7 @@ cmd/grok-mcp/
 
 internal/panel/           面板 REST API
 internal/quota/           用户汇总额度（tools/call）
-internal/auth/            API Key、X-Panel-Key、JWT
+internal/auth/            MCP API Key 与面板 JWT
 internal/ratelimit/       按用户的内存 RPM 限流
 internal/usage/           MCP tools/call 用量与 success 标记
 internal/store/           SQLite、002 迁移、用户与 Key

@@ -15,13 +15,11 @@ func setEnv(t *testing.T, key, value string) {
 func panelEnv(t *testing.T) {
 	t.Helper()
 	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_PANEL_KEY", "panel-key")
 	setEnv(t, "GROK_JWT_SECRET", "jwt-secret")
 }
 
 func TestLoadRequiresAPIKey(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "")
-	setEnv(t, "GROK_PANEL_KEY", "panel-key")
 	setEnv(t, "GROK_JWT_SECRET", "jwt-secret")
 	_, err := Load()
 	if err == nil || !strings.Contains(err.Error(), "CPA_API_KEY is required") {
@@ -101,20 +99,8 @@ func TestLoadDebugParsing(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresPanelKey(t *testing.T) {
-	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_PANEL_KEY", "")
-	setEnv(t, "GROK_JWT_SECRET", "jwt-secret")
-
-	_, err := Load()
-	if err == nil || !strings.Contains(err.Error(), "GROK_PANEL_KEY is required") {
-		t.Fatalf("expected panel key error, got %v", err)
-	}
-}
-
 func TestLoadRequiresJWTSecret(t *testing.T) {
 	setEnv(t, "CPA_API_KEY", "test-key")
-	setEnv(t, "GROK_PANEL_KEY", "panel-key")
 	setEnv(t, "GROK_JWT_SECRET", "")
 
 	_, err := Load()

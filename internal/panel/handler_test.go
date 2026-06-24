@@ -21,7 +21,6 @@ func panelTestServer(t *testing.T) (*httptest.Server, *store.SQLiteStore, *confi
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	cfg := &config.Config{
-		PanelKey:                "panel-secret",
 		JWTSecret:               "jwt-secret",
 		DefaultUserRPM:          60,
 		DefaultUserTotalLimit:   0,
@@ -36,12 +35,10 @@ func panelTestServer(t *testing.T) (*httptest.Server, *store.SQLiteStore, *confi
 	var chain http.Handler = mux
 	chain = auth.AdminRoleMiddleware()(chain)
 	chain = auth.JWTMiddleware(cfg.JWTSecret, st, skip)(chain)
-	chain = auth.PanelKeyMiddleware(cfg.PanelKey)(chain)
 	return httptest.NewServer(chain), st, cfg
 }
 
-func withPanel(req *http.Request, panelKey, jwt string) *http.Request {
-	req.Header.Set("X-Panel-Key", panelKey)
+func withJWT(req *http.Request, jwt string) *http.Request {
 	if jwt != "" {
 		req.Header.Set("Authorization", "Bearer "+jwt)
 	}
@@ -54,7 +51,6 @@ func TestRegisterFirstUserIsAdmin(t *testing.T) {
 
 	body := `{"username":"alice","password":"password123"}`
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(body))
-	req = withPanel(req, "panel-secret", "")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +68,7 @@ func TestRegisterFirstUserIsAdmin(t *testing.T) {
 	}
 }
 
-func TestRegisterRequiresPanelKey(t *testing.T) {
+func TestRegisterWithoutHeadersSucceeds(t *testing.T) {
 	ts, _, _ := panelTestServer(t)
 	defer ts.Close()
 
@@ -82,24 +78,22 @@ func TestRegisterRequiresPanelKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201 without headers, got %d", resp.StatusCode)
 	}
 }
 
 func TestLoginAndMe(t *testing.T) {
-	ts, _, cfg := panelTestServer(t)
+	ts, _, _ := panelTestServer(t)
 	defer ts.Close()
 
 	reg := `{"username":"carol","password":"password123"}`
 	r1, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(reg))
-	r1 = withPanel(r1, cfg.PanelKey, "")
 	http.DefaultClient.Do(r1)
 
 	login := `{"username":"carol","password":"password123"}`
 	r2, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/login", bytes.NewBufferString(login))
-	r2 = withPanel(r2, cfg.PanelKey, "")
 	resp, err := http.DefaultClient.Do(r2)
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +105,7 @@ func TestLoginAndMe(t *testing.T) {
 	resp.Body.Close()
 
 	r3, _ := http.NewRequest(http.MethodGet, ts.URL+"/panel/v1/me", nil)
-	r3 = withPanel(r3, cfg.PanelKey, lr.Token)
+	r3 = withJWT(r3, lr.Token)
 	resp3, err := http.DefaultClient.Do(r3)
 	if err != nil {
 		t.Fatal(err)
@@ -123,7 +117,7 @@ func TestLoginAndMe(t *testing.T) {
 }
 
 func TestSecondUserIsNotAdmin(t *testing.T) {
-	ts, _, cfg := panelTestServer(t)
+	ts, _, _ := panelTestServer(t)
 	defer ts.Close()
 
 	for _, body := range []string{
@@ -131,14 +125,12 @@ func TestSecondUserIsNotAdmin(t *testing.T) {
 		`{"username":"second","password":"password123"}`,
 	} {
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(body))
-		req = withPanel(req, cfg.PanelKey, "")
 		resp, _ := http.DefaultClient.Do(req)
 		resp.Body.Close()
 	}
 
 	login := `{"username":"second","password":"password123"}`
 	r2, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/login", bytes.NewBufferString(login))
-	r2 = withPanel(r2, cfg.PanelKey, "")
 	resp, _ := http.DefaultClient.Do(r2)
 	var lr LoginResponse
 	json.NewDecoder(resp.Body).Decode(&lr)

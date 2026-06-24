@@ -38,7 +38,6 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 		CPABaseURL:              "http://127.0.0.1:8317",
 		CPAAPIKey:               "cpa-key",
 		Model:                   "grok-4.3",
-		PanelKey:                "panel-key",
 		JWTSecret:               "jwt-secret",
 		DefaultUserRPM:          1000,
 		DefaultUserTotalLimit:   0,
@@ -71,7 +70,6 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 	var panelChain http.Handler = pm
 	panelChain = auth.AdminRoleMiddleware()(panelChain)
 	panelChain = auth.JWTMiddleware(cfg.JWTSecret, st, skip)(panelChain)
-	panelChain = auth.PanelKeyMiddleware(cfg.PanelKey)(panelChain)
 	mux.Handle("/panel/", panelChain)
 
 	ts := httptest.NewServer(mux)
@@ -79,7 +77,6 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 
 	regBody := `{"username":"intuser","password":"password123"}`
 	regReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(regBody))
-	regReq.Header.Set("X-Panel-Key", cfg.PanelKey)
 	regResp, err := http.DefaultClient.Do(regReq)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +88,6 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 
 	loginBody := `{"username":"intuser","password":"password123"}`
 	loginReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/login", bytes.NewBufferString(loginBody))
-	loginReq.Header.Set("X-Panel-Key", cfg.PanelKey)
 	loginResp, err := http.DefaultClient.Do(loginReq)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +100,6 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 
 	keyBody := `{"name":"integration"}`
 	keyReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/keys", bytes.NewBufferString(keyBody))
-	keyReq.Header.Set("X-Panel-Key", cfg.PanelKey)
 	keyReq.Header.Set("Authorization", "Bearer "+login.Token)
 	keyResp, err := http.DefaultClient.Do(keyReq)
 	if err != nil {

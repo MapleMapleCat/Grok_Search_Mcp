@@ -1,4 +1,4 @@
-// Package auth 提供 HTTP Bearer 鉴权：MCP API Key、面板 X-Panel-Key 与 JWT。
+// Package auth 提供 HTTP Bearer 鉴权：MCP API Key 与面板 JWT。
 package auth
 
 import (
