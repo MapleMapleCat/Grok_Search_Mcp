@@ -284,12 +284,18 @@ cmd/grok-mcp/
   main.go                 进程入口
   http.go                 /mcp 与 /panel 路由组装
 
-internal/panel/           面板 REST API
-internal/quota/           用户汇总额度（tools/call）
-internal/auth/            MCP API Key 与面板 JWT
-internal/ratelimit/       按用户的内存 RPM 限流
-internal/usage/           MCP tools/call 用量与 success 标记
-internal/store/           SQLite、002 迁移、用户与 Key
+internal/panel/           面板 REST API（/panel/v1）
+internal/panelui/         面板前端静态资源（embed）
+internal/quota/           用户汇总额度（tools/call 的 total/success 预留与回滚）
+internal/auth/            MCP API Key 与面板 JWT（HS256，含 iss/aud 校验）
+internal/ratelimit/       按用户的内存 RPM 限流（令牌桶）
+internal/usage/           MCP tools/call 用量与 success 标记，含 panic 回滚
+internal/store/           SQLite、迁移、用户与 Key CRUD、异步用量写入
+internal/grok/            上游 CPA /v1/responses 客户端与 SSE 解析
+internal/mcp/             MCP 工具注册（grok_web_search、grok_x_search）
+internal/config/          环境变量加载与校验
+internal/logx/            调试日志器 + slog 包级实例
+internal/version/         构建时注入的版本号
 ```
 
 ## 测试

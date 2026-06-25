@@ -89,7 +89,7 @@ func scanAPIKey(row interface {
 	var lastUsed sql.NullString
 
 	err := row.Scan(
-		&k.ID, &k.UserID, &k.Name, &k.KeyHash, &k.KeyPrefix, &k.RateLimit, &enabled,
+		&k.ID, &k.UserID, &k.Name, &k.KeyHash, &k.KeyPrefix, &enabled,
 		&createdAt, &updatedAt, &lastUsed, &k.TotalCalls,
 	)
 	if err != nil {
@@ -115,10 +115,10 @@ func scanAPIKey(row interface {
 	return &k, nil
 }
 
-const keyColumns = `id, user_id, name, key_hash, key_prefix, rate_limit, enabled, created_at, updated_at, last_used_at, total_calls`
+const keyColumns = `id, user_id, name, key_hash, key_prefix, enabled, created_at, updated_at, last_used_at, total_calls`
 
 // CreateKey 插入新密钥并返回元数据与一次性明文 raw（调用方须妥善保存）。
-func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string, rateLimit int) (*APIKey, string, error) {
+func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string) (*APIKey, string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, "", fmt.Errorf("name is required")
@@ -144,9 +144,9 @@ func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string, rateLi
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO apikeys (id, user_id, name, key_hash, key_prefix, rate_limit, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-		id, userID, name, hashKey(raw), prefix, rateLimit, formatTime(now), formatTime(now),
+		`INSERT INTO apikeys (id, user_id, name, key_hash, key_prefix, enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+		id, userID, name, hashKey(raw), prefix, formatTime(now), formatTime(now),
 	)
 	if err != nil {
 		return nil, "", fmt.Errorf("insert apikey: %w", err)
@@ -233,10 +233,6 @@ func (s *SQLiteStore) UpdateKey(ctx context.Context, id string, updates KeyUpdat
 		}
 		sets = append(sets, "name = ?")
 		args = append(args, name)
-	}
-	if updates.RateLimit != nil {
-		sets = append(sets, "rate_limit = ?")
-		args = append(args, *updates.RateLimit)
 	}
 	if updates.Enabled != nil {
 		en := 0

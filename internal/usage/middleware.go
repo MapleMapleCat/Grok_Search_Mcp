@@ -104,9 +104,11 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 
 			// recover 捕获 handler panic：将状态视为失败并执行 release 逻辑，
 			// 随后重新 panic 让 http.Server 在连接层处理（关闭连接）。
+			// total_calls 与 success_calls 均由 quota 中间件预留，此处必须同时回滚。
 			defer func() {
 				if rcv := recover(); rcv != nil {
 					if hasUser {
+						_ = st.ReleaseTotalCall(r.Context(), user.ID)
 						_ = st.ReleaseSuccessCall(r.Context(), user.ID)
 					}
 					panic(rcv)

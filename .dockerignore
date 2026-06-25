@@ -12,6 +12,7 @@ coverage.txt
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
 
 # 本地环境与凭证（.env.example 是模板，可保留以供参考，真实 .env 必须排除）
 .env

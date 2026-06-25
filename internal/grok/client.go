@@ -83,7 +83,7 @@ func (c *Client) post(ctx context.Context, body []byte) (*http.Response, error) 
 	return resp, nil
 }
 
-// httpError 在非 2xx 响应时读取响应体并包装为可读错误。
+// httpError 在非 2xx 响应时返回分类错误，仅包含状态码，不透传响应体（可能含上游敏感信息）。
 func (c *Client) httpError(resp *http.Response) error {
 	respBody, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
@@ -91,5 +91,6 @@ func (c *Client) httpError(resp *http.Response) error {
 		return fmt.Errorf("upstream returned HTTP %d: read body: %w", resp.StatusCode, readErr)
 	}
 	c.log.Debugf("upstream HTTP %d: %s", resp.StatusCode, logx.Truncate(string(respBody), 256))
-	return fmt.Errorf("upstream returned HTTP %d: %s", resp.StatusCode, logx.Truncate(string(respBody), 1024))
+	// 错误信息只暴露状态码，body 仅写日志，避免向 MCP 客户端泄露 CPA 内部细节。
+	return fmt.Errorf("upstream returned HTTP %d", resp.StatusCode)
 }

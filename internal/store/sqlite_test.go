@@ -32,7 +32,7 @@ func TestCreateAndGetKeyByHash(t *testing.T) {
 	ctx := context.Background()
 	uid := testUserID(t, s)
 
-	k, raw, err := s.CreateKey(ctx, uid, "test-key", 30)
+	k, raw, err := s.CreateKey(ctx, uid, "test-key")
 	if err != nil {
 		t.Fatalf("CreateKey: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestCreateAndGetKeyByHash(t *testing.T) {
 func TestCreateKeyRequiresName(t *testing.T) {
 	s := openTestDB(t)
 	uid := testUserID(t, s)
-	_, _, err := s.CreateKey(context.Background(), uid, "  ", 0)
+	_, _, err := s.CreateKey(context.Background(), uid, "  ")
 	if err == nil {
 		t.Fatal("expected error for empty name")
 	}
@@ -63,7 +63,7 @@ func TestListUpdateDeleteKey(t *testing.T) {
 	ctx := context.Background()
 	uid := testUserID(t, s)
 
-	k, _, err := s.CreateKey(ctx, uid, "one", 0)
+	k, _, err := s.CreateKey(ctx, uid, "one")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,13 +74,12 @@ func TestListUpdateDeleteKey(t *testing.T) {
 	}
 
 	name := "renamed"
-	rl := 100
 	dis := false
-	updated, err := s.UpdateKey(ctx, k.ID, KeyUpdates{Name: &name, RateLimit: &rl, Enabled: &dis})
+	updated, err := s.UpdateKey(ctx, k.ID, KeyUpdates{Name: &name, Enabled: &dis})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Name != "renamed" || updated.RateLimit != 100 || updated.Enabled {
+	if updated.Name != "renamed" || updated.Enabled {
 		t.Fatalf("unexpected update: %+v", updated)
 	}
 
@@ -97,7 +96,7 @@ func TestUsageStats(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
-	k, _, err := s.CreateKey(ctx, testUserID(t, s), "usage", 0)
+	k, _, err := s.CreateKey(ctx, testUserID(t, s), "usage")
 	if err != nil {
 		t.Fatal(err)
 	}

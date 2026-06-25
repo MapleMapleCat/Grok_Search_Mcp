@@ -122,16 +122,3 @@ func TestUpdateUserRejectsNegativeLimits(t *testing.T) {
 		t.Fatal("expected error for negative success_limit")
 	}
 }
-
-func TestCheckUserSuccessQuota(t *testing.T) {
-	s := openTestDB(t)
-	ctx := context.Background()
-	u, err := s.CreateUser(ctx, "u", "h", RoleUser, 0, 0, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = s.TryIncrementUserSuccessCalls(ctx, u.ID, 1)
-	if err := s.CheckUserSuccessQuota(ctx, u); !errors.Is(err, ErrQuotaSuccess) {
-		t.Fatalf("expected exhausted, got %v", err)
-	}
-}

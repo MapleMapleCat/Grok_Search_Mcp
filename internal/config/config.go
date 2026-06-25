@@ -10,14 +10,14 @@ import (
 )
 
 const (
-	defaultBaseURL              = "http://127.0.0.1:8317"
-	defaultModel                = "grok-4.3"
-	defaultTimeout              = 120 * time.Second
-	defaultHTTPAddr             = ":8080"
-	defaultDBPath               = "./grok-mcp.db"
-	defaultDefaultUserRPM       = 60
-	defaultDefaultUserTotal     = 0
-	defaultDefaultUserSuccess   = 0
+	defaultBaseURL            = "http://127.0.0.1:8317"
+	defaultModel              = "grok-4.3"
+	defaultTimeout            = 120 * time.Second
+	defaultHTTPAddr           = ":8080"
+	defaultDBPath             = "./grok-mcp.db"
+	defaultDefaultUserRPM     = 60
+	defaultDefaultUserTotal   = 0
+	defaultDefaultUserSuccess = 0
 )
 
 // Config 保存进程启动所需的全部配置项。

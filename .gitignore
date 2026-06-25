@@ -14,6 +14,7 @@ coverage.txt
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
 
 # 本地环境 / 凭证
 .env

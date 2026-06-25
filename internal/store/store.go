@@ -50,7 +50,6 @@ type APIKey struct {
 	Name       string
 	KeyHash    string
 	KeyPrefix  string
-	RateLimit  int
 	Enabled    bool
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -78,9 +77,8 @@ type UsageStats struct {
 
 // KeyUpdates 用于 PATCH 式更新密钥；指针字段为 nil 表示不修改该列。
 type KeyUpdates struct {
-	Name      *string
-	RateLimit *int
-	Enabled   *bool
+	Name    *string
+	Enabled *bool
 }
 
 // UserUpdates 用于管理员 PATCH 用户；指针字段为 nil 表示不修改。
@@ -109,9 +107,8 @@ type Store interface {
 	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) error
 	ReleaseSuccessCall(ctx context.Context, userID string) error
 	TryIncrementUserSuccessCalls(ctx context.Context, userID string, successLimit int) error
-	CheckUserSuccessQuota(ctx context.Context, user *User) error
 
-	CreateKey(ctx context.Context, userID, name string, rateLimit int) (*APIKey, string, error)
+	CreateKey(ctx context.Context, userID, name string) (*APIKey, string, error)
 	GetKeyByHash(ctx context.Context, hash string) (*APIKey, error)
 	ListKeys(ctx context.Context) ([]*APIKey, error)
 	ListKeysByUser(ctx context.Context, userID string) ([]*APIKey, error)

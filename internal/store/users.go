@@ -270,21 +270,6 @@ func (s *SQLiteStore) TryIncrementUserSuccessCalls(ctx context.Context, userID s
 	return nil
 }
 
-// CheckUserSuccessQuota 读取最新用户状态，判断成功额度是否已耗尽（用于 tools/call 前拒绝）。
-func (s *SQLiteStore) CheckUserSuccessQuota(ctx context.Context, user *User) error {
-	if user == nil {
-		return fmt.Errorf("user is nil")
-	}
-	fresh, err := s.GetUserByID(ctx, user.ID)
-	if err != nil {
-		return err
-	}
-	if fresh.SuccessLimit > 0 && fresh.SuccessCalls >= int64(fresh.SuccessLimit) {
-		return ErrQuotaSuccess
-	}
-	return nil
-}
-
 func nowUTC() time.Time {
 	return time.Now().UTC()
 }

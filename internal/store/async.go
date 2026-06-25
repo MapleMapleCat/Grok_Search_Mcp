@@ -63,6 +63,7 @@ func (w *AsyncUsageWriter) Enqueue(rec UsageRecord) {
 }
 
 // Close 取消后台循环并等待排空或放弃剩余队列（见 run 中 default 分支）。
+// 必须在 Store.Close 之前调用：run 内部用 context.Background() 写入，若先关 Store 会触发数据库错误。
 func (w *AsyncUsageWriter) Close() {
 	w.cancel()
 	w.wg.Wait()

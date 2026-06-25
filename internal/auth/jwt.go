@@ -6,25 +6,32 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grok-mcp/internal/store"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/grok-mcp/internal/store"
 )
 
-const defaultJWTExpiry = 12 * time.Hour
+const (
+	defaultJWTExpiry = 12 * time.Hour
+	// jwtIssuer / jwtAudience 用于绑定 token 的签发方与受众，
+	// 防止同一密钥签发的 token 被跨服务/跨端复用。
+	jwtIssuer   = "grok-mcp"
+	jwtAudience = "panel"
+)
 
 type panelClaims struct {
-	UserID   string          `json:"uid"`
-	Username string          `json:"username"`
-	Role     store.UserRole  `json:"role"`
+	UserID   string         `json:"uid"`
+	Username string         `json:"username"`
+	Role     store.UserRole `json:"role"`
 	jwt.RegisteredClaims
 }
 
-// IssuePanelToken 签发 HS256 面板 JWT。
+// IssuePanelToken 签发 HS256 面板 JWT，固定 iss=grok-mcp、aud=panel。
 func IssuePanelToken(secret string, user *store.User, ttl time.Duration) (string, time.Time, error) {
 	if ttl <= 0 {
 		ttl = defaultJWTExpiry
 	}
-	exp := time.Now().UTC().Add(ttl)
+	now := time.Now().UTC()
+	exp := now.Add(ttl)
 	claims := panelClaims{
 		UserID:   user.ID,
 		Username: user.Username,
@@ -32,7 +39,10 @@ func IssuePanelToken(secret string, user *store.User, ttl time.Duration) (string
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   user.ID,
 			ExpiresAt: jwt.NewNumericDate(exp),
-			IssuedAt:  jwt.NewNumericDate(time.Now().UTC()),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			Issuer:    jwtIssuer,
+			Audience:  []string{jwtAudience},
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -59,7 +69,7 @@ func JWTMiddleware(secret string, st store.Store, skip map[string]struct{}) func
 					return nil, errors.New("unexpected signing method")
 				}
 				return []byte(secret), nil
-			})
+			}, jwt.WithIssuer(jwtIssuer), jwt.WithAudience(jwtAudience))
 			if err != nil {
 				http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 				return
@@ -98,11 +108,11 @@ func RequireAdmin() func(http.Handler) http.Handler {
 	}
 }
 
-// ParsePanelToken 供测试解析 JWT。
+// ParsePanelToken 供测试解析 JWT（含 iss/aud 校验）。
 func ParsePanelToken(secret, tokenStr string) (*panelClaims, error) {
 	claims := &panelClaims{}
 	_, err := jwt.ParseWithClaims(strings.TrimSpace(tokenStr), claims, func(t *jwt.Token) (any, error) {
 		return []byte(secret), nil
-	})
+	}, jwt.WithIssuer(jwtIssuer), jwt.WithAudience(jwtAudience))
 	return claims, err
 }

@@ -38,7 +38,7 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 		CPABaseURL:              "http://127.0.0.1:8317",
 		CPAAPIKey:               "cpa-key",
 		Model:                   "grok-4.3",
-		JWTSecret:               "jwt-secret",
+		JWTSecret:               "jwt-secret-must-be-at-least-32-bytes!",
 		DefaultUserRPM:          1000,
 		DefaultUserTotalLimit:   0,
 		DefaultUserSuccessLimit: 0,

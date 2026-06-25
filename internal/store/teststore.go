@@ -20,7 +20,7 @@ func (TestStore) RegisterUser(context.Context, string, string, int, int, int) (*
 }
 func (TestStore) GetUserByUsername(context.Context, string) (*User, error) { return nil, nil }
 func (TestStore) GetUserByID(context.Context, string) (*User, error)       { return nil, ErrUserNotFound }
-func (TestStore) ListUsers(context.Context) ([]*User, error)                { return nil, nil }
+func (TestStore) ListUsers(context.Context) ([]*User, error)               { return nil, nil }
 func (TestStore) UpdateUser(context.Context, string, UserUpdates) (*User, error) {
 	return nil, nil
 }
@@ -36,9 +36,8 @@ func (TestStore) ReleaseSuccessCall(context.Context, string) error { return nil 
 func (TestStore) TryIncrementUserSuccessCalls(context.Context, string, int) error {
 	return nil
 }
-func (TestStore) CheckUserSuccessQuota(context.Context, *User) error { return nil }
 
-func (TestStore) CreateKey(context.Context, string, string, int) (*APIKey, string, error) {
+func (TestStore) CreateKey(context.Context, string, string) (*APIKey, string, error) {
 	return nil, "", nil
 }
 func (TestStore) GetKeyByHash(context.Context, string) (*APIKey, error) { return nil, nil }

@@ -1,7 +1,22 @@
 // Package logx 提供可按开关启用的调试日志，避免在生产环境刷屏。
 package logx
 
-import "log"
+import (
+	"log"
+	"log/slog"
+	"os"
+)
+
+// defaultLogger 是包级 slog 实例，输出到 stderr，级别 Info，
+// 供需要结构化日志的调用方使用；debug 路径仍走传统 log.Printf（见 Logger）。
+var defaultLogger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	Level: slog.LevelInfo,
+}))
+
+// DefaultLogger 返回包级 slog.Logger，供面板/进程入口等做结构化日志。
+func DefaultLogger() *slog.Logger {
+	return defaultLogger
+}
 
 // Logger 在 enabled 为 false 时忽略所有 Debugf 调用。
 type Logger struct {

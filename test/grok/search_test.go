@@ -52,8 +52,8 @@ func newSSEServer(t *testing.T, body string) *httptest.Server {
 }
 
 type capturedRequest struct {
-	Model  string `json:"model"`
-	Input  []struct {
+	Model string `json:"model"`
+	Input []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"input"`

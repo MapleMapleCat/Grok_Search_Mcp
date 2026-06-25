@@ -24,17 +24,17 @@ type LoginResponse struct {
 }
 
 type UserResponse struct {
-	ID           string          `json:"id"`
-	Username     string          `json:"username"`
-	Role         store.UserRole  `json:"role"`
-	Enabled      bool            `json:"enabled"`
-	RPM          int             `json:"rpm"`
-	TotalLimit   int             `json:"total_limit"`
-	SuccessLimit int             `json:"success_limit"`
-	TotalCalls   int64           `json:"total_calls"`
-	SuccessCalls int64           `json:"success_calls"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID           string         `json:"id"`
+	Username     string         `json:"username"`
+	Role         store.UserRole `json:"role"`
+	Enabled      bool           `json:"enabled"`
+	RPM          int            `json:"rpm"`
+	TotalLimit   int            `json:"total_limit"`
+	SuccessLimit int            `json:"success_limit"`
+	TotalCalls   int64          `json:"total_calls"`
+	SuccessCalls int64          `json:"success_calls"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
 }
 
 type CreateKeyRequest struct {

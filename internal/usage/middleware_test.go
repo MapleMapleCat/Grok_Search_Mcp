@@ -127,10 +127,11 @@ func (f *flushRecorder) Flush() {
 	*f.flushed = true
 }
 
-// releaseCountingStore 记录 ReleaseSuccessCall 调用次数，用于断言 panic 时的回滚行为。
+// releaseCountingStore 记录 ReleaseSuccessCall/ReleaseTotalCall 调用次数，用于断言 panic 时的回滚行为。
 type releaseCountingStore struct {
 	store.TestStore
 	releaseSuccessCalls int
+	releaseTotalCalls   int
 }
 
 func (r *releaseCountingStore) ReleaseSuccessCall(context.Context, string) error {
@@ -138,9 +139,14 @@ func (r *releaseCountingStore) ReleaseSuccessCall(context.Context, string) error
 	return nil
 }
 
+func (r *releaseCountingStore) ReleaseTotalCall(context.Context, string) error {
+	r.releaseTotalCalls++
+	return nil
+}
+
 // TestMCPMiddlewareReleasesOnPanic 验证 issue 8 的修复：当 handler panic 时，
-// usage 中间件通过 defer/recover 仍会执行 ReleaseSuccessCall，避免 success_calls 虚高，
-// 然后重新 panic 让上层处理。
+// usage 中间件通过 defer/recover 仍会执行 ReleaseTotalCall 与 ReleaseSuccessCall，
+// 避免 total_calls 与 success_calls 虚高，然后重新 panic 让上层处理。
 func TestMCPMiddlewareReleasesOnPanic(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
 	user := &store.User{ID: "u1"}
@@ -159,7 +165,10 @@ func TestMCPMiddlewareReleasesOnPanic(t *testing.T) {
 			t.Fatal("expected panic to propagate")
 		}
 		if st.releaseSuccessCalls != 1 {
-			t.Fatalf("expected release on panic, got %d", st.releaseSuccessCalls)
+			t.Fatalf("expected release success on panic, got %d", st.releaseSuccessCalls)
+		}
+		if st.releaseTotalCalls != 1 {
+			t.Fatalf("expected release total on panic, got %d", st.releaseTotalCalls)
 		}
 	}()
 	h.ServeHTTP(httptest.NewRecorder(), req)

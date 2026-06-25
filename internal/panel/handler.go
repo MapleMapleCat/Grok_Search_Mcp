@@ -20,9 +20,12 @@ type Handler struct {
 	Config *config.Config
 }
 
-// NewMux 注册 /panel/v1 路由（外层需套 JWT 中间件）。
-// 管理员路由注册到独立子路由器，并显式套用 auth.RequireAdmin，避免依赖路径前缀做鉴权。
-// 调用方应通过 NewAdminSubMux 取得已包裹 admin 中间件的子路由器挂到外层 mux 上。
+// NewMux 注册 /panel/v1 路由。鉴权分两层：
+//   - 外层（cmd/grok-mcp/http.go）套 auth.JWTMiddleware，校验面板 JWT 并注入用户到 ctx，
+//     仅放行 register/login。
+//   - 管理员路由（/panel/v1/admin/*）在本方法内额外套 auth.RequireAdmin，要求 ctx 中的
+//     用户 role=admin。新增管理员路由必须经 RegisterAdminRoutes 挂载，才会被 RequireAdmin 包裹；
+//     直接挂到外层 mux 会绕过 admin 校验。
 func NewMux(h *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /panel/v1/auth/register", h.register)
@@ -50,15 +53,17 @@ func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux) {
 	mux.Handle("/panel/v1/admin/", auth.RequireAdmin()(admin))
 }
 
-func parseSince(r *http.Request) time.Time {
+// parseSince 解析 ?since=RFC3339 查询参数；raw 非空但格式非法时返回 (zero, false)，
+// 调用方应据此返回 400，避免静默回退到全量查询导致 usage_log 全表扫描。
+func parseSince(r *http.Request) (time.Time, bool) {
 	raw := strings.TrimSpace(r.URL.Query().Get("since"))
 	if raw == "" {
-		return time.Time{}
+		return time.Time{}, true
 	}
 	if t, err := time.Parse(time.RFC3339, raw); err == nil {
-		return t.UTC()
+		return t.UTC(), true
 	}
-	return time.Time{}
+	return time.Time{}, false
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -211,7 +216,7 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	k, raw, err := h.Store.CreateKey(r.Context(), user.ID, req.Name, 0)
+	k, raw, err := h.Store.CreateKey(r.Context(), user.ID, req.Name)
 	if err != nil {
 		log.Printf("create key for user %s failed: %v", user.ID, err)
 		writeError(w, http.StatusInternalServerError, "failed to create key")
@@ -282,7 +287,12 @@ func (h *Handler) keyUsage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "api key not found")
 		return
 	}
-	stats, err := h.Store.GetUsageStats(r.Context(), id, parseSince(r))
+	since, ok := parseSince(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid 'since' query parameter; expected RFC3339")
+		return
+	}
+	stats, err := h.Store.GetUsageStats(r.Context(), id, since)
 	if err != nil {
 		log.Printf("usage stats for key %s failed: %v", id, err)
 		writeError(w, http.StatusInternalServerError, "failed to load usage")
@@ -344,7 +354,12 @@ func (h *Handler) adminUserUsage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	stats, err := h.Store.GetUserUsageStats(r.Context(), id, parseSince(r))
+	since, ok := parseSince(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid 'since' query parameter; expected RFC3339")
+		return
+	}
+	stats, err := h.Store.GetUserUsageStats(r.Context(), id, since)
 	if err != nil {
 		log.Printf("admin usage stats for user %s failed: %v", id, err)
 		writeError(w, http.StatusInternalServerError, "failed to load usage")
