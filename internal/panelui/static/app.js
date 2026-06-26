@@ -316,7 +316,7 @@
         ${metricCard("Rate Per Minute<br>(RPM)", formatNumber(state.user.rpm), "speed", "用户级共享限流", "good", 100)}
         ${metricCard("Total Requests", `${formatNumber(state.user.total_calls)} <span class="muted">/ ${limitText(state.user.total_limit)}</span>`, "data_usage", quotaNote(totalPct), totalPct >= 90 ? "bad" : "good", totalPct)}
         ${metricCard("Success Rate", `${successRate}%`, "check_circle", state.user.total_calls ? "Based on completed calls" : "No traffic yet", "good", null)}
-        ${metricCard("Success Quota", `${remainingText(state.user.success_calls, state.user.success_limit)}`, "task_alt", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct)}
+        ${metricCard("Success Quota", `${formatNumber(state.user.success_calls)} <span class="muted">/ ${limitText(state.user.success_limit)}</span>`, "task_alt", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct)}
       </section>
       <section class="grid viz-grid">
         <div class="card panel">
