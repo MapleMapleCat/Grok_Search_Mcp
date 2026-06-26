@@ -178,27 +178,6 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		sets = append(sets, "tier_id = ?")
 		args = append(args, nullableString(*updates.TierID))
 	}
-	if updates.RPM != nil {
-		if *updates.RPM < 0 {
-			return nil, fmt.Errorf("rpm must be >= 0")
-		}
-		sets = append(sets, "rpm = ?")
-		args = append(args, *updates.RPM)
-	}
-	if updates.TotalLimit != nil {
-		if *updates.TotalLimit < 0 {
-			return nil, fmt.Errorf("total_limit must be >= 0")
-		}
-		sets = append(sets, "total_limit = ?")
-		args = append(args, *updates.TotalLimit)
-	}
-	if updates.SuccessLimit != nil {
-		if *updates.SuccessLimit < 0 {
-			return nil, fmt.Errorf("success_limit must be >= 0")
-		}
-		sets = append(sets, "success_limit = ?")
-		args = append(args, *updates.SuccessLimit)
-	}
 	if len(sets) == 0 {
 		return s.GetUserByID(ctx, id)
 	}

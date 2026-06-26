@@ -53,7 +53,7 @@ type User struct {
 	UpdatedAt    time.Time
 }
 
-// Tier 表示用户等级预设（tier0~tier6），仅作额度快捷模板；用户实际额度独立存储。
+// Tier 表示用户等级预设（tier0~tier6），是用户限额（rpm/total_limit/success_limit）的唯一来源。
 type Tier struct {
 	ID           string
 	Name         string
@@ -103,14 +103,11 @@ type KeyUpdates struct {
 	Enabled *bool
 }
 
-// UserUpdates 用于管理员 PATCH 用户；指针字段为 nil 表示不修改。
+// UserUpdates 用于管理员 PATCH 用户；限额由 tier 决定，此处仅允许调整 enabled/role/tier_id。
 type UserUpdates struct {
-	Enabled      *bool
-	Role         *UserRole
-	TierID       *string
-	RPM          *int
-	TotalLimit   *int
-	SuccessLimit *int
+	Enabled *bool
+	Role    *UserRole
+	TierID  *string
 }
 
 // TierUpdates 用于管理员 PATCH 等级；指针字段为 nil 表示不修改。

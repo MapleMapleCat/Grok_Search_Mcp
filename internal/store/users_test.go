@@ -101,24 +101,22 @@ func TestReserveAndReleaseSuccessCall(t *testing.T) {
 	}
 }
 
-func TestUpdateUserRejectsNegativeLimits(t *testing.T) {
+func TestUpdateUserChangesTierID(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 	u, err := s.CreateUser(ctx, "u", "h", RoleUser, 10, 10, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	neg := -1
-	_, err = s.UpdateUser(ctx, u.ID, UserUpdates{RPM: &neg})
-	if err == nil {
-		t.Fatal("expected error for negative rpm")
+	tier, err := s.CreateTier(ctx, "t", 0, 1, 2, 3)
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, err = s.UpdateUser(ctx, u.ID, UserUpdates{TotalLimit: &neg})
-	if err == nil {
-		t.Fatal("expected error for negative total_limit")
+	updated, err := s.UpdateUser(ctx, u.ID, UserUpdates{TierID: &tier.ID})
+	if err != nil {
+		t.Fatal(err)
 	}
-	_, err = s.UpdateUser(ctx, u.ID, UserUpdates{SuccessLimit: &neg})
-	if err == nil {
-		t.Fatal("expected error for negative success_limit")
+	if updated.TierID != tier.ID {
+		t.Fatalf("tier_id want %s got %s", tier.ID, updated.TierID)
 	}
 }

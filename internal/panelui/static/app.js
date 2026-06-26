@@ -506,7 +506,6 @@
     const tierBadge = state.user.tier_name
       ? `<span class="badge off">${escapeHTML(state.user.tier_name)}</span>`
       : "";
-    const editBtn = "";
     return `
       <div class="page-head">
         <div>
@@ -533,7 +532,6 @@
         <div class="card panel">
           <div class="panel-head">
             <h3>Quotas</h3>
-            ${editBtn}
           </div>
           <div class="quota-list">
             <div class="quota-item">
@@ -643,34 +641,6 @@
       .join("");
   }
 
-  function renderEditAccountModal(user) {
-    if (!user) return "";
-    return `
-      <div class="modal-backdrop" data-action="close-modal">
-        <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Quotas" data-modal>
-          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-          <div class="modal-body">
-            <h3>Edit Tier</h3>
-            <p>${escapeHTML(user.username)} 的限额由所属 tier 决定。</p>
-            <form id="edit-account-form" class="form-stack" style="margin-top: 24px;">
-              <div class="field">
-                <label for="edit-account-tier">Tier</label>
-                <select id="edit-account-tier" name="tier_id" class="select" data-tier-select="edit-account">
-                  <option value="" ${!user.tier_id ? "selected" : ""}>None</option>
-                  ${tierOptions(user.tier_id)}
-                </select>
-                <span class="hint">限额（RPM / 总次数 / 成功次数）由所选 tier 决定；调整 tier 预设请到 Tier Management 页。</span>
-              </div>
-              <div class="modal-actions">
-                <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-                <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
-              </div>
-            </form>
-          </div>
-        </section>
-      </div>`;
-  }
-
   function renderCreateTierModal() {
     return `
       <div class="modal-backdrop" data-action="close-modal">
@@ -753,20 +723,6 @@
           </div>
         </section>
       </div>`;
-  }
-
-  function applyTierPreset(selectEl) {
-    const tierID = selectEl.value;
-    const tier = (state.tiers || []).find((t) => t.id === tierID);
-    if (!tier) return;
-    const form = selectEl.form;
-    if (!form) return;
-    const rpm = form.querySelector('[name="rpm"]');
-    const total = form.querySelector('[name="total_limit"]');
-    const success = form.querySelector('[name="success_limit"]');
-    if (rpm) rpm.value = tier.rpm;
-    if (total) total.value = tier.total_limit;
-    if (success) success.value = tier.success_limit;
   }
 
   function renderAlert(risk) {
@@ -882,7 +838,6 @@
     if (state.modal.type === "key-created") return renderKeyCreatedModal(state.modal);
     if (state.modal.type === "edit-key") return renderEditKeyModal(state.modal.key);
     if (state.modal.type === "edit-user") return renderEditUserModal(state.modal.user);
-    if (state.modal.type === "edit-account") return renderEditAccountModal(state.modal.user);
     if (state.modal.type === "create-tier") return renderCreateTierModal();
     if (state.modal.type === "edit-tier") return renderEditTierModal(state.modal.tier);
     if (state.modal.type === "user-usage") return renderUserUsageModal(state.modal.user, state.modal.usage);
@@ -1013,7 +968,7 @@
               </div>
               <div class="field">
                 <label for="edit-user-tier">Tier</label>
-                <select id="edit-user-tier" name="tier_id" class="select" data-tier-select="edit-user">
+                <select id="edit-user-tier" name="tier_id" class="select">
                   <option value="" ${!user.tier_id ? "selected" : ""}>None</option>
                   ${tierOptions(user.tier_id)}
                 </select>
@@ -1079,8 +1034,6 @@
       await submitEditKey(form);
     } else if (form.id === "edit-user-form") {
       await submitEditUser(form);
-    } else if (form.id === "edit-account-form") {
-      await submitEditAccount(form);
     } else if (form.id === "create-tier-form") {
       await submitCreateTier(form);
     } else if (form.id === "edit-tier-form") {
@@ -1207,26 +1160,6 @@
     }
   }
 
-  async function submitEditAccount(form) {
-    const data = new FormData(form);
-    try {
-      await api(`/admin/users/${encodeURIComponent(state.user.id)}`, {
-        method: "PATCH",
-        body: {
-          tier_id: String(data.get("tier_id") || "")
-        }
-      });
-      state.modal = null;
-      state.user = await api("/me");
-      setStored(storage.user, JSON.stringify(state.user));
-      notify("额度已更新。", "success");
-      render();
-    } catch (err) {
-      notify(errorText(err), "error");
-      render();
-    }
-  }
-
   async function submitCreateTier(form) {
     const data = new FormData(form);
     try {
@@ -1325,9 +1258,6 @@
       const user = state.users.find((item) => item.id === actionEl.dataset.userId);
       state.modal = { type: "edit-user", user };
       render();
-    } else if (action === "edit-account") {
-      state.modal = { type: "edit-account", user: state.user };
-      render();
     } else if (action === "open-create-tier") {
       state.modal = { type: "create-tier" };
       render();
@@ -1353,8 +1283,6 @@
     if (target.matches("[data-key-toggle]")) {
       const checkbox = target;
       await updateKeyEnabled(checkbox.dataset.keyToggle, checkbox.checked);
-    } else if (target.matches("[data-tier-select]")) {
-      applyTierPreset(target);
     } else if (target.id === "usage-key-select") {
       state.selectedKeyID = target.value;
       await loadRouteData();
@@ -1679,12 +1607,6 @@
     const l = Number(limit) || 0;
     if (l <= 0) return 0;
     return (n / l) * 100;
-  }
-
-  function remainingText(used, limit) {
-    const l = Number(limit) || 0;
-    if (l <= 0) return "Unlimited";
-    return formatNumber(Math.max(0, l - (Number(used) || 0)));
   }
 
   function successPercent(usage) {
