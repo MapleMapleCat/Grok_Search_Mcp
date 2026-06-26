@@ -13,6 +13,15 @@ var ErrUserNotFound = errors.New("user not found")
 // ErrUsernameTaken 表示用户名已存在。
 var ErrUsernameTaken = errors.New("username already taken")
 
+// ErrTierNotFound 表示按 ID 未找到等级。
+var ErrTierNotFound = errors.New("tier not found")
+
+// ErrTierNameTaken 表示等级名称已存在。
+var ErrTierNameTaken = errors.New("tier name already taken")
+
+// ErrTierInUse 表示等级仍被用户引用，不能删除。
+var ErrTierInUse = errors.New("tier in use")
+
 // ErrQuotaTotal 表示用户总请求额度已耗尽。
 var ErrQuotaTotal = errors.New("total request limit exceeded")
 
@@ -34,11 +43,24 @@ type User struct {
 	PasswordHash string
 	Role         UserRole
 	Enabled      bool
+	TierID       string
 	RPM          int
 	TotalLimit   int
 	SuccessLimit int
 	TotalCalls   int64
 	SuccessCalls int64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// Tier 表示用户等级预设（tier0~tier6），仅作额度快捷模板；用户实际额度独立存储。
+type Tier struct {
+	ID           string
+	Name         string
+	Level        int
+	RPM          int
+	TotalLimit   int
+	SuccessLimit int
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -85,6 +107,16 @@ type KeyUpdates struct {
 type UserUpdates struct {
 	Enabled      *bool
 	Role         *UserRole
+	TierID       *string
+	RPM          *int
+	TotalLimit   *int
+	SuccessLimit *int
+}
+
+// TierUpdates 用于管理员 PATCH 等级；指针字段为 nil 表示不修改。
+type TierUpdates struct {
+	Name         *string
+	Level        *int
 	RPM          *int
 	TotalLimit   *int
 	SuccessLimit *int
@@ -107,6 +139,14 @@ type Store interface {
 	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) error
 	ReleaseSuccessCall(ctx context.Context, userID string) error
 	TryIncrementUserSuccessCalls(ctx context.Context, userID string, successLimit int) error
+
+	GetTierByID(ctx context.Context, id string) (*Tier, error)
+	GetTierByName(ctx context.Context, name string) (*Tier, error)
+	ListTiers(ctx context.Context) ([]*Tier, error)
+	CreateTier(ctx context.Context, name string, level, rpm, totalLimit, successLimit int) (*Tier, error)
+	UpdateTier(ctx context.Context, id string, updates TierUpdates) (*Tier, error)
+	DeleteTier(ctx context.Context, id string) error
+	CountUsersByTier(ctx context.Context, tierID string) (int64, error)
 
 	CreateKey(ctx context.Context, userID, name string) (*APIKey, string, error)
 	GetKeyByHash(ctx context.Context, hash string) (*APIKey, error)

@@ -37,6 +37,18 @@ func (TestStore) TryIncrementUserSuccessCalls(context.Context, string, int) erro
 	return nil
 }
 
+func (TestStore) GetTierByID(context.Context, string) (*Tier, error) { return nil, ErrTierNotFound }
+func (TestStore) GetTierByName(context.Context, string) (*Tier, error) { return nil, nil }
+func (TestStore) ListTiers(context.Context) ([]*Tier, error)          { return nil, nil }
+func (TestStore) CreateTier(context.Context, string, int, int, int, int) (*Tier, error) {
+	return nil, nil
+}
+func (TestStore) UpdateTier(context.Context, string, TierUpdates) (*Tier, error) {
+	return nil, nil
+}
+func (TestStore) DeleteTier(context.Context, string) error            { return nil }
+func (TestStore) CountUsersByTier(context.Context, string) (int64, error) { return 0, nil }
+
 func (TestStore) CreateKey(context.Context, string, string) (*APIKey, string, error) {
 	return nil, "", nil
 }

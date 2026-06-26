@@ -28,6 +28,9 @@ type UserResponse struct {
 	Username     string         `json:"username"`
 	Role         store.UserRole `json:"role"`
 	Enabled      bool           `json:"enabled"`
+	TierID       string         `json:"tier_id,omitempty"`
+	TierName     string         `json:"tier_name,omitempty"`
+	TierLevel    *int           `json:"tier_level,omitempty"`
 	RPM          int            `json:"rpm"`
 	TotalLimit   int            `json:"total_limit"`
 	SuccessLimit int            `json:"success_limit"`
@@ -65,9 +68,39 @@ type KeyResponse struct {
 type UpdateUserRequest struct {
 	Enabled      *bool           `json:"enabled,omitempty"`
 	Role         *store.UserRole `json:"role,omitempty"`
+	TierID       *string         `json:"tier_id,omitempty"`
 	RPM          *int            `json:"rpm,omitempty"`
 	TotalLimit   *int            `json:"total_limit,omitempty"`
 	SuccessLimit *int            `json:"success_limit,omitempty"`
+}
+
+// TierResponse 为等级预设的对外表示。
+type TierResponse struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Level        int       `json:"level"`
+	RPM          int       `json:"rpm"`
+	TotalLimit   int       `json:"total_limit"`
+	SuccessLimit int       `json:"success_limit"`
+	UserCount    int64     `json:"user_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type CreateTierRequest struct {
+	Name         string `json:"name"`
+	Level        int    `json:"level"`
+	RPM          int    `json:"rpm"`
+	TotalLimit   int    `json:"total_limit"`
+	SuccessLimit int    `json:"success_limit"`
+}
+
+type UpdateTierRequest struct {
+	Name         *string `json:"name,omitempty"`
+	Level        *int    `json:"level,omitempty"`
+	RPM          *int    `json:"rpm,omitempty"`
+	TotalLimit   *int    `json:"total_limit,omitempty"`
+	SuccessLimit *int    `json:"success_limit,omitempty"`
 }
 
 type UsageStatsResponse struct {
@@ -89,9 +122,29 @@ type UsageRecordDTO struct {
 func toUserResponse(u *store.User) UserResponse {
 	return UserResponse{
 		ID: u.ID, Username: u.Username, Role: u.Role, Enabled: u.Enabled,
+		TierID: u.TierID,
 		RPM: u.RPM, TotalLimit: u.TotalLimit, SuccessLimit: u.SuccessLimit,
 		TotalCalls: u.TotalCalls, SuccessCalls: u.SuccessCalls,
 		CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
+	}
+}
+
+// toUserResponseWithTier 填充用户关联的 tier 名称与等级；tier 不存在时仅返回基础字段。
+func toUserResponseWithTier(u *store.User, tier *store.Tier) UserResponse {
+	resp := toUserResponse(u)
+	if tier != nil {
+		resp.TierName = tier.Name
+		lvl := tier.Level
+		resp.TierLevel = &lvl
+	}
+	return resp
+}
+
+func toTierResponse(t *store.Tier, userCount int64) TierResponse {
+	return TierResponse{
+		ID: t.ID, Name: t.Name, Level: t.Level,
+		RPM: t.RPM, TotalLimit: t.TotalLimit, SuccessLimit: t.SuccessLimit,
+		UserCount: userCount, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }
 

@@ -50,6 +50,10 @@ func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("GET /panel/v1/admin/users/{id}", h.adminGetUser)
 	admin.HandleFunc("PATCH /panel/v1/admin/users/{id}", h.adminUpdateUser)
 	admin.HandleFunc("GET /panel/v1/admin/users/{id}/usage", h.adminUserUsage)
+	admin.HandleFunc("GET /panel/v1/admin/tiers", h.adminListTiers)
+	admin.HandleFunc("POST /panel/v1/admin/tiers", h.adminCreateTier)
+	admin.HandleFunc("PATCH /panel/v1/admin/tiers/{id}", h.adminUpdateTier)
+	admin.HandleFunc("DELETE /panel/v1/admin/tiers/{id}", h.adminDeleteTier)
 	mux.Handle("/panel/v1/admin/", auth.RequireAdmin()(admin))
 }
 
@@ -179,7 +183,15 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load user")
 		return
 	}
-	writeJSON(w, http.StatusOK, toUserResponse(fresh))
+	resp := toUserResponse(fresh)
+	if fresh.TierID != "" {
+		if tier, terr := h.Store.GetTierByID(r.Context(), fresh.TierID); terr == nil && tier != nil {
+			resp.TierName = tier.Name
+			lvl := tier.Level
+			resp.TierLevel = &lvl
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
@@ -308,9 +320,14 @@ func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load users")
 		return
 	}
+	tiers, _ := h.Store.ListTiers(r.Context())
+	tierByID := make(map[string]*store.Tier, len(tiers))
+	for _, t := range tiers {
+		tierByID[t.ID] = t
+	}
 	out := make([]UserResponse, 0, len(users))
 	for _, u := range users {
-		out = append(out, toUserResponse(u))
+		out = append(out, toUserResponseWithTier(u, tierByID[u.TierID]))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": out})
 }
@@ -333,7 +350,7 @@ func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := h.Store.UpdateUser(r.Context(), id, store.UserUpdates{
-		Enabled: req.Enabled, Role: req.Role,
+		Enabled: req.Enabled, Role: req.Role, TierID: req.TierID,
 		RPM: req.RPM, TotalLimit: req.TotalLimit, SuccessLimit: req.SuccessLimit,
 	})
 	if err != nil {
@@ -366,4 +383,89 @@ func (h *Handler) adminUserUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toUsageStatsResponse(stats))
+}
+
+func (h *Handler) adminListTiers(w http.ResponseWriter, r *http.Request) {
+	tiers, err := h.Store.ListTiers(r.Context())
+	if err != nil {
+		log.Printf("admin list tiers failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to load tiers")
+		return
+	}
+	out := make([]TierResponse, 0, len(tiers))
+	for _, t := range tiers {
+		count, _ := h.Store.CountUsersByTier(r.Context(), t.ID)
+		out = append(out, toTierResponse(t, count))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tiers": out})
+}
+
+func (h *Handler) adminCreateTier(w http.ResponseWriter, r *http.Request) {
+	var req CreateTierRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "tier name is required")
+		return
+	}
+	t, err := h.Store.CreateTier(r.Context(), name, req.Level, req.RPM, req.TotalLimit, req.SuccessLimit)
+	if err != nil {
+		if errors.Is(err, store.ErrTierNameTaken) {
+			writeError(w, http.StatusConflict, "tier name already taken")
+			return
+		}
+		log.Printf("admin create tier failed: %v", err)
+		writeError(w, http.StatusBadRequest, "failed to create tier")
+		return
+	}
+	writeJSON(w, http.StatusCreated, toTierResponse(t, 0))
+}
+
+func (h *Handler) adminUpdateTier(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req UpdateTierRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	t, err := h.Store.UpdateTier(r.Context(), id, store.TierUpdates{
+		Name: req.Name, Level: req.Level,
+		RPM: req.RPM, TotalLimit: req.TotalLimit, SuccessLimit: req.SuccessLimit,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrTierNotFound) {
+			writeError(w, http.StatusNotFound, "tier not found")
+			return
+		}
+		if errors.Is(err, store.ErrTierNameTaken) {
+			writeError(w, http.StatusConflict, "tier name already taken")
+			return
+		}
+		log.Printf("admin update tier %s failed: %v", id, err)
+		writeError(w, http.StatusBadRequest, "failed to update tier")
+		return
+	}
+	count, _ := h.Store.CountUsersByTier(r.Context(), t.ID)
+	writeJSON(w, http.StatusOK, toTierResponse(t, count))
+}
+
+func (h *Handler) adminDeleteTier(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.Store.DeleteTier(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrTierNotFound) {
+			writeError(w, http.StatusNotFound, "tier not found")
+			return
+		}
+		if errors.Is(err, store.ErrTierInUse) {
+			writeError(w, http.StatusConflict, "tier is in use; reassign users first")
+			return
+		}
+		log.Printf("admin delete tier %s failed: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to delete tier")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

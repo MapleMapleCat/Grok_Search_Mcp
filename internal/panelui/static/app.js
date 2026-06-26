@@ -5,12 +5,13 @@
     user: "grok_mcp_panel_user"
   };
 
-  const routes = ["dashboard", "keys", "usage", "users", "account"];
+  const routes = ["dashboard", "keys", "usage", "users", "tiers", "account"];
   const routeMeta = {
     dashboard: { label: "Dashboard", icon: "dashboard" },
     keys: { label: "Keys", icon: "vpn_key" },
     usage: { label: "Usage Stats", icon: "bar_chart" },
     users: { label: "User Management", icon: "group", admin: true },
+    tiers: { label: "Tier Management", icon: "workspace_premium", admin: true },
     account: { label: "Account Settings", icon: "settings", bottom: true }
   };
 
@@ -23,6 +24,7 @@
     user: readJSON(storage.user),
     keys: [],
     users: [],
+    tiers: [],
     usage: emptyUsage(),
     selectedKeyID: "all",
     sinceMode: "24h",
@@ -83,6 +85,9 @@
         state.usage = await loadUsageForSelection();
       } else if (state.route === "users" && isAdmin()) {
         await loadUsers();
+        await loadTiers();
+      } else if (state.route === "tiers" && isAdmin()) {
+        await loadTiers();
       }
     } catch (err) {
       handleAPIError(err);
@@ -99,6 +104,11 @@
   async function loadUsers() {
     const data = await api("/admin/users");
     state.users = Array.isArray(data.users) ? data.users : [];
+  }
+
+  async function loadTiers() {
+    const data = await api("/admin/tiers");
+    state.tiers = Array.isArray(data.tiers) ? data.tiers : [];
   }
 
   async function loadAggregatedUsage(mode) {
@@ -259,8 +269,8 @@
     return `
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark ${state.route === "keys" ? "text" : ""}">
-            ${state.route === "keys" ? "M" : '<span class="material-symbols-outlined">developer_board</span>'}
+          <div class="brand-mark">
+            <span class="material-symbols-outlined">developer_board</span>
           </div>
           <div class="brand-copy">
             <h1>MCP Central</h1>
@@ -289,6 +299,7 @@
     if (state.route === "keys") return renderKeys();
     if (state.route === "usage") return renderUsage();
     if (state.route === "users") return renderUsers();
+    if (state.route === "tiers") return renderTiers();
     if (state.route === "account") return renderAccount();
     return renderDashboard();
   }
@@ -439,7 +450,7 @@
       <div class="page-head">
         <div>
           <h2>User Management</h2>
-          <p>Adjust user status, roles and aggregate quotas.</p>
+          <p>Adjust user status, roles, tier and aggregate quotas.</p>
         </div>
         <button class="button secondary" data-action="refresh" type="button"><span class="material-symbols-outlined">refresh</span><span>Refresh</span></button>
       </div>
@@ -450,6 +461,7 @@
               <tr>
                 <th>Username</th>
                 <th>Role</th>
+                <th>Tier</th>
                 <th>Status</th>
                 <th>RPM</th>
                 <th>Total Calls</th>
@@ -466,6 +478,9 @@
   }
 
   function renderUserRow(user) {
+    const tierBadge = user.tier_name
+      ? `<span class="badge off">${escapeHTML(user.tier_name)}</span>`
+      : `<span class="muted">—</span>`;
     return `
       <tr>
         <td>
@@ -473,6 +488,7 @@
           <div class="hint mono">${escapeHTML(shortID(user.id))}</div>
         </td>
         <td><span class="badge ${user.role === "admin" ? "" : "off"}">${escapeHTML(user.role)}</span></td>
+        <td>${tierBadge}</td>
         <td><span class="badge ${user.enabled ? "" : "error"}">${user.enabled ? "Enabled" : "Disabled"}</span></td>
         <td class="mono">${formatNumber(user.rpm)}</td>
         <td>${formatNumber(user.total_calls)} <span class="muted">/ ${limitText(user.total_limit)}</span></td>
@@ -487,6 +503,12 @@
   }
 
   function renderAccount() {
+    const tierBadge = state.user.tier_name
+      ? `<span class="badge off">${escapeHTML(state.user.tier_name)}</span>`
+      : "";
+    const editBtn = isAdmin()
+      ? `<button class="button secondary" data-action="edit-account" type="button"><span class="material-symbols-outlined">edit</span><span>Edit Quotas</span></button>`
+      : "";
     return `
       <div class="page-head">
         <div>
@@ -504,6 +526,7 @@
           <div class="summary-list">
             ${summaryItem("Username", escapeHTML(state.user.username))}
             ${summaryItem("Role", `<span class="badge ${state.user.role === "admin" ? "" : "off"}">${escapeHTML(state.user.role)}</span>`)}
+            ${tierBadge ? summaryItem("Tier", tierBadge) : ""}
             ${summaryItem("User ID", `<span class="mono">${escapeHTML(state.user.id)}</span>`)}
             ${summaryItem("Created", formatDateTime(state.user.created_at))}
             ${summaryItem("Updated", formatDateTime(state.user.updated_at))}
@@ -512,6 +535,7 @@
         <div class="card panel">
           <div class="panel-head">
             <h3>Quotas</h3>
+            ${editBtn}
           </div>
           <div class="quota-list">
             ${quotaProgress("RPM", state.user.rpm, 0, "per minute")}
@@ -538,6 +562,221 @@
           </div>
         </div>
       </div>`;
+  }
+
+  function renderTiers() {
+    if (!isAdmin()) {
+      return `
+        <div class="page-head">
+          <div>
+            <h2>Tier Management</h2>
+            <p>Admin role is required to manage tiers.</p>
+          </div>
+        </div>
+        <section class="card empty">
+          <div>
+            <span class="material-symbols-outlined">lock</span>
+            <h3>Admin required</h3>
+            <p>当前账号没有管理员权限。</p>
+          </div>
+        </section>`;
+    }
+    const tiers = state.tiers || [];
+    return `
+      <div class="page-head">
+        <div>
+          <h2>Tier Management</h2>
+          <p>管理 tier0~tier6 等级预设，注册用户默认分配 tier0。</p>
+        </div>
+        <span class="row-actions">
+          <button class="button secondary" data-action="refresh" type="button"><span class="material-symbols-outlined">refresh</span><span>Refresh</span></button>
+          <button class="button" data-action="open-create-tier" type="button"><span class="material-symbols-outlined">add</span><span>New Tier</span></button>
+        </span>
+      </div>
+      <section class="card table-card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Level</th>
+                <th>RPM</th>
+                <th>Total Limit</th>
+                <th>Success Limit</th>
+                <th>Users</th>
+                <th class="right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tiers.length ? tiers.map(renderTierRow).join("") : renderEmptyRow("workspace_premium", "No tiers", "Create a tier preset to get started.")}
+            </tbody>
+          </table>
+        </div>
+      </section>`;
+  }
+
+  function renderTierRow(tier) {
+    return `
+      <tr>
+        <td><strong>${escapeHTML(tier.name)}</strong><div class="hint mono">${escapeHTML(shortID(tier.id))}</div></td>
+        <td><span class="badge off">L${tier.level}</span></td>
+        <td class="mono">${formatNumber(tier.rpm)}</td>
+        <td class="mono">${limitText(tier.total_limit)}</td>
+        <td class="mono">${limitText(tier.success_limit)}</td>
+        <td>${formatNumber(tier.user_count || 0)}</td>
+        <td class="right">
+          <span class="row-actions">
+            <button class="mini-icon" data-action="edit-tier" data-tier-id="${escapeAttr(tier.id)}" title="Edit" type="button"><span class="material-symbols-outlined">edit</span></button>
+            <button class="mini-icon" data-action="delete-tier" data-tier-id="${escapeAttr(tier.id)}" title="Delete" type="button"><span class="material-symbols-outlined">delete</span></button>
+          </span>
+        </td>
+      </tr>`;
+  }
+
+  function tierOptions(selectedID) {
+    return (state.tiers || [])
+      .map((t) => `<option value="${escapeAttr(t.id)}" ${selectedID === t.id ? "selected" : ""}>${escapeHTML(t.name)} (L${t.level})</option>`)
+      .join("");
+  }
+
+  function renderEditAccountModal(user) {
+    if (!user) return "";
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Quotas" data-modal>
+          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+          <div class="modal-body">
+            <h3>Edit Quotas</h3>
+            <p>${escapeHTML(user.username)} quota controls.</p>
+            <form id="edit-account-form" class="form-stack" style="margin-top: 24px;">
+              <div class="field">
+                <label for="edit-account-tier">Tier</label>
+                <select id="edit-account-tier" name="tier_id" class="select" data-tier-select="edit-account">
+                  <option value="" ${!user.tier_id ? "selected" : ""}>None</option>
+                  ${tierOptions(user.tier_id)}
+                </select>
+                <span class="hint">选择 tier 会用预设值填充下方额度，保存后两者独立存储。</span>
+              </div>
+              <div class="field">
+                <label for="edit-account-rpm">RPM</label>
+                <input id="edit-account-rpm" name="rpm" class="input mono" type="number" min="0" value="${Number(user.rpm) || 0}">
+              </div>
+              <div class="field">
+                <label for="edit-account-total">Total Limit</label>
+                <input id="edit-account-total" name="total_limit" class="input mono" type="number" min="0" value="${Number(user.total_limit) || 0}">
+                <span class="hint">0 means unlimited.</span>
+              </div>
+              <div class="field">
+                <label for="edit-account-success">Success Limit</label>
+                <input id="edit-account-success" name="success_limit" class="input mono" type="number" min="0" value="${Number(user.success_limit) || 0}">
+                <span class="hint">0 means unlimited.</span>
+              </div>
+              <div class="modal-actions">
+                <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+                <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function renderCreateTierModal() {
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-label="Create Tier" data-modal>
+          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+          <div class="modal-body">
+            <h3>Create Tier</h3>
+            <p>新建一个等级预设。</p>
+            <form id="create-tier-form" class="form-stack" style="margin-top: 24px;">
+              <div class="field">
+                <label for="create-tier-name">Name</label>
+                <input id="create-tier-name" name="name" class="input" placeholder="tier7" required>
+              </div>
+              <div class="field">
+                <label for="create-tier-level">Level</label>
+                <input id="create-tier-level" name="level" class="input mono" type="number" min="0" value="0">
+              </div>
+              <div class="field">
+                <label for="create-tier-rpm">RPM</label>
+                <input id="create-tier-rpm" name="rpm" class="input mono" type="number" min="0" value="0">
+              </div>
+              <div class="field">
+                <label for="create-tier-total">Total Limit</label>
+                <input id="create-tier-total" name="total_limit" class="input mono" type="number" min="0" value="0">
+                <span class="hint">0 means unlimited.</span>
+              </div>
+              <div class="field">
+                <label for="create-tier-success">Success Limit</label>
+                <input id="create-tier-success" name="success_limit" class="input mono" type="number" min="0" value="0">
+                <span class="hint">0 means unlimited.</span>
+              </div>
+              <div class="modal-actions">
+                <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+                <button class="button" type="submit"><span class="material-symbols-outlined">add</span><span>Create</span></button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function renderEditTierModal(tier) {
+    if (!tier) return "";
+    return `
+      <div class="modal-backdrop" data-action="close-modal">
+        <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Tier" data-modal>
+          <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+          <div class="modal-body">
+            <h3>Edit Tier</h3>
+            <p>${escapeHTML(tier.name)} preset values.</p>
+            <form id="edit-tier-form" class="form-stack" style="margin-top: 24px;">
+              <input type="hidden" name="id" value="${escapeAttr(tier.id)}">
+              <div class="field">
+                <label for="edit-tier-name">Name</label>
+                <input id="edit-tier-name" name="name" class="input" value="${escapeAttr(tier.name || "")}" required>
+              </div>
+              <div class="field">
+                <label for="edit-tier-level">Level</label>
+                <input id="edit-tier-level" name="level" class="input mono" type="number" min="0" value="${Number(tier.level) || 0}">
+              </div>
+              <div class="field">
+                <label for="edit-tier-rpm">RPM</label>
+                <input id="edit-tier-rpm" name="rpm" class="input mono" type="number" min="0" value="${Number(tier.rpm) || 0}">
+              </div>
+              <div class="field">
+                <label for="edit-tier-total">Total Limit</label>
+                <input id="edit-tier-total" name="total_limit" class="input mono" type="number" min="0" value="${Number(tier.total_limit) || 0}">
+                <span class="hint">0 means unlimited.</span>
+              </div>
+              <div class="field">
+                <label for="edit-tier-success">Success Limit</label>
+                <input id="edit-tier-success" name="success_limit" class="input mono" type="number" min="0" value="${Number(tier.success_limit) || 0}">
+                <span class="hint">0 means unlimited.</span>
+              </div>
+              <div class="modal-actions">
+                <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+                <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </div>`;
+  }
+
+  function applyTierPreset(selectEl) {
+    const tierID = selectEl.value;
+    const tier = (state.tiers || []).find((t) => t.id === tierID);
+    if (!tier) return;
+    const form = selectEl.form;
+    if (!form) return;
+    const rpm = form.querySelector('[name="rpm"]');
+    const total = form.querySelector('[name="total_limit"]');
+    const success = form.querySelector('[name="success_limit"]');
+    if (rpm) rpm.value = tier.rpm;
+    if (total) total.value = tier.total_limit;
+    if (success) success.value = tier.success_limit;
   }
 
   function renderAlert(risk) {
@@ -653,6 +892,9 @@
     if (state.modal.type === "key-created") return renderKeyCreatedModal(state.modal);
     if (state.modal.type === "edit-key") return renderEditKeyModal(state.modal.key);
     if (state.modal.type === "edit-user") return renderEditUserModal(state.modal.user);
+    if (state.modal.type === "edit-account") return renderEditAccountModal(state.modal.user);
+    if (state.modal.type === "create-tier") return renderCreateTierModal();
+    if (state.modal.type === "edit-tier") return renderEditTierModal(state.modal.tier);
     if (state.modal.type === "user-usage") return renderUserUsageModal(state.modal.user, state.modal.usage);
     return "";
   }
@@ -780,6 +1022,14 @@
                 </select>
               </div>
               <div class="field">
+                <label for="edit-user-tier">Tier</label>
+                <select id="edit-user-tier" name="tier_id" class="select" data-tier-select="edit-user">
+                  <option value="" ${!user.tier_id ? "selected" : ""}>None</option>
+                  ${tierOptions(user.tier_id)}
+                </select>
+                <span class="hint">选择 tier 会用预设值填充下方额度，保存后两者独立存储。</span>
+              </div>
+              <div class="field">
                 <label for="edit-user-rpm">RPM</label>
                 <input id="edit-user-rpm" name="rpm" class="input mono" type="number" min="0" value="${Number(user.rpm) || 0}">
               </div>
@@ -853,6 +1103,12 @@
       await submitEditKey(form);
     } else if (form.id === "edit-user-form") {
       await submitEditUser(form);
+    } else if (form.id === "edit-account-form") {
+      await submitEditAccount(form);
+    } else if (form.id === "create-tier-form") {
+      await submitCreateTier(form);
+    } else if (form.id === "edit-tier-form") {
+      await submitEditTier(form);
     }
   }
 
@@ -962,6 +1218,7 @@
         body: {
           enabled: data.get("enabled") === "on",
           role: String(data.get("role") || "user"),
+          tier_id: String(data.get("tier_id") || ""),
           rpm: Number(data.get("rpm") || 0),
           total_limit: Number(data.get("total_limit") || 0),
           success_limit: Number(data.get("success_limit") || 0)
@@ -970,6 +1227,91 @@
       state.modal = null;
       await loadUsers();
       notify("用户已更新。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function submitEditAccount(form) {
+    const data = new FormData(form);
+    try {
+      await api(`/admin/users/${encodeURIComponent(state.user.id)}`, {
+        method: "PATCH",
+        body: {
+          tier_id: String(data.get("tier_id") || ""),
+          rpm: Number(data.get("rpm") || 0),
+          total_limit: Number(data.get("total_limit") || 0),
+          success_limit: Number(data.get("success_limit") || 0)
+        }
+      });
+      state.modal = null;
+      state.user = await api("/me");
+      setStored(storage.user, JSON.stringify(state.user));
+      notify("额度已更新。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function submitCreateTier(form) {
+    const data = new FormData(form);
+    try {
+      await api("/admin/tiers", {
+        method: "POST",
+        body: {
+          name: String(data.get("name") || "").trim(),
+          level: Number(data.get("level") || 0),
+          rpm: Number(data.get("rpm") || 0),
+          total_limit: Number(data.get("total_limit") || 0),
+          success_limit: Number(data.get("success_limit") || 0)
+        }
+      });
+      state.modal = null;
+      await loadTiers();
+      notify("等级已创建。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function submitEditTier(form) {
+    const data = new FormData(form);
+    const id = String(data.get("id") || "");
+    try {
+      await api(`/admin/tiers/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: {
+          name: String(data.get("name") || "").trim(),
+          level: Number(data.get("level") || 0),
+          rpm: Number(data.get("rpm") || 0),
+          total_limit: Number(data.get("total_limit") || 0),
+          success_limit: Number(data.get("success_limit") || 0)
+        }
+      });
+      state.modal = null;
+      await loadTiers();
+      notify("等级已更新。", "success");
+      render();
+    } catch (err) {
+      notify(errorText(err), "error");
+      render();
+    }
+  }
+
+  async function deleteTier(id) {
+    const tier = state.tiers.find((item) => item.id === id);
+    if (!tier) return;
+    if (!window.confirm(`Delete tier "${tier.name}"?`)) return;
+    try {
+      await api(`/admin/tiers/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await loadTiers();
+      notify("等级已删除。", "success");
       render();
     } catch (err) {
       notify(errorText(err), "error");
@@ -1013,6 +1355,18 @@
       const user = state.users.find((item) => item.id === actionEl.dataset.userId);
       state.modal = { type: "edit-user", user };
       render();
+    } else if (action === "edit-account") {
+      state.modal = { type: "edit-account", user: state.user };
+      render();
+    } else if (action === "open-create-tier") {
+      state.modal = { type: "create-tier" };
+      render();
+    } else if (action === "edit-tier") {
+      const tier = state.tiers.find((item) => item.id === actionEl.dataset.tierId);
+      state.modal = { type: "edit-tier", tier };
+      render();
+    } else if (action === "delete-tier") {
+      await deleteTier(actionEl.dataset.tierId);
     } else if (action === "user-usage") {
       await openUserUsage(actionEl.dataset.userId);
     } else if (action === "logout") {
@@ -1029,6 +1383,8 @@
     if (target.matches("[data-key-toggle]")) {
       const checkbox = target;
       await updateKeyEnabled(checkbox.dataset.keyToggle, checkbox.checked);
+    } else if (target.matches("[data-tier-select]")) {
+      applyTierPreset(target);
     } else if (target.id === "usage-key-select") {
       state.selectedKeyID = target.value;
       await loadRouteData();

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const userColumns = `id, username, password_hash, role, enabled, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at`
+const userColumns = `id, username, password_hash, role, enabled, tier_id, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at`
 
 func scanUser(row interface {
 	Scan(dest ...any) error
@@ -16,9 +16,10 @@ func scanUser(row interface {
 	var u User
 	var role string
 	var enabled int
+	var tierID sql.NullString
 	var createdAt, updatedAt string
 	err := row.Scan(
-		&u.ID, &u.Username, &u.PasswordHash, &role, &enabled,
+		&u.ID, &u.Username, &u.PasswordHash, &role, &enabled, &tierID,
 		&u.RPM, &u.TotalLimit, &u.SuccessLimit, &u.TotalCalls, &u.SuccessCalls,
 		&createdAt, &updatedAt,
 	)
@@ -27,6 +28,9 @@ func scanUser(row interface {
 	}
 	u.Role = UserRole(role)
 	u.Enabled = enabled != 0
+	if tierID.Valid {
+		u.TierID = tierID.String
+	}
 	u.CreatedAt, err = parseTime(createdAt)
 	if err != nil {
 		return nil, err
@@ -52,10 +56,11 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 		return nil, err
 	}
 	now := formatTime(nowUTC())
+	tierID, _ := s.defaultTierID(ctx)
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, role, enabled, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, 0, 0, ?, ?)`,
-		id, username, passwordHash, string(role), rpm, totalLimit, successLimit, now, now,
+		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 0, 0, ?, ?)`,
+		id, username, passwordHash, string(role), nullableString(tierID), rpm, totalLimit, successLimit, now, now,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -91,10 +96,12 @@ func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash s
 		return nil, err
 	}
 	now := formatTime(nowUTC())
+	var tierID sql.NullString
+	_ = tx.QueryRowContext(ctx, `SELECT id FROM tiers WHERE name = 'tier0' LIMIT 1`).Scan(&tierID)
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, role, enabled, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, 0, 0, ?, ?)`,
-		id, username, passwordHash, string(role), rpm, totalLimit, successLimit, now, now,
+		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 0, 0, ?, ?)`,
+		id, username, passwordHash, string(role), tierID, rpm, totalLimit, successLimit, now, now,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -166,6 +173,10 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		}
 		sets = append(sets, "role = ?")
 		args = append(args, string(*updates.Role))
+	}
+	if updates.TierID != nil {
+		sets = append(sets, "tier_id = ?")
+		args = append(args, nullableString(*updates.TierID))
 	}
 	if updates.RPM != nil {
 		if *updates.RPM < 0 {
@@ -272,4 +283,25 @@ func (s *SQLiteStore) TryIncrementUserSuccessCalls(ctx context.Context, userID s
 
 func nowUTC() time.Time {
 	return time.Now().UTC()
+}
+
+// defaultTierID 返回默认 tier0 的 ID；若 tier 表尚未初始化则返回空串。
+func (s *SQLiteStore) defaultTierID(ctx context.Context) (string, error) {
+	var id sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM tiers WHERE name = 'tier0' LIMIT 1`).Scan(&id)
+	if err != nil && err != sql.ErrNoRows {
+		return "", err
+	}
+	if id.Valid {
+		return id.String, nil
+	}
+	return "", nil
+}
+
+// nullableString 将空串转为 sql.NullString（NULL），非空串保留。
+func nullableString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
 }
