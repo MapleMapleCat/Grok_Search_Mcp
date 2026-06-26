@@ -506,9 +506,7 @@
     const tierBadge = state.user.tier_name
       ? `<span class="badge off">${escapeHTML(state.user.tier_name)}</span>`
       : "";
-    const editBtn = isAdmin()
-      ? `<button class="button secondary" data-action="edit-account" type="button"><span class="material-symbols-outlined">edit</span><span>Edit Tier</span></button>`
-      : "";
+    const editBtn = "";
     return `
       <div class="page-head">
         <div>
@@ -996,7 +994,7 @@
           <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
           <div class="modal-body">
             <h3>Edit User</h3>
-            <p>${escapeHTML(user.username)} quota and access controls.</p>
+            <p>${escapeHTML(user.username)} access and tier assignment.</p>
             <form id="edit-user-form" class="form-stack" style="margin-top: 24px;">
               <input type="hidden" name="id" value="${escapeAttr(user.id)}">
               <div class="field-row">
@@ -1019,21 +1017,7 @@
                   <option value="" ${!user.tier_id ? "selected" : ""}>None</option>
                   ${tierOptions(user.tier_id)}
                 </select>
-                <span class="hint">选择 tier 会用预设值填充下方额度，保存后两者独立存储。</span>
-              </div>
-              <div class="field">
-                <label for="edit-user-rpm">RPM</label>
-                <input id="edit-user-rpm" name="rpm" class="input mono" type="number" min="0" value="${Number(user.rpm) || 0}">
-              </div>
-              <div class="field">
-                <label for="edit-user-total">Total Limit</label>
-                <input id="edit-user-total" name="total_limit" class="input mono" type="number" min="0" value="${Number(user.total_limit) || 0}">
-                <span class="hint">0 means unlimited.</span>
-              </div>
-              <div class="field">
-                <label for="edit-user-success">Success Limit</label>
-                <input id="edit-user-success" name="success_limit" class="input mono" type="number" min="0" value="${Number(user.success_limit) || 0}">
-                <span class="hint">0 means unlimited.</span>
+                <span class="hint">限额（RPM / 总次数 / 成功次数）由所选 tier 决定；调整 tier 预设请到 Tier Management 页。</span>
               </div>
               <div class="modal-actions">
                 <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
@@ -1210,10 +1194,7 @@
         body: {
           enabled: data.get("enabled") === "on",
           role: String(data.get("role") || "user"),
-          tier_id: String(data.get("tier_id") || ""),
-          rpm: Number(data.get("rpm") || 0),
-          total_limit: Number(data.get("total_limit") || 0),
-          success_limit: Number(data.get("success_limit") || 0)
+          tier_id: String(data.get("tier_id") || "")
         }
       });
       state.modal = null;
@@ -1232,10 +1213,7 @@
       await api(`/admin/users/${encodeURIComponent(state.user.id)}`, {
         method: "PATCH",
         body: {
-          tier_id: String(data.get("tier_id") || ""),
-          rpm: Number(data.get("rpm") || 0),
-          total_limit: Number(data.get("total_limit") || 0),
-          success_limit: Number(data.get("success_limit") || 0)
+          tier_id: String(data.get("tier_id") || "")
         }
       });
       state.modal = null;
