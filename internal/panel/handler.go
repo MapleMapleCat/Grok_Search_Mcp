@@ -119,7 +119,11 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "registration failed")
 		return
 	}
-	writeJSON(w, http.StatusCreated, toUserResponse(user))
+	var tier *store.Tier
+	if user.TierID != "" {
+		tier, _ = h.Store.GetTierByID(r.Context(), user.TierID)
+	}
+	writeJSON(w, http.StatusCreated, toUserResponseWithTier(user, tier))
 }
 
 // dummyBcryptHash 是用于拉平登录时序的固定 bcrypt 哈希。
@@ -166,8 +170,12 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "token issue failed")
 		return
 	}
+	var tier *store.Tier
+	if user.TierID != "" {
+		tier, _ = h.Store.GetTierByID(r.Context(), user.TierID)
+	}
 	writeJSON(w, http.StatusOK, LoginResponse{
-		Token: token, ExpiresAt: exp, User: toUserResponse(user),
+		Token: token, ExpiresAt: exp, User: toUserResponseWithTier(user, tier),
 	})
 }
 
@@ -183,15 +191,11 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load user")
 		return
 	}
-	resp := toUserResponse(fresh)
+	var tier *store.Tier
 	if fresh.TierID != "" {
-		if tier, terr := h.Store.GetTierByID(r.Context(), fresh.TierID); terr == nil && tier != nil {
-			resp.TierName = tier.Name
-			lvl := tier.Level
-			resp.TierLevel = &lvl
-		}
+		tier, _ = h.Store.GetTierByID(r.Context(), fresh.TierID)
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, toUserResponseWithTier(fresh, tier))
 }
 
 func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
