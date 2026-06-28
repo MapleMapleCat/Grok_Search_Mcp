@@ -44,12 +44,15 @@ func PeekToolName(r *http.Request) string {
 	return extractToolName(r)
 }
 
-// responseRecorder 捕获 HTTP 状态码与响应体，用于判断 MCP tools/call 是否成功。
+// responseRecorder 捕获 HTTP 状态码；SSE 流式响应仅保留最后一条 data 行用于判断 isError。
 type responseRecorder struct {
 	http.ResponseWriter
-	status int
-	buf    bytes.Buffer
+	status      int
+	lastSSEData []byte
+	jsonCapture []byte
 }
+
+const maxJSONCapture = 256 << 10
 
 func (s *responseRecorder) WriteHeader(code int) {
 	s.status = code
@@ -60,8 +63,30 @@ func (s *responseRecorder) Write(p []byte) (int, error) {
 	if s.status == 0 {
 		s.status = http.StatusOK
 	}
-	s.buf.Write(p)
+	s.captureSSEData(p)
+	if len(s.lastSSEData) == 0 {
+		room := maxJSONCapture - len(s.jsonCapture)
+		if room > 0 {
+			if len(p) > room {
+				p = p[:room]
+			}
+			s.jsonCapture = append(s.jsonCapture, p...)
+		}
+	}
 	return s.ResponseWriter.Write(p)
+}
+
+func (s *responseRecorder) captureSSEData(p []byte) {
+	for line := range bytes.SplitSeq(p, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if len(data) > 0 {
+			s.lastSSEData = append([]byte(nil), data...)
+		}
+	}
 }
 
 func (s *responseRecorder) Flush() {
@@ -118,17 +143,21 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 			next.ServeHTTP(rec, r)
 			dur := time.Since(start).Milliseconds()
 
+			body := rec.lastSSEData
+			if len(body) == 0 {
+				body = rec.jsonCapture
+			}
 			httpOK := rec.status >= 200 && rec.status < 300
-			mcpOK := httpOK && !mcpToolResultIsError(rec.buf.Bytes())
+			mcpOK := httpOK && !mcpToolResultIsError(body)
 			success := mcpOK
 
-			_ = st.TouchKeyUsage(r.Context(), key.ID)
 			if hasUser {
 				if !mcpOK {
 					_ = st.ReleaseSuccessCall(r.Context(), user.ID)
 				}
 			}
 			if writer != nil {
+				writer.Enqueue(store.UsageRecord{KeyID: key.ID, TouchKey: true})
 				writer.Enqueue(store.UsageRecord{
 					KeyID: key.ID, ToolName: toolName,
 					Timestamp: time.Now().UTC(), DurationMs: dur,

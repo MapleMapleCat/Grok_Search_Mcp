@@ -1,11 +1,39 @@
 package ratelimit
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/grok-mcp/internal/auth"
+	"github.com/grok-mcp/internal/store"
 	"golang.org/x/time/rate"
 )
+
+func TestUserMiddlewareRejectsNegativeRPM(t *testing.T) {
+	l := NewUserLimiter(60)
+	defer l.Close()
+
+	var called bool
+	h := l.UserMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	user := &store.User{ID: "u1", RPM: -1}
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req = req.WithContext(auth.WithUser(req.Context(), user))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if called {
+		t.Fatal("next handler must not run for negative RPM")
+	}
+}
 
 func TestUserLimiterRebuildsWhenRPMFallsBackToDefault(t *testing.T) {
 	l := NewUserLimiter(60)

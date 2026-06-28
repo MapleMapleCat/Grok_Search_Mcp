@@ -6,6 +6,18 @@ import (
 	"strings"
 )
 
+// allowedModels 为可透传至 CPA 的模型白名单；用户指定的 model 与默认模型均须命中。
+var allowedModels = map[string]struct{}{
+	"grok-4.3": {},
+}
+
+func validateModel(model string) error {
+	if _, ok := allowedModels[model]; !ok {
+		return fmt.Errorf("unsupported model: %q", model)
+	}
+	return nil
+}
+
 // validateSearchRequest 校验查询、工具类型及域名过滤参数的互斥与数量上限。
 func validateSearchRequest(req SearchRequest) error {
 	if strings.TrimSpace(req.Query) == "" {
@@ -46,6 +58,9 @@ func (c *Client) buildSearchRequestBody(req SearchRequest) (string, []byte, erro
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
 		model = c.defaultModel
+	}
+	if err := validateModel(model); err != nil {
+		return "", nil, err
 	}
 
 	upstreamReq := responsesRequest{

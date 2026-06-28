@@ -49,6 +49,9 @@ type User struct {
 	SuccessLimit int
 	TotalCalls   int64
 	SuccessCalls int64
+	// TokenVersion 写入 JWT 的 "tv" 声明；中间件比对 DB 当前值，不一致即拒签。
+	// 角色/启用状态变更或显式吊销时自增，令所有未刷新的 token 立即失效。
+	TokenVersion int64
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -87,6 +90,8 @@ type UsageRecord struct {
 	Timestamp  time.Time
 	DurationMs int64
 	Success    bool
+	// TouchKey 为 true 时异步执行 TouchKeyUsage，不写 usage_log。
+	TouchKey bool
 }
 
 // UsageStats 聚合某段时间内的调用统计；Records 最多返回最近 500 条明细。
@@ -104,10 +109,12 @@ type KeyUpdates struct {
 }
 
 // UserUpdates 用于管理员 PATCH 用户；限额由 tier 决定，此处仅允许调整 enabled/role/tier_id。
+// RevokeTokens 为 true 时自增 token_version，强制该用户所有未刷新的 JWT 立即失效（强制下线）。
 type UserUpdates struct {
-	Enabled *bool
-	Role    *UserRole
-	TierID  *string
+	Enabled      *bool
+	Role         *UserRole
+	TierID       *string
+	RevokeTokens *bool
 }
 
 // TierUpdates 用于管理员 PATCH 等级；指针字段为 nil 表示不修改。

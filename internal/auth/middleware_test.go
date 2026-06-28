@@ -39,7 +39,7 @@ func TestAPIKeyMiddleware(t *testing.T) {
 	}
 
 	var gotID string
-	h := APIKeyMiddleware(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := APIKeyMiddleware(NewStoreAPIKeyResolver(st))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		k, ok := APIKeyFromContext(r.Context())
 		if !ok {
 			t.Fatal("missing key in context")

@@ -28,6 +28,9 @@ func NewClient(cfg *config.Config) *Client {
 		defaultModel: cfg.Model,
 		httpClient: &http.Client{
 			Timeout: cfg.Timeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 		log: logx.New("grok", cfg.Debug),
 	}

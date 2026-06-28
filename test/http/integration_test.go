@@ -57,7 +57,7 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 	mcpChain = quota.MCPMiddleware(st)(mcpChain)
 	mcpChain = usage.ExtractToolNameMiddleware()(mcpChain)
 	mcpChain = userLim.UserMiddleware()(mcpChain)
-	mcpChain = auth.APIKeyMiddleware(st)(mcpChain)
+	mcpChain = auth.APIKeyMiddleware(auth.NewStoreAPIKeyResolver(st))(mcpChain)
 
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpChain)

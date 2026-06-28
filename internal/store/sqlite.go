@@ -293,20 +293,39 @@ func (s *SQLiteStore) TouchKeyUsage(ctx context.Context, keyID string) error {
 	return err
 }
 
+// usageStatsScope 限定 usage_log 聚合的 WHERE 条件，禁止任意 SQL 片段拼接。
+type usageStatsScope int
+
+const (
+	usageStatsByKey usageStatsScope = iota
+	usageStatsByUser
+	usageStatsGlobal
+)
+
+var usageStatsWhere = map[usageStatsScope]string{
+	usageStatsByKey:  `key_id = ?`,
+	usageStatsByUser: `key_id IN (SELECT id FROM apikeys WHERE user_id = ?)`,
+	usageStatsGlobal: `1=1`,
+}
+
 func (s *SQLiteStore) GetUsageStats(ctx context.Context, keyID string, since time.Time) (*UsageStats, error) {
-	return s.queryUsageStats(ctx, `key_id = ?`, []any{keyID}, since)
+	return s.queryUsageStats(ctx, usageStatsByKey, []any{keyID}, since)
 }
 
 func (s *SQLiteStore) GetUserUsageStats(ctx context.Context, userID string, since time.Time) (*UsageStats, error) {
-	return s.queryUsageStats(ctx, `key_id IN (SELECT id FROM apikeys WHERE user_id = ?)`, []any{userID}, since)
+	return s.queryUsageStats(ctx, usageStatsByUser, []any{userID}, since)
 }
 
 func (s *SQLiteStore) GetGlobalStats(ctx context.Context, since time.Time) (*UsageStats, error) {
-	return s.queryUsageStats(ctx, `1=1`, nil, since)
+	return s.queryUsageStats(ctx, usageStatsGlobal, nil, since)
 }
 
 // queryUsageStats 按条件聚合 usage_log，并拉取最近 500 条明细（按时间倒序）。
-func (s *SQLiteStore) queryUsageStats(ctx context.Context, where string, whereArgs []any, since time.Time) (*UsageStats, error) {
+func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope, whereArgs []any, since time.Time) (*UsageStats, error) {
+	where, ok := usageStatsWhere[scope]
+	if !ok {
+		return nil, fmt.Errorf("invalid usage stats scope")
+	}
 	stats := &UsageStats{ByTool: make(map[string]int64)}
 
 	sinceStr := formatTime(since.UTC())

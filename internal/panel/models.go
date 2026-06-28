@@ -66,11 +66,12 @@ type KeyResponse struct {
 }
 
 // UpdateUserRequest 仅允许调整 enabled/role/tier_id；限额（rpm/total_limit/success_limit）
-// 由所属 tier 决定，不再支持按用户单独设置。
+// 由所属 tier 决定，不再支持按用户单独设置。RevokeTokens=true 强制吊销该用户所有存量 JWT。
 type UpdateUserRequest struct {
-	Enabled *bool           `json:"enabled,omitempty"`
-	Role    *store.UserRole `json:"role,omitempty"`
-	TierID  *string         `json:"tier_id,omitempty"`
+	Enabled      *bool           `json:"enabled,omitempty"`
+	Role         *store.UserRole `json:"role,omitempty"`
+	TierID       *string         `json:"tier_id,omitempty"`
+	RevokeTokens *bool           `json:"revoke_tokens,omitempty"`
 }
 
 // TierResponse 为等级预设的对外表示。

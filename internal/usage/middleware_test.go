@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/grok-mcp/internal/auth"
 	"github.com/grok-mcp/internal/store"
@@ -35,7 +36,9 @@ func TestMCPMiddlewareGatesUsageByToolCall(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
 	user := &store.User{ID: "u1", SuccessLimit: 0}
 	st := &fakeStore{}
-	h := MCPMiddleware(st, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	writer := store.NewAsyncUsageWriter(st, 8)
+	defer writer.Close()
+	h := MCPMiddleware(st, writer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
 		strings.NewReader(`{"jsonrpc":"2.0","method":"initialize"}`))
@@ -51,6 +54,10 @@ func TestMCPMiddlewareGatesUsageByToolCall(t *testing.T) {
 	req2 = req2.WithContext(auth.WithAPIKey(req2.Context(), key))
 	req2 = req2.WithContext(auth.WithUser(req2.Context(), user))
 	h.ServeHTTP(httptest.NewRecorder(), req2)
+	deadline := time.Now().Add(2 * time.Second)
+	for st.touched < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if st.touched != 1 || st.lastID != "k1" {
 		t.Fatalf("tools/call should touch usage once for k1, got touched=%d id=%q", st.touched, st.lastID)
 	}
@@ -205,7 +212,9 @@ func TestMCPMiddlewareUsesContextToolName(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
 	user := &store.User{ID: "u1"}
 	st := &fakeStore{}
-	h := MCPMiddleware(st, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	writer := store.NewAsyncUsageWriter(st, 8)
+	defer writer.Close()
+	h := MCPMiddleware(st, writer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", errReader{})
 	req.Body = io.NopCloser(errReader{})
@@ -215,6 +224,10 @@ func TestMCPMiddlewareUsesContextToolName(t *testing.T) {
 	req = req.WithContext(ctx)
 
 	h.ServeHTTP(httptest.NewRecorder(), req)
+	deadline := time.Now().Add(2 * time.Second)
+	for st.touched < 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if st.touched != 1 {
 		t.Fatalf("expected usage touched via context tool name, got %d", st.touched)
 	}

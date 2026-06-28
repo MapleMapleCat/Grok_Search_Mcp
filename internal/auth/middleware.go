@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
@@ -33,8 +34,34 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// APIKeyResolver 解析 Bearer 令牌对应的 API Key 与所属用户（含 tier 限额）。
+type APIKeyResolver interface {
+	Resolve(ctx context.Context, keyHash string) (key *store.APIKey, user *store.User, err error)
+}
+
+type storeAPIKeyResolver struct {
+	st store.Store
+}
+
+func (s storeAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*store.APIKey, *store.User, error) {
+	key, err := s.st.GetKeyByHash(ctx, keyHash)
+	if err != nil || key == nil {
+		return key, nil, err
+	}
+	user, err := LoadUserWithTierLimits(ctx, s.st, key.UserID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, user, nil
+}
+
+// NewStoreAPIKeyResolver 使用 Store 直接解析（无缓存）。
+func NewStoreAPIKeyResolver(st store.Store) APIKeyResolver {
+	return storeAPIKeyResolver{st: st}
+}
+
 // APIKeyMiddleware 校验 Bearer 是否为已启用密钥，成功后将 *store.APIKey 写入请求 context。
-func APIKeyMiddleware(st store.Store) func(http.Handler) http.Handler {
+func APIKeyMiddleware(resolver APIKeyResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, ok := bearerToken(r)
@@ -43,7 +70,7 @@ func APIKeyMiddleware(st store.Store) func(http.Handler) http.Handler {
 				return
 			}
 
-			key, err := st.GetKeyByHash(r.Context(), hashToken(token))
+			key, user, err := resolver.Resolve(r.Context(), hashToken(token))
 			if err != nil {
 				http.Error(w, "authentication failed", http.StatusInternalServerError)
 				return
@@ -54,12 +81,6 @@ func APIKeyMiddleware(st store.Store) func(http.Handler) http.Handler {
 			}
 			if !key.Enabled {
 				http.Error(w, "API key disabled", http.StatusForbidden)
-				return
-			}
-
-			user, err := LoadUserWithTierLimits(r.Context(), st, key.UserID)
-			if err != nil {
-				http.Error(w, "authentication failed", http.StatusInternalServerError)
 				return
 			}
 			if !user.Enabled {

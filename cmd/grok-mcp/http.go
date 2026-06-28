@@ -32,6 +32,8 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 	userLim := ratelimit.NewUserLimiter(cfg.DefaultUserRPM)
 	defer userLim.Close()
 
+	authResolver := auth.NewCachedAPIKeyResolver(st, 30*time.Second)
+
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
 		return server
 	}, &mcp.StreamableHTTPOptions{Stateless: true})
@@ -41,13 +43,13 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 	mcpChain = quota.MCPMiddleware(st)(mcpChain)
 	mcpChain = usage.ExtractToolNameMiddleware()(mcpChain)
 	mcpChain = userLim.UserMiddleware()(mcpChain)
-	mcpChain = auth.APIKeyMiddleware(st)(mcpChain)
+	mcpChain = auth.APIKeyMiddleware(authResolver)(mcpChain)
 
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/mcp/", mcpChain)
 	rootMux.Handle("/mcp", mcpChain)
 
-	panelHandler := &panel.Handler{Store: st, Config: cfg}
+	panelHandler := &panel.Handler{Store: st, Config: cfg, AuthCache: authResolver}
 	panelMux := panel.NewMux(panelHandler)
 	jwtSkip := map[string]struct{}{
 		"/panel/v1/auth/register": {},

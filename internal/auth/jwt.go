@@ -22,6 +22,9 @@ type panelClaims struct {
 	UserID   string         `json:"uid"`
 	Username string         `json:"username"`
 	Role     store.UserRole `json:"role"`
+	// TokenVersion 镜像 DB 的 token_version；中间件比对二者，不一致即拒签，
+	// 从而在角色变更/显式吊销后令存量 token 立即失效，无需黑名单。
+	TokenVersion int64 `json:"tv"`
 	jwt.RegisteredClaims
 }
 
@@ -33,9 +36,10 @@ func IssuePanelToken(secret string, user *store.User, ttl time.Duration) (string
 	now := time.Now().UTC()
 	exp := now.Add(ttl)
 	claims := panelClaims{
-		UserID:   user.ID,
-		Username: user.Username,
-		Role:     user.Role,
+		UserID:       user.ID,
+		Username:     user.Username,
+		Role:         user.Role,
+		TokenVersion: user.TokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   user.ID,
 			ExpiresAt: jwt.NewNumericDate(exp),
@@ -83,6 +87,12 @@ func JWTMiddleware(secret string, st store.Store, skip map[string]struct{}) func
 				http.Error(w, "user disabled", http.StatusForbidden)
 				return
 			}
+			// 防御纵深：token 中的角色或版本号与 DB 当前值不一致即拒签。
+			// 角色校验覆盖降级场景（admin→user）；版本号校验覆盖显式吊销/启用变更。
+			if claims.Role != user.Role || claims.TokenVersion != user.TokenVersion {
+				http.Error(w, "token revoked", http.StatusUnauthorized)
+				return
+			}
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), user)))
 		})
 	}
@@ -112,6 +122,9 @@ func RequireAdmin() func(http.Handler) http.Handler {
 func ParsePanelToken(secret, tokenStr string) (*panelClaims, error) {
 	claims := &panelClaims{}
 	_, err := jwt.ParseWithClaims(strings.TrimSpace(tokenStr), claims, func(t *jwt.Token) (any, error) {
+		if t.Method != jwt.SigningMethodHS256 {
+			return nil, errors.New("unexpected signing method")
+		}
 		return []byte(secret), nil
 	}, jwt.WithIssuer(jwtIssuer), jwt.WithAudience(jwtAudience))
 	return claims, err

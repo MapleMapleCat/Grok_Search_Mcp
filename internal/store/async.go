@@ -6,11 +6,11 @@ import (
 	"sync"
 )
 
-// AsyncUsageWriter 将用量写入从请求路径解耦：主线程只入队，后台 goroutine 调用 Store.RecordUsage。
+// AsyncUsageWriter 将用量写入从请求路径解耦：主线程只入队，后台 goroutine 调用 Store。
 type AsyncUsageWriter struct {
-	store  Store
-	ch     chan UsageRecord
-	wg     sync.WaitGroup
+	store Store
+	ch    chan UsageRecord
+	wg    sync.WaitGroup
 	cancel context.CancelFunc
 }
 
@@ -32,7 +32,6 @@ func (w *AsyncUsageWriter) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			// 关闭时尽量排空 channel 中的记录。
 			for {
 				select {
 				case rec := <-w.ch:
@@ -48,6 +47,12 @@ func (w *AsyncUsageWriter) run(ctx context.Context) {
 }
 
 func (w *AsyncUsageWriter) write(rec UsageRecord) {
+	if rec.TouchKey {
+		if err := w.store.TouchKeyUsage(context.Background(), rec.KeyID); err != nil {
+			log.Printf("touch key usage failed: %v", err)
+		}
+		return
+	}
 	if err := w.store.RecordUsage(context.Background(), rec); err != nil {
 		log.Printf("usage record write failed: %v", err)
 	}
@@ -58,6 +63,10 @@ func (w *AsyncUsageWriter) Enqueue(rec UsageRecord) {
 	select {
 	case w.ch <- rec:
 	default:
+		if rec.TouchKey {
+			log.Printf("touch key usage dropped (buffer full) key=%s", rec.KeyID)
+			return
+		}
 		log.Printf("usage record dropped (buffer full) key=%s tool=%s", rec.KeyID, rec.ToolName)
 	}
 }

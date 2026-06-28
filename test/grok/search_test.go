@@ -116,6 +116,15 @@ func TestSearchStreamValidateSearchRequestErrors(t *testing.T) {
 			},
 			want: "excluded_domains supports at most 5 entries",
 		},
+		{
+			name: "unsupported model",
+			req: grok.SearchRequest{
+				Query:    "test",
+				ToolType: grok.ToolTypeWebSearch,
+				Model:    "grok-evil",
+			},
+			want: "unsupported model",
+		},
 	}
 
 	for _, tc := range cases {

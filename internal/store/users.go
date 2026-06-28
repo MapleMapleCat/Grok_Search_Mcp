@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const userColumns = `id, username, password_hash, role, enabled, tier_id, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at`
+const userColumns = `id, username, password_hash, role, enabled, tier_id, rpm, total_limit, success_limit, total_calls, success_calls, token_version, created_at, updated_at`
 
 func scanUser(row interface {
 	Scan(dest ...any) error
@@ -21,7 +21,7 @@ func scanUser(row interface {
 	err := row.Scan(
 		&u.ID, &u.Username, &u.PasswordHash, &role, &enabled, &tierID,
 		&u.RPM, &u.TotalLimit, &u.SuccessLimit, &u.TotalCalls, &u.SuccessCalls,
-		&createdAt, &updatedAt,
+		&u.TokenVersion, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -159,6 +159,8 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 	}
 	var sets []string
 	var args []any
+	// 角色、启用状态变更或显式吊销均会自增 token_version，使存量 JWT 立即失效。
+	bumpTokenVersion := false
 	if updates.Enabled != nil {
 		en := 0
 		if *updates.Enabled {
@@ -166,6 +168,7 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		}
 		sets = append(sets, "enabled = ?")
 		args = append(args, en)
+		bumpTokenVersion = true
 	}
 	if updates.Role != nil {
 		if *updates.Role != RoleAdmin && *updates.Role != RoleUser {
@@ -173,10 +176,17 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		}
 		sets = append(sets, "role = ?")
 		args = append(args, string(*updates.Role))
+		bumpTokenVersion = true
 	}
 	if updates.TierID != nil {
 		sets = append(sets, "tier_id = ?")
 		args = append(args, nullableString(*updates.TierID))
+	}
+	if updates.RevokeTokens != nil && *updates.RevokeTokens {
+		bumpTokenVersion = true
+	}
+	if bumpTokenVersion {
+		sets = append(sets, "token_version = token_version + 1")
 	}
 	if len(sets) == 0 {
 		return s.GetUserByID(ctx, id)

@@ -111,13 +111,14 @@
     state.tiers = Array.isArray(data.tiers) ? data.tiers : [];
   }
 
+  function rpmText(rpm) {
+    return limitText(rpm);
+  }
+
   async function loadAggregatedUsage(mode) {
-    if (!state.keys.length) {
-      return emptyUsage();
-    }
     const since = sinceQuery(mode);
-    const parts = await Promise.all(state.keys.map((key) => api(`/keys/${encodeURIComponent(key.id)}/usage${since}`)));
-    return aggregateUsage(parts);
+    const data = await api(`/usage${since}`);
+    return normalizeUsage(data);
   }
 
   async function loadUsageForSelection() {
@@ -313,7 +314,7 @@
     return `
       ${risk ? renderAlert(risk) : ""}
       <section class="grid metric-grid">
-        ${metricCard("Rate Per Minute<br>(RPM)", formatNumber(state.user.rpm), "speed", "用户级共享限流", "good", 100)}
+        ${metricCard("Rate Per Minute<br>(RPM)", rpmText(state.user.rpm), "speed", "用户级共享限流；0 表示不限", "good", 100)}
         ${metricCard("Total Requests", `${formatNumber(state.user.total_calls)} <span class="muted">/ ${limitText(state.user.total_limit)}</span>`, "data_usage", quotaNote(totalPct), totalPct >= 90 ? "bad" : "good", totalPct)}
         ${metricCard("Success Rate", `${successRate}%`, "check_circle", state.user.total_calls ? "Based on completed calls" : "No traffic yet", "good", null)}
         ${metricCard("Success Quota", `${formatNumber(state.user.success_calls)} <span class="muted">/ ${limitText(state.user.success_limit)}</span>`, "task_alt", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct)}
@@ -490,7 +491,7 @@
         <td><span class="badge ${user.role === "admin" ? "" : "off"}">${escapeHTML(user.role)}</span></td>
         <td>${tierBadge}</td>
         <td><span class="badge ${user.enabled ? "" : "error"}">${user.enabled ? "Enabled" : "Disabled"}</span></td>
-        <td class="mono">${formatNumber(user.rpm)}</td>
+        <td class="mono">${rpmText(user.rpm)}</td>
         <td>${formatNumber(user.total_calls)} <span class="muted">/ ${limitText(user.total_limit)}</span></td>
         <td>${formatNumber(user.success_calls)} <span class="muted">/ ${limitText(user.success_limit)}</span></td>
         <td class="right">
@@ -537,7 +538,7 @@
             <div class="quota-item">
               <div class="field-row">
                 <span class="field-label">RPM</span>
-                <span class="mono">${formatNumber(state.user.rpm)} req/min</span>
+                <span class="mono">${rpmText(state.user.rpm)} req/min</span>
               </div>
               <span class="hint">每分钟请求上限，所有 Key 共享</span>
             </div>
@@ -622,7 +623,7 @@
       <tr>
         <td><strong>${escapeHTML(tier.name)}</strong><div class="hint mono">${escapeHTML(shortID(tier.id))}</div></td>
         <td><span class="badge off">L${tier.level}</span></td>
-        <td class="mono">${formatNumber(tier.rpm)}</td>
+        <td class="mono">${rpmText(tier.rpm)}</td>
         <td class="mono">${limitText(tier.total_limit)}</td>
         <td class="mono">${limitText(tier.success_limit)}</td>
         <td>${formatNumber(tier.user_count || 0)}</td>
@@ -661,6 +662,7 @@
               <div class="field">
                 <label for="create-tier-rpm">RPM</label>
                 <input id="create-tier-rpm" name="rpm" class="input mono" type="number" min="0" value="0">
+                <span class="hint">0 means unlimited RPM.</span>
               </div>
               <div class="field">
                 <label for="create-tier-total">Total Limit</label>
@@ -970,6 +972,13 @@
                   <option value="admin" ${user.role === "admin" ? "selected" : ""}>admin</option>
                 </select>
               </div>
+              <div class="field-row">
+                <span>
+                  <strong>Revoke Tokens</strong>
+                  <span class="hint" style="display: block;">强制该用户所有已签发的登录令牌立即失效（强制下线）。</span>
+                </span>
+                <label class="toggle"><input type="checkbox" name="revoke_tokens"><span></span></label>
+              </div>
               <div class="field">
                 <label for="edit-user-tier">Tier</label>
                 <select id="edit-user-tier" name="tier_id" class="select">
@@ -1145,14 +1154,18 @@
   async function submitEditUser(form) {
     const data = new FormData(form);
     const id = String(data.get("id") || "");
+    const body = {
+      enabled: data.get("enabled") === "on",
+      role: String(data.get("role") || "user"),
+      tier_id: String(data.get("tier_id") || "")
+    };
+    if (data.get("revoke_tokens") === "on") {
+      body.revoke_tokens = true;
+    }
     try {
       await api(`/admin/users/${encodeURIComponent(id)}`, {
         method: "PATCH",
-        body: {
-          enabled: data.get("enabled") === "on",
-          role: String(data.get("role") || "user"),
-          tier_id: String(data.get("tier_id") || "")
-        }
+        body
       });
       state.modal = null;
       await loadUsers();

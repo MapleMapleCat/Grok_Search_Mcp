@@ -92,12 +92,20 @@ func (l *UserLimiter) Close() {
 	l.closeOnce.Do(func() { close(l.stop) })
 }
 
-// UserMiddleware 对已鉴权 MCP 请求按用户 RPM 限流。
+// UserMiddleware 对已鉴权 MCP 请求按用户 RPM 限流。rpm==0 表示不限；负数为非法配置。
 func (l *UserLimiter) UserMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, ok := auth.UserFromContext(r.Context())
 			if !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if user.RPM < 0 {
+				http.Error(w, "invalid rate limit", http.StatusInternalServerError)
+				return
+			}
+			if user.RPM == 0 {
 				next.ServeHTTP(w, r)
 				return
 			}

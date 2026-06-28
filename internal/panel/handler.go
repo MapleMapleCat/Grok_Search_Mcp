@@ -16,8 +16,9 @@ import (
 
 // Handler 实现面板 API；路由由 NewMux 注册。
 type Handler struct {
-	Store  store.Store
-	Config *config.Config
+	Store     store.Store
+	Config    *config.Config
+	AuthCache AuthCacheInvalidator // 可选；管理员变更用户/等级/密钥后清空 MCP 鉴权缓存
 }
 
 // NewMux 注册 /panel/v1 路由。鉴权分两层：
@@ -37,6 +38,7 @@ func NewMux(h *Handler) *http.ServeMux {
 	mux.HandleFunc("PATCH /panel/v1/keys/{id}", h.updateKey)
 	mux.HandleFunc("DELETE /panel/v1/keys/{id}", h.deleteKey)
 	mux.HandleFunc("GET /panel/v1/keys/{id}/usage", h.keyUsage)
+	mux.HandleFunc("GET /panel/v1/usage", h.userUsage)
 
 	h.RegisterAdminRoutes(mux)
 	return mux
@@ -268,6 +270,7 @@ func (h *Handler) updateKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to update key")
 		return
 	}
+	h.invalidateAuthCache()
 	writeJSON(w, http.StatusOK, toKeyResponse(updated))
 }
 
@@ -288,6 +291,7 @@ func (h *Handler) deleteKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete key")
 		return
 	}
+	h.invalidateAuthCache()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -311,6 +315,26 @@ func (h *Handler) keyUsage(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.Store.GetUsageStats(r.Context(), id, since)
 	if err != nil {
 		log.Printf("usage stats for key %s failed: %v", id, err)
+		writeError(w, http.StatusInternalServerError, "failed to load usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, toUsageStatsResponse(stats))
+}
+
+func (h *Handler) userUsage(w http.ResponseWriter, r *http.Request) {
+	user, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	since, ok := parseSince(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid 'since' query parameter; expected RFC3339")
+		return
+	}
+	stats, err := h.Store.GetUserUsageStats(r.Context(), user.ID, since)
+	if err != nil {
+		log.Printf("usage stats for user %s failed: %v", user.ID, err)
 		writeError(w, http.StatusInternalServerError, "failed to load usage")
 		return
 	}
@@ -358,7 +382,7 @@ func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := h.Store.UpdateUser(r.Context(), id, store.UserUpdates{
-		Enabled: req.Enabled, Role: req.Role, TierID: req.TierID,
+		Enabled: req.Enabled, Role: req.Role, TierID: req.TierID, RevokeTokens: req.RevokeTokens,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrUserNotFound) {
@@ -373,6 +397,7 @@ func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if u.TierID != "" {
 		tier, _ = h.Store.GetTierByID(r.Context(), u.TierID)
 	}
+	h.invalidateAuthCache()
 	writeJSON(w, http.StatusOK, toUserResponseWithTier(u, tier))
 }
 
@@ -432,6 +457,7 @@ func (h *Handler) adminCreateTier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to create tier")
 		return
 	}
+	h.invalidateAuthCache()
 	writeJSON(w, http.StatusCreated, toTierResponse(t, 0))
 }
 
@@ -460,6 +486,7 @@ func (h *Handler) adminUpdateTier(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	count, _ := h.Store.CountUsersByTier(r.Context(), t.ID)
+	h.invalidateAuthCache()
 	writeJSON(w, http.StatusOK, toTierResponse(t, count))
 }
 
@@ -478,5 +505,6 @@ func (h *Handler) adminDeleteTier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete tier")
 		return
 	}
+	h.invalidateAuthCache()
 	w.WriteHeader(http.StatusNoContent)
 }
