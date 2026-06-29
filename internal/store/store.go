@@ -68,7 +68,7 @@ type Tier struct {
 	UpdatedAt    time.Time
 }
 
-// APIKey 表示一条已发放的客户端密钥。数据库只存 SHA-256 哈希；明文仅在 CreateKey 时返回一次。
+// APIKey 表示一条已发放的客户端密钥。数据库只存 keyhash.HashAPIKey 结果；明文仅在 CreateKey 时返回一次。
 type APIKey struct {
 	ID         string
 	UserID     string

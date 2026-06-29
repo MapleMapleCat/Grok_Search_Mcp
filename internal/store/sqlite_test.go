@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/grok-mcp/internal/keyhash"
 )
 
 func openTestDB(t *testing.T) *SQLiteStore {
@@ -43,7 +45,7 @@ func TestCreateAndGetKeyByHash(t *testing.T) {
 		t.Fatalf("prefix mismatch: %s", k.KeyPrefix)
 	}
 
-	found, err := s.GetKeyByHash(ctx, HashAPIKey(raw))
+	found, err := s.GetKeyByHash(ctx, keyhash.HashAPIKey(raw))
 	if err != nil || found == nil || found.ID != k.ID {
 		t.Fatalf("GetKeyByHash: err=%v found=%v", err, found)
 	}

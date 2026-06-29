@@ -4,12 +4,13 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/grok-mcp/internal/keyhash"
 
 	_ "modernc.org/sqlite"
 )
@@ -60,12 +61,6 @@ func generateRawKey() (string, error) {
 		return "", err
 	}
 	return "grok_" + hex.EncodeToString(b), nil
-}
-
-// hashKey 与 auth 中间件使用相同的 SHA-256 十六进制编码。
-func hashKey(raw string) string {
-	h := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(h[:])
 }
 
 func parseTime(s string) (time.Time, error) {
@@ -146,7 +141,7 @@ func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string) (*APIK
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO apikeys (id, user_id, name, key_hash, key_prefix, enabled, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
-		id, userID, name, hashKey(raw), prefix, formatTime(now), formatTime(now),
+		id, userID, name, keyhash.HashAPIKey(raw), prefix, formatTime(now), formatTime(now),
 	)
 	if err != nil {
 		return nil, "", fmt.Errorf("insert apikey: %w", err)
@@ -386,9 +381,4 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	}
 	stats.SuccessCalls = succCount
 	return stats, nil
-}
-
-// HashAPIKey 暴露哈希算法，供鉴权相关单元测试断言。
-func HashAPIKey(raw string) string {
-	return hashKey(raw)
 }

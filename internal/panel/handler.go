@@ -84,11 +84,17 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 const maxPanelBodyBytes = 1 << 20 // 1 MiB
 
-// MaxBodyMiddleware 限制面板 JSON 请求体大小，防止恶意超大请求耗尽内存。
-func MaxBodyMiddleware() func(http.Handler) http.Handler {
+// MaxPanelBodyBytes 返回面板 API 默认请求体上限。
+func MaxPanelBodyBytes() int64 { return maxPanelBodyBytes }
+
+// bcryptCost 为密码哈希工作因子；12 为当前常见基线（DefaultCost=10 在 GPU 离线破解下偏快）。
+const bcryptCost = 12
+
+// MaxBodyMiddleware 限制 JSON 请求体大小，防止恶意超大请求耗尽内存。
+func MaxBodyMiddleware(limit int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.Body = http.MaxBytesReader(w, r.Body, maxPanelBodyBytes)
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -105,7 +111,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "username required and password must be at least 8 characters")
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "password hash failed")
 		return
@@ -129,11 +135,11 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 }
 
 // dummyBcryptHash 是用于拉平登录时序的固定 bcrypt 哈希。
-// 它在包初始化时用 bcrypt.DefaultCost 生成（与 register 一致的成本因子），
+// 它在包初始化时用 bcryptCost 生成（与 register 一致的成本因子），
 // 保证 CompareHashAndPassword 会执行完整的密钥派生流程，耗时可与真实用户哈希相当。
 // 其明文密码无关紧要——仅用于在用户不存在时消耗相近的 CPU 时间。
 var dummyBcryptHash = func() []byte {
-	h, err := bcrypt.GenerateFromPassword([]byte("grok-mcp-timing-dummy-password"), bcrypt.DefaultCost)
+	h, err := bcrypt.GenerateFromPassword([]byte("grok-mcp-timing-dummy-password"), bcryptCost)
 	if err != nil {
 		// 理论上不会失败；兜底返回一个空切片，此时退化为原始的快速失败行为。
 		return nil

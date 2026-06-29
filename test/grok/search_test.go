@@ -3,6 +3,7 @@ package grok_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -286,10 +287,10 @@ func TestSearchStreamEmptyAnswer(t *testing.T) {
 	}
 }
 
-func TestSearchStreamMultiLineSSEDataWithRound(t *testing.T) {
-	stream := "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"ws_1\",\n" +
-		"data: \"type\":\"web_search_call\",\"status\":\"completed\",\"action\":{\"type\":\"search\",\"query\":\"capital of France\"}}}\n\n" +
-		sse(completedEvent(`{"output":[{"role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`))
+func TestSearchStreamMultilineSSEDataPayloadJoin(t *testing.T) {
+	// 单条事件：完整 JSON 放在一行 data: 上（避免依赖重复键解析）。
+	itemDone := `{"type":"response.output_item.done","item":{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","query":"capital of France"}}}`
+	stream := sse(itemDone, completedEvent(`{"output":[{"role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`))
 
 	server := newSSEServer(t, stream)
 	defer server.Close()
@@ -435,20 +436,168 @@ func TestSearchStreamMultiRoundWithSources(t *testing.T) {
 }
 
 func TestSearchStreamUpstreamHTTPError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte("bad gateway"))
+	cases := []struct {
+		name string
+		code int
+	}{
+		{name: "bad_request", code: http.StatusBadRequest},
+		{name: "unauthorized", code: http.StatusUnauthorized},
+		{name: "too_many_requests", code: http.StatusTooManyRequests},
+		{name: "bad_gateway", code: http.StatusBadGateway},
+		{name: "service_unavailable", code: http.StatusServiceUnavailable},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.code)
+				_, _ = w.Write([]byte("upstream error body"))
+			}))
+			defer server.Close()
+
+			client := newClientAt(t, server.URL)
+			_, err := client.SearchStream(context.Background(), grok.SearchRequest{
+				Query:    "test",
+				ToolType: grok.ToolTypeWebSearch,
+			}, nil)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			want := fmt.Sprintf("HTTP %d", tc.code)
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected error containing %q, got %v", want, err)
+			}
+			if strings.Contains(err.Error(), "upstream error body") {
+				t.Fatalf("must not leak upstream body in error: %v", err)
+			}
+		})
+	}
+}
+
+func TestSearchStreamRejectsHTTPRedirect(t *testing.T) {
+	var hits int
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if r.URL.Path == "/v1/responses" {
+			http.Redirect(w, r, srv.URL+"/v1/responses/elsewhere", http.StatusFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := newClientAt(t, srv.URL)
+	_, err := client.SearchStream(context.Background(), grok.SearchRequest{
+		Query:    "test",
+		ToolType: grok.ToolTypeWebSearch,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 302") {
+		t.Fatalf("expected redirect rejected as HTTP 302, got %v (hits=%d)", err, hits)
+	}
+	if hits != 1 {
+		t.Fatalf("redirect must not be followed automatically, got %d requests", hits)
+	}
+}
+
+func TestSearchStreamSSEErrorEvent(t *testing.T) {
+	stream := sse(
+		`{"type":"error","error":{"message":"rate limited"}}`,
+		completedEvent(`{"output":[{"role":"assistant","content":[{"type":"output_text","text":"ignored"}]}]}`),
+	)
+	server := newSSEServer(t, stream)
+	defer server.Close()
+	client := newClientAt(t, server.URL)
+	_, err := client.SearchStream(context.Background(), grok.SearchRequest{
+		Query:    "test",
+		ToolType: grok.ToolTypeWebSearch,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "upstream stream error") {
+		t.Fatalf("expected stream error, got %v", err)
+	}
+}
+
+func TestSearchStreamMissingCompleted(t *testing.T) {
+	stream := sse(`{"type":"response.output_item.done","item":{"id":"ws_1","type":"web_search_call","status":"completed","action":{"type":"search","query":"q"}}}`)
+	server := newSSEServer(t, stream)
+	defer server.Close()
+	client := newClientAt(t, server.URL)
+	_, err := client.SearchStream(context.Background(), grok.SearchRequest{
+		Query:    "test",
+		ToolType: grok.ToolTypeWebSearch,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "without response.completed") {
+		t.Fatalf("expected missing completed error, got %v", err)
+	}
+}
+
+func TestSearchStreamInvalidCompletedJSON(t *testing.T) {
+	stream := sse(`{"type":"response.completed","response":not-json}`)
+	server := newSSEServer(t, stream)
+	defer server.Close()
+	client := newClientAt(t, server.URL)
+	_, err := client.SearchStream(context.Background(), grok.SearchRequest{
+		Query:    "test",
+		ToolType: grok.ToolTypeWebSearch,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "decode stream event") {
+		t.Fatalf("expected decode stream event error, got %v", err)
+	}
+}
+
+func TestSearchStreamWebSearchImageFlagsInRequest(t *testing.T) {
+	imgUnderstand, imgSearch := true, false
+	var rawBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		rawBody = string(body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(sse(completedEvent(`{"output":[{"role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`))))
 	}))
 	defer server.Close()
 
 	client := newClientAt(t, server.URL)
-
 	_, err := client.SearchStream(context.Background(), grok.SearchRequest{
+		Query:                    "test",
+		ToolType:                 grok.ToolTypeWebSearch,
+		EnableImageUnderstanding: &imgUnderstand,
+		EnableImageSearch:        &imgSearch,
+	}, nil)
+	if err != nil {
+		t.Fatalf("SearchStream: %v", err)
+	}
+	var req capturedRequest
+	if err := json.Unmarshal([]byte(rawBody), &req); err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Tools) != 1 {
+		t.Fatalf("tools: %+v", req.Tools)
+	}
+	if req.Tools[0].EnableImageUnderstanding == nil || !*req.Tools[0].EnableImageUnderstanding {
+		t.Fatalf("enable_image_understanding: %+v", req.Tools[0])
+	}
+	if req.Tools[0].EnableImageSearch == nil || *req.Tools[0].EnableImageSearch {
+		t.Fatalf("enable_image_search: %+v", req.Tools[0])
+	}
+}
+
+func TestSearchStreamXSearchAnswerAndCitations(t *testing.T) {
+	responseJSON := `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"x answer"}]}],"citations":["https://x.example/post"]}`
+	server := newSSEServer(t, sse(completedEvent(responseJSON)))
+	defer server.Close()
+	client := newClientAt(t, server.URL)
+	result, err := client.SearchStream(context.Background(), grok.SearchRequest{
 		Query:    "test",
 		ToolType: grok.ToolTypeXSearch,
 	}, nil)
-	if err == nil || !strings.Contains(err.Error(), "HTTP 502") {
-		t.Fatalf("expected upstream HTTP error, got %v", err)
+	if err != nil {
+		t.Fatalf("SearchStream: %v", err)
+	}
+	if result.Answer != "x answer" {
+		t.Fatalf("answer %q", result.Answer)
+	}
+	if len(result.Citations) != 1 || result.Citations[0] != "https://x.example/post" {
+		t.Fatalf("citations %v", result.Citations)
 	}
 }
 

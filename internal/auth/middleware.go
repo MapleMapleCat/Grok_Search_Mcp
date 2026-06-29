@@ -3,11 +3,10 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"strings"
 
+	"github.com/grok-mcp/internal/keyhash"
 	"github.com/grok-mcp/internal/store"
 )
 
@@ -26,12 +25,6 @@ func bearerToken(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return token, true
-}
-
-// hashToken 对明文 API Key 做 SHA-256，与库中仅存 hash 的设计一致。
-func hashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
 }
 
 // APIKeyResolver 解析 Bearer 令牌对应的 API Key 与所属用户（含 tier 限额）。
@@ -70,7 +63,7 @@ func APIKeyMiddleware(resolver APIKeyResolver) func(http.Handler) http.Handler {
 				return
 			}
 
-			key, user, err := resolver.Resolve(r.Context(), hashToken(token))
+			key, user, err := resolver.Resolve(r.Context(), keyhash.HashAPIKey(token))
 			if err != nil {
 				http.Error(w, "authentication failed", http.StatusInternalServerError)
 				return

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/grok-mcp/internal/keyhash"
 	"github.com/grok-mcp/internal/store"
 )
 
@@ -28,7 +29,7 @@ func (m *memStore) GetUserByID(_ context.Context, id string) (*store.User, error
 
 func TestAPIKeyMiddleware(t *testing.T) {
 	raw := "grok_testtoken"
-	hash := store.HashAPIKey(raw)
+	hash := keyhash.HashAPIKey(raw)
 	st := &memStore{
 		byHash: map[string]*store.APIKey{
 			hash: {ID: "id-1", UserID: "u1", Enabled: true},
