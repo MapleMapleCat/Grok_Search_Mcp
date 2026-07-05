@@ -21,10 +21,8 @@ func panelTestServer(t *testing.T) (*httptest.Server, *store.SQLiteStore, *confi
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	cfg := &config.Config{
-		JWTSecret:               "jwt-secret-must-be-at-least-32-bytes!",
-		DefaultUserRPM:          60,
-		DefaultUserTotalLimit:   0,
-		DefaultUserSuccessLimit: 0,
+		JWTSecret:      "jwt-secret-must-be-at-least-32-bytes!",
+		DefaultUserRPM: 60,
 	}
 	h := &Handler{Store: st, Config: cfg}
 	mux := NewMux(h)

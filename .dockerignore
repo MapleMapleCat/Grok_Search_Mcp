@@ -1,33 +1,30 @@
-# 版本控制元数据
 .git
 .gitignore
 
-# 本地构建产物
-*.exe
+# Local environment and secrets.
+.env
+.env.local
+.mcp.json
+
+# Local build and test outputs.
+/grok-mcp
 *.test
 *.out
 coverage.txt
 
-# 本地 SQLite 数据库（绝不打入镜像）
+# Local SQLite data.
+data/
 *.db
 *.db-wal
 *.db-shm
 *.db-journal
 
-# 本地环境与凭证（.env.example 是模板，可保留以供参考，真实 .env 必须排除）
-.env
-.env.local
-.mcp.json
+# IDE and scratch files.
+.vscode/
+.idea/
+.workbuddy/
 
-# IDE
-.vscode
-.idea
-
-# 本地设计参考素材，不进入镜像上下文
+# Local design references and release archives.
 stitch_mcp_management_panel/
 stitch_mcp_management_panel.zip
-
-# Docker 自身文件，无需进入构建上下文
-Dockerfile
-.dockerignore
-docker-compose*.yml
+*.tar.gz

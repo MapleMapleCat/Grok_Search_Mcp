@@ -20,7 +20,7 @@ func TestRegisterUserOnlyOneAdminUnderConcurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			name := fmt.Sprintf("user%d", i)
-			_, err := s.RegisterUser(ctx, name, "hash", 0, 0, 0)
+			_, err := s.RegisterUser(ctx, name, "hash")
 			if err != nil {
 				errCh <- err
 			}
@@ -53,7 +53,7 @@ func TestFirstUserAdminAndQuotaReserve(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
-	u1, err := s.CreateUser(ctx, "admin1", "hash", RoleAdmin, 60, 2, 1)
+	u1, err := s.CreateUser(ctx, "admin1", "hash", RoleAdmin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestFirstUserAdminAndQuotaReserve(t *testing.T) {
 func TestReserveAndReleaseSuccessCall(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
-	u, err := s.CreateUser(ctx, "u2", "h", RoleUser, 0, 0, 1)
+	u, err := s.CreateUser(ctx, "u2", "h", RoleUser)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestReserveAndReleaseSuccessCall(t *testing.T) {
 func TestUpdateUserChangesTierID(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
-	u, err := s.CreateUser(ctx, "u", "h", RoleUser, 10, 10, 10)
+	u, err := s.CreateUser(ctx, "u", "h", RoleUser)
 	if err != nil {
 		t.Fatal(err)
 	}

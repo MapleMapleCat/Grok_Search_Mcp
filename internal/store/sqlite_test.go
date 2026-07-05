@@ -22,7 +22,7 @@ func openTestDB(t *testing.T) *SQLiteStore {
 
 func testUserID(t *testing.T, s *SQLiteStore) string {
 	t.Helper()
-	u, err := s.CreateUser(context.Background(), "keyowner", "hash", RoleUser, 60, 0, 0)
+	u, err := s.CreateUser(context.Background(), "keyowner", "hash", RoleUser)
 	if err != nil {
 		t.Fatal(err)
 	}

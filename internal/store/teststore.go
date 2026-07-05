@@ -12,10 +12,10 @@ type TestStore struct {
 
 func (TestStore) Close() error { return nil }
 
-func (TestStore) CreateUser(context.Context, string, string, UserRole, int, int, int) (*User, error) {
+func (TestStore) CreateUser(context.Context, string, string, UserRole) (*User, error) {
 	return nil, nil
 }
-func (TestStore) RegisterUser(context.Context, string, string, int, int, int) (*User, error) {
+func (TestStore) RegisterUser(context.Context, string, string) (*User, error) {
 	return nil, nil
 }
 func (TestStore) GetUserByUsername(context.Context, string) (*User, error) { return nil, nil }

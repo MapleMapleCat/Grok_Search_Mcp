@@ -21,7 +21,7 @@ func jwtTestStore(t *testing.T) (*store.SQLiteStore, *store.User) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	user, err := st.CreateUser(t.Context(), "admin", "hash", store.RoleAdmin, 60, 0, 0)
+	user, err := st.CreateUser(t.Context(), "admin", "hash", store.RoleAdmin)
 	if err != nil {
 		t.Fatal(err)
 	}

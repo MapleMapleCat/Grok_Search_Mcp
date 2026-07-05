@@ -10,45 +10,43 @@ import (
 )
 
 const (
-	defaultBaseURL            = "http://127.0.0.1:8317"
-	defaultModel              = "grok-4.3"
-	defaultTimeout            = 120 * time.Second
-	defaultHTTPAddr           = ":8080"
-	defaultDBPath             = "./grok-mcp.db"
-	defaultDefaultUserRPM     = 60
-	defaultDefaultUserTotal   = 0
-	defaultDefaultUserSuccess = 0
+	defaultBaseURL  = "http://127.0.0.1:8317"
+	defaultModel    = "grok-4.3"
+	defaultTimeout  = 120 * time.Second
+	defaultHTTPAddr = ":8080"
+	defaultDBPath   = "./grok-mcp.db"
+	// defaultLimiterRPM 是内置内存限流器的兜底 RPM；限额实际取值始终来自 tier。
+	defaultLimiterRPM = 60
 )
 
 // Config 保存进程启动所需的全部配置项。
+//
+// 用户限额（RPM / 总次数 / 成功次数）不再可配置，统一由 tier 决定；
+// DefaultUserRPM 仅作为内存限流器在 tier 解析异常时的兜底，不再用于新用户。
 type Config struct {
-	CPABaseURL              string
-	CPAAPIKey               string
-	Model                   string
-	Timeout                 time.Duration
-	Debug                   bool
-	HTTPAddr                string
-	DBPath                  string
-	JWTSecret               string
-	DefaultUserRPM          int
-	DefaultUserTotalLimit   int
-	DefaultUserSuccessLimit int
+	CPABaseURL    string
+	CPAAPIKey     string
+	Model         string
+	Timeout       time.Duration
+	Debug         bool
+	HTTPAddr      string
+	DBPath        string
+	JWTSecret     string
+	DefaultUserRPM int
 }
 
 // Load 读取并校验配置。
 func Load() (*Config, error) {
 	cfg := &Config{
-		CPABaseURL:              strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
-		CPAAPIKey:               strings.TrimSpace(os.Getenv("CPA_API_KEY")),
-		Model:                   envOrDefault("GROK_MODEL", defaultModel),
-		Timeout:                 defaultTimeout,
-		Debug:                   parseBoolEnv("GROK_MCP_DEBUG"),
-		HTTPAddr:                envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
-		DBPath:                  envOrDefault("GROK_DB_PATH", defaultDBPath),
-		JWTSecret:               strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
-		DefaultUserRPM:          defaultDefaultUserRPM,
-		DefaultUserTotalLimit:   defaultDefaultUserTotal,
-		DefaultUserSuccessLimit: defaultDefaultUserSuccess,
+		CPABaseURL:    strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
+		CPAAPIKey:     strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		Model:         envOrDefault("GROK_MODEL", defaultModel),
+		Timeout:       defaultTimeout,
+		Debug:         parseBoolEnv("GROK_MCP_DEBUG"),
+		HTTPAddr:      envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
+		DBPath:        envOrDefault("GROK_DB_PATH", defaultDBPath),
+		JWTSecret:     strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
+		DefaultUserRPM: defaultLimiterRPM,
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("GROK_HTTP_TIMEOUT")); raw != "" {
@@ -59,26 +57,13 @@ func Load() (*Config, error) {
 		cfg.Timeout = time.Duration(seconds) * time.Second
 	}
 
+	// GROK_DEFAULT_USER_RPM 仅用于内存限流器的兜底；用户实际 RPM 始终取自 tier。
 	if raw := strings.TrimSpace(os.Getenv("GROK_DEFAULT_USER_RPM")); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n <= 0 {
 			return nil, fmt.Errorf("GROK_DEFAULT_USER_RPM must be a positive integer, got %q", raw)
 		}
 		cfg.DefaultUserRPM = n
-	}
-	if raw := strings.TrimSpace(os.Getenv("GROK_DEFAULT_USER_TOTAL_LIMIT")); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
-			return nil, fmt.Errorf("GROK_DEFAULT_USER_TOTAL_LIMIT must be a non-negative integer, got %q", raw)
-		}
-		cfg.DefaultUserTotalLimit = n
-	}
-	if raw := strings.TrimSpace(os.Getenv("GROK_DEFAULT_USER_SUCCESS_LIMIT")); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
-			return nil, fmt.Errorf("GROK_DEFAULT_USER_SUCCESS_LIMIT must be a non-negative integer, got %q", raw)
-		}
-		cfg.DefaultUserSuccessLimit = n
 	}
 
 	if cfg.CPAAPIKey == "" {

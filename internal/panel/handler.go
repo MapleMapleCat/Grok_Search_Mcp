@@ -116,8 +116,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "password hash failed")
 		return
 	}
-	user, err := h.Store.RegisterUser(r.Context(), username, string(hash),
-		h.Config.DefaultUserRPM, h.Config.DefaultUserTotalLimit, h.Config.DefaultUserSuccessLimit)
+	user, err := h.Store.RegisterUser(r.Context(), username, string(hash))
 	if err != nil {
 		if errors.Is(err, store.ErrUsernameTaken) {
 			writeError(w, http.StatusConflict, "username already taken")

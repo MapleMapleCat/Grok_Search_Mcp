@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const userColumns = `id, username, password_hash, role, enabled, tier_id, rpm, total_limit, success_limit, total_calls, success_calls, token_version, created_at, updated_at`
+const userColumns = `id, username, password_hash, role, enabled, tier_id, total_calls, success_calls, token_version, created_at, updated_at`
 
 func scanUser(row interface {
 	Scan(dest ...any) error
@@ -20,7 +20,7 @@ func scanUser(row interface {
 	var createdAt, updatedAt string
 	err := row.Scan(
 		&u.ID, &u.Username, &u.PasswordHash, &role, &enabled, &tierID,
-		&u.RPM, &u.TotalLimit, &u.SuccessLimit, &u.TotalCalls, &u.SuccessCalls,
+		&u.TotalCalls, &u.SuccessCalls,
 		&u.TokenVersion, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -42,8 +42,8 @@ func scanUser(row interface {
 	return &u, nil
 }
 
-// CreateUser 插入新用户；用户名冲突返回 ErrUsernameTaken。
-func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash string, role UserRole, rpm, totalLimit, successLimit int) (*User, error) {
+// CreateUser 插入新用户；用户名冲突返回 ErrUsernameTaken。限额由默认 tier0 决定，不再随用户保存。
+func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash string, role UserRole) (*User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return nil, fmt.Errorf("username is required")
@@ -58,9 +58,9 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 	now := formatTime(nowUTC())
 	tierID, _ := s.defaultTierID(ctx)
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 0, 0, ?, ?)`,
-		id, username, passwordHash, string(role), nullableString(tierID), rpm, totalLimit, successLimit, now, now,
+		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, total_calls, success_calls, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, 0, 0, ?, ?)`,
+		id, username, passwordHash, string(role), nullableString(tierID), now, now,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -72,7 +72,8 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 }
 
 // RegisterUser 插入新用户；若当前无用户则 role=admin，否则 role=user。全程在同一事务内完成。
-func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash string, rpm, totalLimit, successLimit int) (*User, error) {
+// 限额由默认 tier0 决定，不再随用户保存。
+func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash string) (*User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return nil, fmt.Errorf("username is required")
@@ -99,9 +100,9 @@ func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash s
 	var tierID sql.NullString
 	_ = tx.QueryRowContext(ctx, `SELECT id FROM tiers WHERE name = 'tier0' LIMIT 1`).Scan(&tierID)
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, rpm, total_limit, success_limit, total_calls, success_calls, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, 0, 0, ?, ?)`,
-		id, username, passwordHash, string(role), tierID, rpm, totalLimit, successLimit, now, now,
+		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, total_calls, success_calls, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, 0, 0, ?, ?)`,
+		id, username, passwordHash, string(role), tierID, now, now,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {

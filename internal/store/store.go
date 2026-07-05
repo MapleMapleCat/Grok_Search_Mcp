@@ -44,6 +44,9 @@ type User struct {
 	Role         UserRole
 	Enabled      bool
 	TierID       string
+	// RPM / TotalLimit / SuccessLimit 不再持久化到 users 表，也不再作为限额来源。
+	// 它们是请求链路上由 auth.LoadUserWithTierLimits 就地写入的“生效限额”，
+	// 取值完全来自用户所属 tier（tier 缺失时回退 tier0），仅供限流/额度中间件读取。
 	RPM          int
 	TotalLimit   int
 	SuccessLimit int
@@ -130,9 +133,10 @@ type TierUpdates struct {
 type Store interface {
 	Close() error
 
-	CreateUser(ctx context.Context, username, passwordHash string, role UserRole, rpm, totalLimit, successLimit int) (*User, error)
+	// CreateUser 建用户；限额不再随用户保存，统一由默认 tier0 决定。
+	CreateUser(ctx context.Context, username, passwordHash string, role UserRole) (*User, error)
 	// RegisterUser 自助注册：在同一事务内判断是否为首个用户并赋 admin，避免并发双管理员。
-	RegisterUser(ctx context.Context, username, passwordHash string, rpm, totalLimit, successLimit int) (*User, error)
+	RegisterUser(ctx context.Context, username, passwordHash string) (*User, error)
 	GetUserByUsername(ctx context.Context, username string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
 	ListUsers(ctx context.Context) ([]*User, error)

@@ -981,11 +981,10 @@
               </div>
               <div class="field">
                 <label for="edit-user-tier">Tier</label>
-                <select id="edit-user-tier" name="tier_id" class="select">
-                  <option value="" ${!user.tier_id ? "selected" : ""}>None</option>
-                  ${tierOptions(user.tier_id)}
+                <select id="edit-user-tier" name="tier_id" class="select" required>
+                  ${tierOptions(user.tier_id || "")}
                 </select>
-                <span class="hint">限额（RPM / 总次数 / 成功次数）由所选 tier 决定；调整 tier 预设请到 Tier Management 页。</span>
+                <span class="hint">必须选择 tier；限额（RPM / 总次数 / 成功次数）完全由 tier 决定，用户不再保留独立限额。调整 tier 预设请到 Tier Management 页。</span>
               </div>
               <div class="modal-actions">
                 <button class="button secondary" data-action="close-modal" type="button">Cancel</button>

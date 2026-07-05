@@ -36,36 +36,44 @@ xAI / Grok
 - 仅统计真实 `tools/call` 调用，握手和工具列表请求不计入用量
 - 上游 SSE 流式解析，并把搜索轮次转成 MCP progress 通知
 
-## 快速开始
+## Linux 快速开始
 
 ### 1. 构建
 
-```powershell
-go build -o grok-mcp.exe ./cmd/grok-mcp
+```bash
+go build -o grok-mcp ./cmd/grok-mcp
 ```
 
 可选：构建时注入版本号。
 
-```powershell
-go build -ldflags "-X github.com/grok-mcp/internal/version.Version=1.2.3" -o grok-mcp.exe ./cmd/grok-mcp
+```bash
+go build -ldflags "-X github.com/grok-mcp/internal/version.Version=1.2.3" -o grok-mcp ./cmd/grok-mcp
 ```
 
 查看版本：
 
-```powershell
-./grok-mcp.exe -version
+```bash
+./grok-mcp -version
 ```
 
 ### 2. 配置并启动
 
-```powershell
-$env:CPA_BASE_URL = "http://127.0.0.1:8317"
-$env:CPA_API_KEY = "replace-with-your-cpa-api-key"
-$env:GROK_JWT_SECRET = "replace-with-a-strong-random-jwt-secret"
-$env:GROK_HTTP_ADDR = ":8080"
-$env:GROK_DB_PATH = "./grok-mcp.db"
+复制 Linux 本地配置模板，并填入真实值：
 
-./grok-mcp.exe
+```bash
+cp .env.example .env
+mkdir -p data
+${EDITOR:-vi} .env
+```
+
+启动服务：
+
+```bash
+set -a
+source .env
+set +a
+
+./grok-mcp
 ```
 
 启动后：
@@ -76,19 +84,22 @@ $env:GROK_DB_PATH = "./grok-mcp.db"
 
 ### 3. 注册、登录并创建客户端 API Key
 
-```powershell
-Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/auth/register" `
-  -ContentType "application/json" `
-  -Body '{"username":"you","password":"your-password"}'
+```bash
+curl -sS -X POST "http://127.0.0.1:8080/panel/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"you","password":"your-password"}'
 
-$login = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/auth/login" `
-  -ContentType "application/json" `
-  -Body '{"username":"you","password":"your-password"}'
+login_token="$(curl -sS -X POST "http://127.0.0.1:8080/panel/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"you","password":"your-password"}' | jq -r '.token')"
 
-$auth = @{ Authorization = "Bearer $($login.token)" }
-Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/panel/v1/keys" `
-  -Headers $auth -ContentType "application/json" -Body '{"name":"local-client"}'
+curl -sS -X POST "http://127.0.0.1:8080/panel/v1/keys" \
+  -H "Authorization: Bearer ${login_token}" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"local-client"}'
 ```
+
+上面的示例使用 `jq` 提取登录 token；如果你的 Linux 环境没有安装 `jq`，也可以从登录响应中手动复制 `token` 字段。
 
 响应里的 `api_key` 只返回一次。后续 MCP 客户端访问 `/mcp` 时使用：
 
@@ -102,11 +113,11 @@ Content-Type: application/json
 
 Claude Code 连接的是 MCP 端点 `/mcp`，使用的是上一步创建的客户端 `api_key`，不是面板登录返回的 JWT。
 
-```powershell
-$env:GROK_MCP_API_KEY = "grok_xxx"
+```bash
+export GROK_MCP_API_KEY="grok_xxx"
 
-claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp `
-  --header "Authorization: Bearer $env:GROK_MCP_API_KEY"
+claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
+  --header "Authorization: Bearer ${GROK_MCP_API_KEY}"
 ```
 
 添加后在 Claude Code 会话中执行：
@@ -152,15 +163,28 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp `
 
 ## Docker Compose
 
+Docker 构建默认使用官方原生源：
+
+- 构建镜像：`golang:1.25-alpine`
+- 运行镜像：`alpine:3.20`
+- Go module proxy：`https://proxy.golang.org,direct`
+
 复制配置模板并填入真实值：
 
-```powershell
-Copy-Item .env.example .env
+```bash
+cp .env.example .env
+${EDITOR:-vi} .env
+```
+
+如果 CPA 服务运行在宿主机而不是容器内，请把 `.env` 里的 `CPA_BASE_URL` 改为：
+
+```bash
+CPA_BASE_URL=http://host.docker.internal:8317
 ```
 
 启动：
 
-```powershell
+```bash
 docker compose up -d --build
 ```
 
@@ -177,9 +201,7 @@ docker compose up -d --build
 |---|:---:|---|---|
 | `CPA_API_KEY` | 是 | 无 | 调用 CPA 的 Bearer Key |
 | `GROK_JWT_SECRET` | 是 | 无 | 面板 JWT HS256 签名密钥 |
-| `GROK_DEFAULT_USER_RPM` | 否 | `60` | 新用户默认每分钟请求数 |
-| `GROK_DEFAULT_USER_TOTAL_LIMIT` | 否 | `0` | 新用户默认总 `tools/call` 上限（0=不限） |
-| `GROK_DEFAULT_USER_SUCCESS_LIMIT` | 否 | `0` | 新用户默认成功调用上限（0=不限） |
+| `GROK_DEFAULT_USER_RPM` | 否 | `60` | 内存限流器的兜底 RPM；用户实际 RPM 由 tier 决定 |
 | `CPA_BASE_URL` | 否 | `http://127.0.0.1:8317` | CPA 根地址，不含尾部 `/` |
 | `GROK_MODEL` | 否 | `grok-4.3` | 默认模型，可被工具参数 `model` 覆盖 |
 | `GROK_HTTP_TIMEOUT` | 否 | `120` | 上游 HTTP 超时，单位秒 |
@@ -275,7 +297,7 @@ PATCH  /panel/v1/admin/users/{id}
 GET    /panel/v1/admin/users/{id}/usage
 ```
 
-首个注册用户自动为 `admin`。管理员可调整用户的 `rpm`、`total_limit`、`success_limit` 等。
+首个注册用户自动为 `admin`。用户限额（`rpm`、`total_limit`、`success_limit`）以 tier 为唯一来源，管理员通过 Tier Management 页维护 tier 预设，并在用户编辑页为用户指定 tier。
 
 ## 代码结构
 
@@ -302,29 +324,21 @@ internal/version/         构建时注入的版本号
 
 默认测试不触发真实上游调用：
 
-```powershell
+```bash
 go test ./...
 ```
 
 构建验证：
 
-```powershell
+```bash
 go build ./cmd/grok-mcp
-```
-
-Docker Compose 配置验证：
-
-```powershell
-Copy-Item .env.example .env
-docker compose config
-Remove-Item .env
 ```
 
 真实 CPA / xAI 集成测试需要显式打开：
 
-```powershell
-$env:GROK_INTEGRATION_TEST = "1"
-$env:CPA_API_KEY = "replace-with-your-cpa-api-key"
-$env:CPA_BASE_URL = "http://127.0.0.1:8317"
+```bash
+export GROK_INTEGRATION_TEST="1"
+export CPA_API_KEY="replace-with-your-cpa-api-key"
+export CPA_BASE_URL="http://127.0.0.1:8317"
 go test ./test/grok -run TestIntegrationSearchLiveCPA -v
 ```
