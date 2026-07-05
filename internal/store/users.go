@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const userColumns = `id, username, password_hash, role, enabled, tier_id, total_calls, success_calls, token_version, created_at, updated_at`
+const userColumns = `id, username, password_hash, role, enabled, tier_id, success_calls, token_version, created_at, updated_at`
 
 func scanUser(row interface {
 	Scan(dest ...any) error
@@ -20,7 +20,7 @@ func scanUser(row interface {
 	var createdAt, updatedAt string
 	err := row.Scan(
 		&u.ID, &u.Username, &u.PasswordHash, &role, &enabled, &tierID,
-		&u.TotalCalls, &u.SuccessCalls,
+		&u.SuccessCalls,
 		&u.TokenVersion, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -58,8 +58,8 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 	now := formatTime(nowUTC())
 	tierID, _ := s.defaultTierID(ctx)
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, total_calls, success_calls, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, 0, 0, ?, ?)`,
+		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, success_calls, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, 0, ?, ?)`,
 		id, username, passwordHash, string(role), nullableString(tierID), now, now,
 	)
 	if err != nil {
@@ -100,8 +100,8 @@ func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash s
 	var tierID sql.NullString
 	_ = tx.QueryRowContext(ctx, `SELECT id FROM tiers WHERE name = 'tier0' LIMIT 1`).Scan(&tierID)
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, total_calls, success_calls, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, 0, 0, ?, ?)`,
+		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, success_calls, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, ?, 0, ?, ?)`,
 		id, username, passwordHash, string(role), tierID, now, now,
 	)
 	if err != nil {
@@ -206,35 +206,6 @@ func (s *SQLiteStore) CountUsers(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
-}
-
-// ReserveTotalCall 在 tools/call 前原子递增用户 total_calls；total_limit 为 0 表示不限。
-func (s *SQLiteStore) ReserveTotalCall(ctx context.Context, userID string, totalLimit int) error {
-	var res sql.Result
-	var err error
-	if totalLimit <= 0 {
-		res, err = s.db.ExecContext(ctx,
-			`UPDATE users SET total_calls = total_calls + 1 WHERE id = ?`, userID)
-	} else {
-		res, err = s.db.ExecContext(ctx,
-			`UPDATE users SET total_calls = total_calls + 1 WHERE id = ? AND total_calls < ?`,
-			userID, totalLimit)
-	}
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrQuotaTotal
-	}
-	return nil
-}
-
-// ReleaseTotalCall 在 tools/call 未实际完成时回滚 ReserveTotalCall 预留的总次数（success_calls 不变）。
-func (s *SQLiteStore) ReleaseTotalCall(ctx context.Context, userID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET total_calls = total_calls - 1 WHERE id = ? AND total_calls > 0`, userID)
-	return err
 }
 
 // ReserveSuccessCall 在 tools/call 前原子递增 success_calls；success_limit 为 0 表示不限。

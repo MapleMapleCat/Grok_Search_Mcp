@@ -307,17 +307,18 @@
 
   function renderDashboard() {
     const usage = state.usage;
-    const totalPct = percentOf(state.user.total_calls, state.user.total_limit);
     const successPct = percentOf(state.user.success_calls, state.user.success_limit);
-    const successRate = state.user.total_calls > 0 ? Math.round((state.user.success_calls / state.user.total_calls) * 1000) / 10 : 100;
-    const risk = quotaRisk();
+    const recentMinuteCalls = countRecordsInWindow(usage.records, 60 * 1000);
+    const rpmPct = percentOf(recentMinuteCalls, state.user.rpm);
+    const rpmProgress = state.user.rpm > 0 ? rpmPct : null;
+    const successRate = usage.total_calls > 0 ? Math.round((usage.success_calls / usage.total_calls) * 1000) / 10 : 100;
+    const dashboardAlert = buildDashboardAlert(usage.records);
     return `
-      ${risk ? renderAlert(risk) : ""}
+      ${renderDashboardAlert(dashboardAlert)}
       <section class="grid metric-grid">
-        ${metricCard("Rate Per Minute<br>(RPM)", rpmText(state.user.rpm), "speed", "用户级共享限流；0 表示不限", "good", 100)}
-        ${metricCard("Total Requests", `${formatNumber(state.user.total_calls)} <span class="muted">/ ${limitText(state.user.total_limit)}</span>`, "data_usage", quotaNote(totalPct), totalPct >= 90 ? "bad" : "good", totalPct)}
-        ${metricCard("Success Rate", `${successRate}%`, "check_circle", state.user.total_calls ? "Based on completed calls" : "No traffic yet", "good", null)}
-        ${metricCard("Success Quota", `${formatNumber(state.user.success_calls)} <span class="muted">/ ${limitText(state.user.success_limit)}</span>`, "task_alt", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct)}
+        ${metricCard("Rate Per Minute<br>(RPM)", `${formatNumber(recentMinuteCalls)} <span class="muted">/ ${rpmText(state.user.rpm)}</span>`, "speed", "User-level shared rate limit", rpmPct >= 90 ? "bad" : "good", rpmProgress)}
+        ${metricCard("Success Rate", `${successRate}%`, "check_circle", usage.total_calls ? "Based on completed calls" : "No traffic yet", "good", null)}
+        ${metricCard("Success Quota", `${formatNumber(state.user.success_calls)} <span class="muted">/ ${limitText(state.user.success_limit)}</span>`, "check_circle", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct)}
       </section>
       <section class="grid viz-grid">
         <div class="card panel">
@@ -465,9 +466,8 @@
                 <th>Tier</th>
                 <th>Status</th>
                 <th>RPM</th>
-                <th>Total Calls</th>
-                <th>Success Calls</th>
-                <th class="right">Actions</th>
+        <th>Success Calls</th>
+        <th class="right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -492,7 +492,6 @@
         <td>${tierBadge}</td>
         <td><span class="badge ${user.enabled ? "" : "error"}">${user.enabled ? "Enabled" : "Disabled"}</span></td>
         <td class="mono">${rpmText(user.rpm)}</td>
-        <td>${formatNumber(user.total_calls)} <span class="muted">/ ${limitText(user.total_limit)}</span></td>
         <td>${formatNumber(user.success_calls)} <span class="muted">/ ${limitText(user.success_limit)}</span></td>
         <td class="right">
           <span class="row-actions">
@@ -542,7 +541,6 @@
               </div>
               <span class="hint">每分钟请求上限，所有 Key 共享</span>
             </div>
-            ${quotaProgress("Total Requests", state.user.total_calls, state.user.total_limit, "all keys")}
             ${quotaProgress("Success Requests", state.user.success_calls, state.user.success_limit, "successful calls")}
           </div>
         </div>
@@ -604,7 +602,6 @@
                 <th>Name</th>
                 <th>Level</th>
                 <th>RPM</th>
-                <th>Total Limit</th>
                 <th>Success Limit</th>
                 <th>Users</th>
                 <th class="right">Actions</th>
@@ -624,7 +621,6 @@
         <td><strong>${escapeHTML(tier.name)}</strong><div class="hint mono">${escapeHTML(shortID(tier.id))}</div></td>
         <td><span class="badge off">L${tier.level}</span></td>
         <td class="mono">${rpmText(tier.rpm)}</td>
-        <td class="mono">${limitText(tier.total_limit)}</td>
         <td class="mono">${limitText(tier.success_limit)}</td>
         <td>${formatNumber(tier.user_count || 0)}</td>
         <td class="right">
@@ -665,11 +661,6 @@
                 <span class="hint">0 means unlimited RPM.</span>
               </div>
               <div class="field">
-                <label for="create-tier-total">Total Limit</label>
-                <input id="create-tier-total" name="total_limit" class="input mono" type="number" min="0" value="0">
-                <span class="hint">0 means unlimited.</span>
-              </div>
-              <div class="field">
                 <label for="create-tier-success">Success Limit</label>
                 <input id="create-tier-success" name="success_limit" class="input mono" type="number" min="0" value="0">
                 <span class="hint">0 means unlimited.</span>
@@ -708,11 +699,6 @@
                 <input id="edit-tier-rpm" name="rpm" class="input mono" type="number" min="0" value="${Number(tier.rpm) || 0}">
               </div>
               <div class="field">
-                <label for="edit-tier-total">Total Limit</label>
-                <input id="edit-tier-total" name="total_limit" class="input mono" type="number" min="0" value="${Number(tier.total_limit) || 0}">
-                <span class="hint">0 means unlimited.</span>
-              </div>
-              <div class="field">
                 <label for="edit-tier-success">Success Limit</label>
                 <input id="edit-tier-success" name="success_limit" class="input mono" type="number" min="0" value="${Number(tier.success_limit) || 0}">
                 <span class="hint">0 means unlimited.</span>
@@ -727,13 +713,14 @@
       </div>`;
   }
 
-  function renderAlert(risk) {
+  function renderDashboardAlert(alert) {
+    if (!alert) return "";
     return `
       <section class="alert">
         <span class="material-symbols-outlined">warning</span>
         <div>
-          <h3>${escapeHTML(risk.title)}</h3>
-          <p>${escapeHTML(risk.body)}</p>
+          <h3>${escapeHTML(alert.title)}</h3>
+          <p>${escapeHTML(alert.body)}</p>
         </div>
         <button class="button secondary" data-action="go" data-route="account" type="button">Review Quotas</button>
       </section>`;
@@ -1185,7 +1172,6 @@
           name: String(data.get("name") || "").trim(),
           level: Number(data.get("level") || 0),
           rpm: Number(data.get("rpm") || 0),
-          total_limit: Number(data.get("total_limit") || 0),
           success_limit: Number(data.get("success_limit") || 0)
         }
       });
@@ -1209,7 +1195,6 @@
           name: String(data.get("name") || "").trim(),
           level: Number(data.get("level") || 0),
           rpm: Number(data.get("rpm") || 0),
-          total_limit: Number(data.get("total_limit") || 0),
           success_limit: Number(data.get("success_limit") || 0)
         }
       });
@@ -1572,28 +1557,55 @@
     return sorted.filter((record) => [record.tool_name, record.key_id, record.id, record.success ? "success" : "failed"].some((value) => String(value || "").toLowerCase().includes(q)));
   }
 
-  function quotaRisk() {
-    const totalPct = percentOf(state.user.total_calls, state.user.total_limit);
-    const successPct = percentOf(state.user.success_calls, state.user.success_limit);
-    if (totalPct >= 90) {
-      return {
-        title: "Request Limit Near Capacity",
-        body: `You are currently using ${Math.round(totalPct)}% of your allocated total request quota.`
-      };
+  function buildDashboardAlert(records) {
+    const successQuotaAlert = buildSuccessQuotaDashboardAlert();
+    if (successQuotaAlert) {
+      return successQuotaAlert;
     }
-    if (successPct >= 90) {
-      return {
-        title: "Success Limit Near Capacity",
-        body: `You are currently using ${Math.round(successPct)}% of your allocated success request quota.`
-      };
+    return buildRPMDashboardAlert(records);
+  }
+
+  function buildSuccessQuotaDashboardAlert() {
+    const successQuotaLimit = Number(state.user.success_limit) || 0;
+    if (successQuotaLimit <= 0) {
+      return null;
     }
-    if (state.user.rpm > 0 && state.usage.total_calls >= Math.max(1, Math.round(state.user.rpm * 0.9))) {
-      return {
-        title: "Rate Limit Near Capacity",
-        body: "Recent traffic is approaching the configured user-level RPM limit. Review keys or quotas before throttling occurs."
-      };
+    const successQuotaPercent = percentOf(state.user.success_calls, successQuotaLimit);
+    if (successQuotaPercent < 90) {
+      return null;
     }
-    return null;
+    return {
+      title: "Success Quota Near Capacity",
+      body: `You are currently using ${Math.round(successQuotaPercent)}% of your allocated success request quota.`
+    };
+  }
+
+  function buildRPMDashboardAlert(records) {
+    const rpmLimit = Number(state.user.rpm) || 0;
+    if (rpmLimit <= 0) {
+      return null;
+    }
+    const recentMinuteCalls = countRecordsInWindow(records, 60 * 1000);
+    const rpmWarningThreshold = Math.max(1, Math.ceil(rpmLimit * 0.9));
+    if (recentMinuteCalls < rpmWarningThreshold) {
+      return null;
+    }
+    return {
+      title: "Rate Limit Near Capacity",
+      body: `${formatNumber(recentMinuteCalls)} calls in the last 60 seconds are approaching the configured user-level RPM limit.`
+    };
+  }
+
+  function countRecordsInWindow(records, windowMs) {
+    const now = Date.now();
+    const earliestAllowedTimestamp = now - windowMs;
+    return (records || []).reduce((count, record) => {
+      const timestamp = new Date(record.timestamp).getTime();
+      if (!Number.isFinite(timestamp) || timestamp < earliestAllowedTimestamp || timestamp > now) {
+        return count;
+      }
+      return count + 1;
+    }, 0);
   }
 
   function quotaProgress(label, used, limit, note) {

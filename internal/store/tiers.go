@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const tierColumns = `id, name, level, rpm, total_limit, success_limit, created_at, updated_at`
+const tierColumns = `id, name, level, rpm, success_limit, created_at, updated_at`
 
 func scanTier(row interface {
 	Scan(dest ...any) error
@@ -15,7 +15,7 @@ func scanTier(row interface {
 	var t Tier
 	var createdAt, updatedAt string
 	err := row.Scan(
-		&t.ID, &t.Name, &t.Level, &t.RPM, &t.TotalLimit, &t.SuccessLimit,
+		&t.ID, &t.Name, &t.Level, &t.RPM, &t.SuccessLimit,
 		&createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -69,7 +69,7 @@ func (s *SQLiteStore) ListTiers(ctx context.Context) ([]*Tier, error) {
 	return out, rows.Err()
 }
 
-func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, totalLimit, successLimit int) (*Tier, error) {
+func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, successLimit int) (*Tier, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("tier name is required")
@@ -80,9 +80,6 @@ func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, t
 	if rpm < 0 {
 		return nil, fmt.Errorf("rpm must be >= 0")
 	}
-	if totalLimit < 0 {
-		return nil, fmt.Errorf("total_limit must be >= 0")
-	}
 	if successLimit < 0 {
 		return nil, fmt.Errorf("success_limit must be >= 0")
 	}
@@ -92,9 +89,9 @@ func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, t
 	}
 	now := formatTime(nowUTC())
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO tiers (id, name, level, rpm, total_limit, success_limit, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, name, level, rpm, totalLimit, successLimit, now, now,
+		`INSERT INTO tiers (id, name, level, rpm, success_limit, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, name, level, rpm, successLimit, now, now,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -132,13 +129,6 @@ func (s *SQLiteStore) UpdateTier(ctx context.Context, id string, updates TierUpd
 		}
 		sets = append(sets, "rpm = ?")
 		args = append(args, *updates.RPM)
-	}
-	if updates.TotalLimit != nil {
-		if *updates.TotalLimit < 0 {
-			return nil, fmt.Errorf("total_limit must be >= 0")
-		}
-		sets = append(sets, "total_limit = ?")
-		args = append(args, *updates.TotalLimit)
 	}
 	if updates.SuccessLimit != nil {
 		if *updates.SuccessLimit < 0 {

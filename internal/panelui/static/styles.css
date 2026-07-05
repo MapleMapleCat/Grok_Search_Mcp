@@ -87,11 +87,17 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  min-width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
   font-family: "Material Symbols Outlined";
   font-size: 22px;
   font-style: normal;
   font-weight: 400;
   line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
   font-feature-settings: "liga";
   font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
 }

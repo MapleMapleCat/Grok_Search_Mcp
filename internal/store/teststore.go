@@ -25,10 +25,6 @@ func (TestStore) UpdateUser(context.Context, string, UserUpdates) (*User, error)
 	return nil, nil
 }
 func (TestStore) CountUsers(context.Context) (int64, error) { return 0, nil }
-func (TestStore) ReserveTotalCall(context.Context, string, int) error {
-	return nil
-}
-func (TestStore) ReleaseTotalCall(context.Context, string) error { return nil }
 func (TestStore) ReserveSuccessCall(context.Context, string, int) error {
 	return nil
 }
@@ -40,7 +36,7 @@ func (TestStore) TryIncrementUserSuccessCalls(context.Context, string, int) erro
 func (TestStore) GetTierByID(context.Context, string) (*Tier, error) { return nil, ErrTierNotFound }
 func (TestStore) GetTierByName(context.Context, string) (*Tier, error) { return nil, nil }
 func (TestStore) ListTiers(context.Context) ([]*Tier, error)          { return nil, nil }
-func (TestStore) CreateTier(context.Context, string, int, int, int, int) (*Tier, error) {
+func (TestStore) CreateTier(context.Context, string, int, int, int) (*Tier, error) {
 	return nil, nil
 }
 func (TestStore) UpdateTier(context.Context, string, TierUpdates) (*Tier, error) {

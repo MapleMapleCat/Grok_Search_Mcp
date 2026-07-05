@@ -8,7 +8,7 @@ import (
 	"github.com/grok-mcp/internal/store"
 )
 
-// openAuthStore 打开一个临时 SQLite 库；迁移已预置 tier0（rpm=10,total=1000,success=800）。
+// openAuthStore 打开一个临时 SQLite 库；迁移已预置 tier0（rpm=10, success=800）。
 func openAuthStore(t *testing.T) *store.SQLiteStore {
 	t.Helper()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "auth.db"))
@@ -37,9 +37,9 @@ func TestLoadUserWithTierLimitsResolvesFromTier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.RPM != tier0.RPM || loaded.TotalLimit != tier0.TotalLimit || loaded.SuccessLimit != tier0.SuccessLimit {
-		t.Fatalf("limits must mirror tier0: got rpm=%d total=%d success=%d",
-			loaded.RPM, loaded.TotalLimit, loaded.SuccessLimit)
+	if loaded.RPM != tier0.RPM || loaded.SuccessLimit != tier0.SuccessLimit {
+		t.Fatalf("limits must mirror tier0: got rpm=%d success=%d",
+			loaded.RPM, loaded.SuccessLimit)
 	}
 }
 
@@ -67,8 +67,8 @@ func TestLoadUserWithTierLimitsFallsBackToTier0(t *testing.T) {
 	if tier0 == nil {
 		t.Fatal("tier0 not seeded")
 	}
-	if loaded.RPM != tier0.RPM || loaded.TotalLimit != tier0.TotalLimit || loaded.SuccessLimit != tier0.SuccessLimit {
-		t.Fatalf("missing tier must fall back to tier0, got rpm=%d total=%d success=%d",
-			loaded.RPM, loaded.TotalLimit, loaded.SuccessLimit)
+	if loaded.RPM != tier0.RPM || loaded.SuccessLimit != tier0.SuccessLimit {
+		t.Fatalf("missing tier must fall back to tier0, got rpm=%d success=%d",
+			loaded.RPM, loaded.SuccessLimit)
 	}
 }

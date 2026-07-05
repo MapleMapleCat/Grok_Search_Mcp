@@ -452,7 +452,7 @@ func (h *Handler) adminCreateTier(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "tier name is required")
 		return
 	}
-	t, err := h.Store.CreateTier(r.Context(), name, req.Level, req.RPM, req.TotalLimit, req.SuccessLimit)
+	t, err := h.Store.CreateTier(r.Context(), name, req.Level, req.RPM, req.SuccessLimit)
 	if err != nil {
 		if errors.Is(err, store.ErrTierNameTaken) {
 			writeError(w, http.StatusConflict, "tier name already taken")
@@ -475,7 +475,7 @@ func (h *Handler) adminUpdateTier(w http.ResponseWriter, r *http.Request) {
 	}
 	t, err := h.Store.UpdateTier(r.Context(), id, store.TierUpdates{
 		Name: req.Name, Level: req.Level,
-		RPM: req.RPM, TotalLimit: req.TotalLimit, SuccessLimit: req.SuccessLimit,
+		RPM: req.RPM, SuccessLimit: req.SuccessLimit,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrTierNotFound) {

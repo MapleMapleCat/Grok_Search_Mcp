@@ -22,9 +22,6 @@ var ErrTierNameTaken = errors.New("tier name already taken")
 // ErrTierInUse 表示等级仍被用户引用，不能删除。
 var ErrTierInUse = errors.New("tier in use")
 
-// ErrQuotaTotal 表示用户总请求额度已耗尽。
-var ErrQuotaTotal = errors.New("total request limit exceeded")
-
 // ErrQuotaSuccess 表示用户成功请求额度已耗尽。
 var ErrQuotaSuccess = errors.New("success request limit exceeded")
 
@@ -44,13 +41,11 @@ type User struct {
 	Role         UserRole
 	Enabled      bool
 	TierID       string
-	// RPM / TotalLimit / SuccessLimit 不再持久化到 users 表，也不再作为限额来源。
+	// RPM / SuccessLimit 不再持久化到 users 表，也不再作为限额来源。
 	// 它们是请求链路上由 auth.LoadUserWithTierLimits 就地写入的“生效限额”，
 	// 取值完全来自用户所属 tier（tier 缺失时回退 tier0），仅供限流/额度中间件读取。
 	RPM          int
-	TotalLimit   int
 	SuccessLimit int
-	TotalCalls   int64
 	SuccessCalls int64
 	// TokenVersion 写入 JWT 的 "tv" 声明；中间件比对 DB 当前值，不一致即拒签。
 	// 角色/启用状态变更或显式吊销时自增，令所有未刷新的 token 立即失效。
@@ -59,13 +54,12 @@ type User struct {
 	UpdatedAt    time.Time
 }
 
-// Tier 表示用户等级预设（tier0~tier6），是用户限额（rpm/total_limit/success_limit）的唯一来源。
+// Tier 表示用户等级预设（tier0~tier6），是用户限额（rpm/success_limit）的唯一来源。
 type Tier struct {
 	ID           string
 	Name         string
 	Level        int
 	RPM          int
-	TotalLimit   int
 	SuccessLimit int
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
@@ -125,7 +119,6 @@ type TierUpdates struct {
 	Name         *string
 	Level        *int
 	RPM          *int
-	TotalLimit   *int
 	SuccessLimit *int
 }
 
@@ -142,8 +135,6 @@ type Store interface {
 	ListUsers(ctx context.Context) ([]*User, error)
 	UpdateUser(ctx context.Context, id string, updates UserUpdates) (*User, error)
 	CountUsers(ctx context.Context) (int64, error)
-	ReserveTotalCall(ctx context.Context, userID string, totalLimit int) error
-	ReleaseTotalCall(ctx context.Context, userID string) error
 	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) error
 	ReleaseSuccessCall(ctx context.Context, userID string) error
 	TryIncrementUserSuccessCalls(ctx context.Context, userID string, successLimit int) error
@@ -151,7 +142,7 @@ type Store interface {
 	GetTierByID(ctx context.Context, id string) (*Tier, error)
 	GetTierByName(ctx context.Context, name string) (*Tier, error)
 	ListTiers(ctx context.Context) ([]*Tier, error)
-	CreateTier(ctx context.Context, name string, level, rpm, totalLimit, successLimit int) (*Tier, error)
+	CreateTier(ctx context.Context, name string, level, rpm, successLimit int) (*Tier, error)
 	UpdateTier(ctx context.Context, id string, updates TierUpdates) (*Tier, error)
 	DeleteTier(ctx context.Context, id string) error
 	CountUsersByTier(ctx context.Context, tierID string) (int64, error)

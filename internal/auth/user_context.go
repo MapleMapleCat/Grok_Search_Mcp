@@ -19,7 +19,7 @@ func UserFromContext(ctx context.Context) (*store.User, bool) {
 	return u, ok
 }
 
-// LoadUserWithTierLimits 加载用户，并把生效限额（rpm/total_limit/success_limit）合并进返回的
+// LoadUserWithTierLimits 加载用户，并把生效限额（rpm/success_limit）合并进返回的
 // user 对象。限额以 tier 为唯一来源：用户自身不再持久化任何限额字段，因此不存在“历史残留值”。
 // tier_id 缺失时回退到默认 tier0，确保任何情况下都有明确限额来源。
 func LoadUserWithTierLimits(ctx context.Context, st store.Store, userID string) (*store.User, error) {
@@ -53,7 +53,6 @@ func applyTierLimits(ctx context.Context, st store.Store, user *store.User) {
 	}
 	if tier := resolveTier(ctx, st, user); tier != nil {
 		user.RPM = tier.RPM
-		user.TotalLimit = tier.TotalLimit
 		user.SuccessLimit = tier.SuccessLimit
 	}
 }

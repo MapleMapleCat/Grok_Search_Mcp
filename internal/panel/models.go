@@ -32,9 +32,7 @@ type UserResponse struct {
 	TierName     string         `json:"tier_name,omitempty"`
 	TierLevel    *int           `json:"tier_level,omitempty"`
 	RPM          int            `json:"rpm"`
-	TotalLimit   int            `json:"total_limit"`
 	SuccessLimit int            `json:"success_limit"`
-	TotalCalls   int64          `json:"total_calls"`
 	SuccessCalls int64          `json:"success_calls"`
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
@@ -65,7 +63,7 @@ type KeyResponse struct {
 	TotalCalls int64      `json:"total_calls"`
 }
 
-// UpdateUserRequest 仅允许调整 enabled/role/tier_id；限额（rpm/total_limit/success_limit）
+// UpdateUserRequest 仅允许调整 enabled/role/tier_id；限额（rpm/success_limit）
 // 由所属 tier 决定，不再支持按用户单独设置。RevokeTokens=true 强制吊销该用户所有存量 JWT。
 type UpdateUserRequest struct {
 	Enabled      *bool           `json:"enabled,omitempty"`
@@ -80,7 +78,6 @@ type TierResponse struct {
 	Name         string    `json:"name"`
 	Level        int       `json:"level"`
 	RPM          int       `json:"rpm"`
-	TotalLimit   int       `json:"total_limit"`
 	SuccessLimit int       `json:"success_limit"`
 	UserCount    int64     `json:"user_count"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -91,7 +88,6 @@ type CreateTierRequest struct {
 	Name         string `json:"name"`
 	Level        int    `json:"level"`
 	RPM          int    `json:"rpm"`
-	TotalLimit   int    `json:"total_limit"`
 	SuccessLimit int    `json:"success_limit"`
 }
 
@@ -99,7 +95,6 @@ type UpdateTierRequest struct {
 	Name         *string `json:"name,omitempty"`
 	Level        *int    `json:"level,omitempty"`
 	RPM          *int    `json:"rpm,omitempty"`
-	TotalLimit   *int    `json:"total_limit,omitempty"`
 	SuccessLimit *int    `json:"success_limit,omitempty"`
 }
 
@@ -123,14 +118,14 @@ func toUserResponse(u *store.User) UserResponse {
 	return UserResponse{
 		ID: u.ID, Username: u.Username, Role: u.Role, Enabled: u.Enabled,
 		TierID: u.TierID,
-		RPM: u.RPM, TotalLimit: u.TotalLimit, SuccessLimit: u.SuccessLimit,
-		TotalCalls: u.TotalCalls, SuccessCalls: u.SuccessCalls,
+		RPM: u.RPM, SuccessLimit: u.SuccessLimit,
+		SuccessCalls: u.SuccessCalls,
 		CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
 	}
 }
 
 // toUserResponseWithTier 填充用户关联的 tier 名称、等级与限额。限额以 tier 为唯一来源，
-// 因此用 tier 的 rpm/total_limit/success_limit 覆盖用户自身字段；tier 不存在时仅返回基础字段。
+// 因此用 tier 的 rpm/success_limit 覆盖用户自身字段；tier 不存在时仅返回基础字段。
 func toUserResponseWithTier(u *store.User, tier *store.Tier) UserResponse {
 	resp := toUserResponse(u)
 	if tier != nil {
@@ -138,7 +133,6 @@ func toUserResponseWithTier(u *store.User, tier *store.Tier) UserResponse {
 		lvl := tier.Level
 		resp.TierLevel = &lvl
 		resp.RPM = tier.RPM
-		resp.TotalLimit = tier.TotalLimit
 		resp.SuccessLimit = tier.SuccessLimit
 	}
 	return resp
@@ -147,7 +141,7 @@ func toUserResponseWithTier(u *store.User, tier *store.Tier) UserResponse {
 func toTierResponse(t *store.Tier, userCount int64) TierResponse {
 	return TierResponse{
 		ID: t.ID, Name: t.Name, Level: t.Level,
-		RPM: t.RPM, TotalLimit: t.TotalLimit, SuccessLimit: t.SuccessLimit,
+		RPM: t.RPM, SuccessLimit: t.SuccessLimit,
 		UserCount: userCount, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }

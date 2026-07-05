@@ -49,7 +49,7 @@ func TestRegisterUserOnlyOneAdminUnderConcurrency(t *testing.T) {
 	}
 }
 
-func TestFirstUserAdminAndQuotaReserve(t *testing.T) {
+func TestFirstUserAdminAndSuccessQuotaReserve(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
@@ -59,16 +59,6 @@ func TestFirstUserAdminAndQuotaReserve(t *testing.T) {
 	}
 	if u1.Role != RoleAdmin {
 		t.Fatalf("role %s", u1.Role)
-	}
-
-	if err := s.ReserveTotalCall(ctx, u1.ID, 2); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ReserveTotalCall(ctx, u1.ID, 2); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.ReserveTotalCall(ctx, u1.ID, 2); !errors.Is(err, ErrQuotaTotal) {
-		t.Fatalf("expected total quota, got %v", err)
 	}
 
 	if err := s.TryIncrementUserSuccessCalls(ctx, u1.ID, 1); err != nil {
@@ -108,7 +98,7 @@ func TestUpdateUserChangesTierID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tier, err := s.CreateTier(ctx, "t", 0, 1, 2, 3)
+	tier, err := s.CreateTier(ctx, "t", 0, 1, 3)
 	if err != nil {
 		t.Fatal(err)
 	}

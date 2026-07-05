@@ -82,7 +82,10 @@ func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Clien
 		_ = req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
 			ProgressToken: token,
 			Progress:      progress,
-			Message:       formatSearchRoundMessage(round),
+			// Grok search has no fixed total round count. Set Total to the current
+			// progress so clients show "x/x" instead of an unknown-total "x/?".
+			Total:   progress,
+			Message: formatSearchRoundMessage(round),
 		})
 	})
 	if err != nil {

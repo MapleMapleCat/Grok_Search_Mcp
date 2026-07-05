@@ -100,7 +100,7 @@ func (s *responseRecorder) Unwrap() http.ResponseWriter {
 }
 
 // MCPMiddleware 在请求前后统计耗时；仅 tools/call 才计入用量，以保证
-// total_calls 与 usage_log 的 COUNT 口径一致，并避免握手请求（initialize/ping 等）刷新 last_used_at。
+// API Key 调用数与 usage_log 的 COUNT 口径一致，并避免握手请求（initialize/ping 等）刷新 last_used_at。
 // 成功次数在 quota 中间件中已原子预留；此处根据 MCP isError / HTTP 状态回滚失败调用。
 // 使用 defer + recover 保证即便下游 handler panic，release/usage 后处理也会执行，避免 success_calls 虚高。
 func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Handler) http.Handler {
@@ -129,11 +129,10 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 
 			// recover 捕获 handler panic：将状态视为失败并执行 release 逻辑，
 			// 随后重新 panic 让 http.Server 在连接层处理（关闭连接）。
-			// total_calls 与 success_calls 均由 quota 中间件预留，此处必须同时回滚。
+			// success_calls 由 quota 中间件预留，此处必须回滚。
 			defer func() {
 				if rcv := recover(); rcv != nil {
 					if hasUser {
-						_ = st.ReleaseTotalCall(r.Context(), user.ID)
 						_ = st.ReleaseSuccessCall(r.Context(), user.ID)
 					}
 					panic(rcv)

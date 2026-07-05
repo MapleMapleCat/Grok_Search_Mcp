@@ -31,7 +31,7 @@ xAI / Grok
 - Streamable HTTP MCP 端点：`/mcp`
 - 管理面板 API：`/panel/v1/*`（注册/登录开放；其他接口需 JWT；管理员接口需 `role=admin`）
 - 客户端 API Key 鉴权（Key 归属用户）
-- 按用户汇总的 RPM、总请求上限、成功请求上限
+- 按用户汇总的 RPM 与成功请求上限
 - SQLite 持久化 API Key 与调用明细
 - 仅统计真实 `tools/call` 调用，握手和工具列表请求不计入用量
 - 上游 SSE 流式解析，并把搜索轮次转成 MCP progress 通知
@@ -297,7 +297,7 @@ PATCH  /panel/v1/admin/users/{id}
 GET    /panel/v1/admin/users/{id}/usage
 ```
 
-首个注册用户自动为 `admin`。用户限额（`rpm`、`total_limit`、`success_limit`）以 tier 为唯一来源，管理员通过 Tier Management 页维护 tier 预设，并在用户编辑页为用户指定 tier。
+首个注册用户自动为 `admin`。用户限额（`rpm`、`success_limit`）以 tier 为唯一来源，管理员通过 Tier Management 页维护 tier 预设，并在用户编辑页为用户指定 tier。
 
 ## 代码结构
 
@@ -308,7 +308,7 @@ cmd/grok-mcp/
 
 internal/panel/           面板 REST API（/panel/v1）
 internal/panelui/         面板前端静态资源（embed）
-internal/quota/           用户汇总额度（tools/call 的 total/success 预留与回滚）
+internal/quota/           用户成功请求额度（tools/call 的 success 预留与失败回滚）
 internal/auth/            MCP API Key 与面板 JWT（HS256，含 iss/aud 校验）
 internal/ratelimit/       按用户的内存 RPM 限流（令牌桶）
 internal/usage/           MCP tools/call 用量与 success 标记，含 panic 回滚
