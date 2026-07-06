@@ -8,9 +8,9 @@ import (
 
 // AsyncUsageWriter 将用量写入从请求路径解耦：主线程只入队，后台 goroutine 调用 Store。
 type AsyncUsageWriter struct {
-	store Store
-	ch    chan UsageRecord
-	wg    sync.WaitGroup
+	store  Store
+	ch     chan UsageRecord
+	wg     sync.WaitGroup
 	cancel context.CancelFunc
 }
 

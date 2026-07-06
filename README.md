@@ -161,6 +161,38 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 
 如果 `grok-mcp` 部署在远程服务器，建议通过 HTTPS 反向代理暴露 `/mcp`，并把 URL 改成公网地址，例如 `https://mcp.example.com/mcp`。
 
+### 5. 反向代理安全建议
+
+服务端内置了面板登录/注册的内存限流与登录失败短期锁定；公网部署时仍建议在 Nginx、Caddy、Traefik 等反向代理层额外启用 IP 级 rate limit，尤其是：
+
+- `POST /panel/v1/auth/login`
+- `POST /panel/v1/auth/register`
+- 对外开放的 `/mcp` 端点
+
+Nginx 示例：
+
+```nginx
+limit_req_zone $binary_remote_addr zone=grok_panel_auth:10m rate=10r/m;
+limit_req_zone $binary_remote_addr zone=grok_mcp:10m rate=60r/m;
+
+location = /panel/v1/auth/login {
+    limit_req zone=grok_panel_auth burst=5 nodelay;
+    proxy_pass http://127.0.0.1:8080;
+}
+
+location = /panel/v1/auth/register {
+    limit_req zone=grok_panel_auth burst=3 nodelay;
+    proxy_pass http://127.0.0.1:8080;
+}
+
+location = /mcp {
+    limit_req zone=grok_mcp burst=30 nodelay;
+    proxy_pass http://127.0.0.1:8080;
+}
+```
+
+如果反向代理与应用不在同一信任边界内，请在代理层完成限流，不要直接信任客户端伪造的 `X-Forwarded-For`。内置限流默认按 TCP 连接的 `RemoteAddr` 识别 IP。
+
 ## Docker Compose
 
 Docker 构建默认使用官方原生源：

@@ -118,9 +118,9 @@ func toUserResponse(u *store.User) UserResponse {
 	return UserResponse{
 		ID: u.ID, Username: u.Username, Role: u.Role, Enabled: u.Enabled,
 		TierID: u.TierID,
-		RPM: u.RPM, SuccessLimit: u.SuccessLimit,
+		RPM:    u.RPM, SuccessLimit: u.SuccessLimit,
 		SuccessCalls: u.SuccessCalls,
-		CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt,
+		CreatedAt:    u.CreatedAt, UpdatedAt: u.UpdatedAt,
 	}
 }
 

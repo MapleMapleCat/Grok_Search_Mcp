@@ -18,9 +18,9 @@ type cacheEntry struct {
 
 // CachedAPIKeyResolver 缓存 MCP 鉴权链上的 key + 带 tier 限额的用户，减少热路径 DB 查询。
 type CachedAPIKeyResolver struct {
-	st  store.Store
-	ttl time.Duration
-	mu  sync.Mutex
+	st     store.Store
+	ttl    time.Duration
+	mu     sync.Mutex
 	byHash map[string]cacheEntry
 }
 

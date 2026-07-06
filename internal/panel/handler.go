@@ -16,9 +16,10 @@ import (
 
 // Handler 实现面板 API；路由由 NewMux 注册。
 type Handler struct {
-	Store     store.Store
-	Config    *config.Config
-	AuthCache AuthCacheInvalidator // 可选；管理员变更用户/等级/密钥后清空 MCP 鉴权缓存
+	Store         store.Store
+	Config        *config.Config
+	AuthCache     AuthCacheInvalidator // 可选；管理员变更用户/等级/密钥后清空 MCP 鉴权缓存
+	AuthProtector *AuthProtector       // 可选；未设置时使用内置面板登录/注册防护
 }
 
 // NewMux 注册 /panel/v1 路由。鉴权分两层：
@@ -29,8 +30,9 @@ type Handler struct {
 //     直接挂到外层 mux 会绕过 admin 校验。
 func NewMux(h *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /panel/v1/auth/register", h.register)
-	mux.HandleFunc("POST /panel/v1/auth/login", h.login)
+	authProtector := h.authProtector()
+	mux.Handle("POST /panel/v1/auth/register", authProtector.RateLimitAuthEndpoint(authEndpointRegister, http.HandlerFunc(h.register)))
+	mux.Handle("POST /panel/v1/auth/login", authProtector.RateLimitAuthEndpoint(authEndpointLogin, http.HandlerFunc(h.login)))
 	mux.HandleFunc("GET /panel/v1/me", h.me)
 
 	mux.HandleFunc("GET /panel/v1/keys", h.listKeys)
@@ -106,9 +108,17 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	username := strings.TrimSpace(req.Username)
-	if username == "" || len(req.Password) < 8 {
-		writeError(w, http.StatusBadRequest, "username required and password must be at least 8 characters")
+	username, err := validatePanelAuthCredentials(req.Username, req.Password)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if existingUser, err := h.Store.GetUserByUsername(r.Context(), username); err != nil {
+		log.Printf("check user %q before register failed: %v", username, err)
+		writeError(w, http.StatusInternalServerError, "registration failed")
+		return
+	} else if existingUser != nil {
+		writeError(w, http.StatusConflict, "username already taken")
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
@@ -152,7 +162,19 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	user, err := h.Store.GetUserByUsername(r.Context(), req.Username)
+	username, err := validatePanelAuthCredentials(req.Username, req.Password)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	authProtector := h.authProtector()
+	clientIP := clientIPForRateLimit(r)
+	if locked, retryAfter := authProtector.LoginLocked(username, clientIP); locked {
+		writeRetryAfter(w, retryAfter)
+		writeError(w, http.StatusTooManyRequests, "too many failed login attempts")
+		return
+	}
+	user, err := h.Store.GetUserByUsername(r.Context(), username)
 	// 用户不存在时也执行一次 dummy bcrypt 比较，以拉平响应时间，避免通过时序差异枚举有效用户名。
 	hashToCheck := dummyBcryptHash
 	if err == nil && user != nil {
@@ -161,17 +183,21 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	compareErr := bcrypt.CompareHashAndPassword(hashToCheck, []byte(req.Password))
 	if err != nil || user == nil {
 		// 用户不存在：上面已执行 dummy 比较，这里统一返回未授权，时序与存在用户分支一致。
+		authProtector.RecordLoginFailure(username, clientIP)
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if compareErr != nil {
+		authProtector.RecordLoginFailure(username, clientIP)
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	if !user.Enabled {
+		authProtector.RecordLoginFailure(username, clientIP)
 		writeError(w, http.StatusForbidden, "user disabled")
 		return
 	}
-	if compareErr != nil {
-		writeError(w, http.StatusUnauthorized, "invalid credentials")
-		return
-	}
+	authProtector.RecordLoginSuccess(username, clientIP)
 	token, exp, err := auth.IssuePanelToken(h.Config.JWTSecret, user, 0)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token issue failed")

@@ -24,28 +24,28 @@ const (
 // 用户限额（RPM / 总次数 / 成功次数）不再可配置，统一由 tier 决定；
 // DefaultUserRPM 仅作为内存限流器在 tier 解析异常时的兜底，不再用于新用户。
 type Config struct {
-	CPABaseURL    string
-	CPAAPIKey     string
-	Model         string
-	Timeout       time.Duration
-	Debug         bool
-	HTTPAddr      string
-	DBPath        string
-	JWTSecret     string
+	CPABaseURL     string
+	CPAAPIKey      string
+	Model          string
+	Timeout        time.Duration
+	Debug          bool
+	HTTPAddr       string
+	DBPath         string
+	JWTSecret      string
 	DefaultUserRPM int
 }
 
 // Load 读取并校验配置。
 func Load() (*Config, error) {
 	cfg := &Config{
-		CPABaseURL:    strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
-		CPAAPIKey:     strings.TrimSpace(os.Getenv("CPA_API_KEY")),
-		Model:         envOrDefault("GROK_MODEL", defaultModel),
-		Timeout:       defaultTimeout,
-		Debug:         parseBoolEnv("GROK_MCP_DEBUG"),
-		HTTPAddr:      envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
-		DBPath:        envOrDefault("GROK_DB_PATH", defaultDBPath),
-		JWTSecret:     strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
+		CPABaseURL:     strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
+		CPAAPIKey:      strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		Model:          envOrDefault("GROK_MODEL", defaultModel),
+		Timeout:        defaultTimeout,
+		Debug:          parseBoolEnv("GROK_MCP_DEBUG"),
+		HTTPAddr:       envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
+		DBPath:         envOrDefault("GROK_DB_PATH", defaultDBPath),
+		JWTSecret:      strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
 		DefaultUserRPM: defaultLimiterRPM,
 	}
 

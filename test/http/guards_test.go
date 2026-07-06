@@ -41,12 +41,12 @@ func bootIntegrationEnv(t *testing.T, cpa *httptest.Server) *integrationEnv {
 	}
 	writer := store.NewAsyncUsageWriter(st, 64)
 	cfg := &config.Config{
-		CPABaseURL:    cpa.URL,
-		CPAAPIKey:     "cpa-mock-key",
-		Model:         "grok-4.3",
-		JWTSecret:     "jwt-secret-must-be-at-least-32-bytes!",
+		CPABaseURL:     cpa.URL,
+		CPAAPIKey:      "cpa-mock-key",
+		Model:          "grok-4.3",
+		JWTSecret:      "jwt-secret-must-be-at-least-32-bytes!",
 		DefaultUserRPM: 1000,
-		Timeout:       30 * time.Second,
+		Timeout:        30 * time.Second,
 	}
 	client := grok.NewClient(cfg)
 	server := mcp.NewServer(&mcp.Implementation{Name: "grok-mcp", Version: version.Version}, nil)
