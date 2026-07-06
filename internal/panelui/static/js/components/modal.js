@@ -1,0 +1,256 @@
+import { api } from "../api.js";
+import { metricCard, renderRecentActivity } from "./metric-card.js";
+import { tierOptions } from "../pages/tiers.js";
+import { state } from "../state.js";
+import { escapeAttr, escapeHTML, formatNumber, successPercent } from "../utils.js";
+
+export function renderModal() {
+  if (!state.modal) return "";
+  if (state.modal.type === "create-key") return renderCreateKeyModal();
+  if (state.modal.type === "key-created") return renderKeyCreatedModal(state.modal);
+  if (state.modal.type === "edit-key") return renderEditKeyModal(state.modal.key);
+  if (state.modal.type === "edit-user") return renderEditUserModal(state.modal.user);
+  if (state.modal.type === "create-tier") return renderCreateTierModal();
+  if (state.modal.type === "edit-tier") return renderEditTierModal(state.modal.tier);
+  if (state.modal.type === "user-usage") return renderUserUsageModal(state.modal.user, state.modal.usage);
+  return "";
+}
+
+export function renderCreateKeyModal() {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="Create New Key" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>Create New Key</h3>
+          <p>Create a client key for the current user. The raw key will be shown once.</p>
+          <form id="create-key-form" class="form-stack" style="margin-top: 24px;">
+            <div class="field">
+              <label for="key-name">Key Name</label>
+              <input id="key-name" name="name" class="input" placeholder="Production Backend" required>
+            </div>
+            <div class="modal-actions">
+              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+              <button class="button" type="submit"><span class="material-symbols-outlined">add</span><span>Create</span></button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderKeyCreatedModal(modal) {
+  const copyFailed = Boolean(modal.copyFailed);
+  const copySucceeded = Boolean(modal.copySucceeded);
+  const copyNote = copyFailed
+    ? "浏览器拒绝自动复制。密钥已选中，请按 Ctrl+C 手动复制。"
+    : copySucceeded
+      ? "密钥已复制到剪贴板。此密钥只显示一次，请立即保存。"
+      : "此密钥只显示一次，可以点击复制按钮或直接选中文本复制。";
+  return `
+    <div class="modal-backdrop">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="New API Key Created" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>New API Key Created</h3>
+          <p>Your new key '${escapeHTML(modal.key.name)}' is ready to use.</p>
+          <div class="warning-box">
+            <span class="material-symbols-outlined">warning</span>
+            <div>
+              <strong>Save this key now.</strong>
+              <p>For your security, it will only be shown once. If you lose it, you will need to generate a new key.</p>
+            </div>
+          </div>
+          <div class="key-copy">
+            <label class="field-label" for="created-api-key">Secret Key</label>
+            <div class="copy-shell ${copyFailed ? "manual" : ""}">
+              <input id="created-api-key" class="input mono subtle" value="${escapeAttr(modal.apiKey)}" readonly>
+              <button class="mini-icon" data-action="copy-created-key" title="Copy" type="button"><span class="material-symbols-outlined">content_copy</span></button>
+            </div>
+            <p class="hint ${copyFailed ? "manual-copy-note" : copySucceeded ? "auto-copy-note" : ""}">${copyNote}</p>
+          </div>
+          <div class="modal-actions">
+            <button class="button secondary" data-action="close-modal" type="button">I've Saved It</button>
+            <button class="button" data-action="copy-created-key" type="button"><span class="material-symbols-outlined">content_copy</span><span>Copy Key</span></button>
+          </div>
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderEditKeyModal(key) {
+  if (!key) return "";
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Key" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>Edit API Key</h3>
+          <p>Update the key label or disable access immediately.</p>
+          <form id="edit-key-form" class="form-stack" style="margin-top: 24px;">
+            <input type="hidden" name="id" value="${escapeAttr(key.id)}">
+            <div class="field">
+              <label for="edit-key-name">Name</label>
+              <input id="edit-key-name" name="name" class="input" value="${escapeAttr(key.name || "")}" required>
+            </div>
+            <div class="field-row">
+              <span>
+                <strong>Enabled</strong>
+                <span class="hint" style="display: block;">Disabled keys cannot call /mcp.</span>
+              </span>
+              <label class="toggle">
+                <input type="checkbox" name="enabled" ${key.enabled ? "checked" : ""}>
+                <span></span>
+              </label>
+            </div>
+            <div class="modal-actions">
+              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+              <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderEditUserModal(user) {
+  if (!user) return "";
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="Edit User" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>Edit User</h3>
+          <p>${escapeHTML(user.username)} access and tier assignment.</p>
+          <form id="edit-user-form" class="form-stack" style="margin-top: 24px;">
+            <input type="hidden" name="id" value="${escapeAttr(user.id)}">
+            <div class="field-row">
+              <span>
+                <strong>Enabled</strong>
+                <span class="hint" style="display: block;">Disabled users cannot log in or use keys.</span>
+              </span>
+              <label class="toggle"><input type="checkbox" name="enabled" ${user.enabled ? "checked" : ""}><span></span></label>
+            </div>
+            <div class="field">
+              <label for="edit-user-role">Role</label>
+              <select id="edit-user-role" name="role" class="select">
+                <option value="user" ${user.role === "user" ? "selected" : ""}>user</option>
+                <option value="admin" ${user.role === "admin" ? "selected" : ""}>admin</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <span>
+                <strong>Revoke Tokens</strong>
+                <span class="hint" style="display: block;">强制该用户所有已签发的登录令牌立即失效（强制下线）。</span>
+              </span>
+              <label class="toggle"><input type="checkbox" name="revoke_tokens"><span></span></label>
+            </div>
+            <div class="field">
+              <label for="edit-user-tier">Tier</label>
+              <select id="edit-user-tier" name="tier_id" class="select" required>
+                ${tierOptions(user.tier_id || "")}
+              </select>
+              <span class="hint">必须选择 tier；限额（RPM / success limit）完全由 tier 决定，用户不再保留独立限额。调整 tier 预设请到 Tier Management 页。</span>
+            </div>
+            <div class="modal-actions">
+              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+              <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderUserUsageModal(user, usage) {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="User Usage" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>User Usage</h3>
+          <p>${escapeHTML(user.username)} aggregate usage.</p>
+          <div class="grid metric-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 24px 0;">
+            ${metricCard("Total Calls", formatNumber(usage.total_calls), "data_usage", "All user keys", "good", null)}
+            ${metricCard("Success Calls", formatNumber(usage.success_calls), "check_circle", `${successPercent(usage)} success`, "good", null)}
+          </div>
+          ${renderRecentActivity(usage.records || [], true)}
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderCreateTierModal() {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="Create Tier" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>Create Tier</h3>
+          <p>新建一个等级预设。</p>
+          <form id="create-tier-form" class="form-stack" style="margin-top: 24px;">
+            <div class="field">
+              <label for="create-tier-name">Name</label>
+              <input id="create-tier-name" name="name" class="input" placeholder="tier7" required>
+            </div>
+            <div class="field">
+              <label for="create-tier-level">Level</label>
+              <input id="create-tier-level" name="level" class="input mono" type="number" min="0" value="0">
+            </div>
+            <div class="field">
+              <label for="create-tier-rpm">RPM</label>
+              <input id="create-tier-rpm" name="rpm" class="input mono" type="number" min="0" value="0">
+              <span class="hint">0 means unlimited RPM.</span>
+            </div>
+            <div class="field">
+              <label for="create-tier-success">Success Limit</label>
+              <input id="create-tier-success" name="success_limit" class="input mono" type="number" min="0" value="0">
+              <span class="hint">0 means unlimited.</span>
+            </div>
+            <div class="modal-actions">
+              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+              <button class="button" type="submit"><span class="material-symbols-outlined">add</span><span>Create</span></button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderEditTierModal(tier) {
+  if (!tier) return "";
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Tier" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>Edit Tier</h3>
+          <p>${escapeHTML(tier.name)} preset values.</p>
+          <form id="edit-tier-form" class="form-stack" style="margin-top: 24px;">
+            <input type="hidden" name="id" value="${escapeAttr(tier.id)}">
+            <div class="field">
+              <label for="edit-tier-name">Name</label>
+              <input id="edit-tier-name" name="name" class="input" value="${escapeAttr(tier.name || "")}" required>
+            </div>
+            <div class="field">
+              <label for="edit-tier-level">Level</label>
+              <input id="edit-tier-level" name="level" class="input mono" type="number" min="0" value="${Number(tier.level) || 0}">
+            </div>
+            <div class="field">
+              <label for="edit-tier-rpm">RPM</label>
+              <input id="edit-tier-rpm" name="rpm" class="input mono" type="number" min="0" value="${Number(tier.rpm) || 0}">
+            </div>
+            <div class="field">
+              <label for="edit-tier-success">Success Limit</label>
+              <input id="edit-tier-success" name="success_limit" class="input mono" type="number" min="0" value="${Number(tier.success_limit) || 0}">
+              <span class="hint">0 means unlimited.</span>
+            </div>
+            <div class="modal-actions">
+              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+              <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>`;
+}

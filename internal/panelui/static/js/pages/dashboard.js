@@ -1,0 +1,31 @@
+import { metricCard, renderBars, renderDashboardAlert, renderRecentActivity, renderToolUsage } from "../components/metric-card.js";
+import { state } from "../state.js";
+import { buildDashboardAlert, countRecordsInWindow, formatNumber, limitText, percentOf, quotaNote, rpmText } from "../utils.js";
+
+export function renderDashboard() {
+  const usage = state.usage;
+  const successPct = percentOf(state.user.success_calls, state.user.success_limit);
+  const recentMinuteCalls = countRecordsInWindow(usage.records, 60 * 1000);
+  const rpmPct = percentOf(recentMinuteCalls, state.user.rpm);
+  const rpmProgress = state.user.rpm > 0 ? rpmPct : null;
+  const successRate = usage.total_calls > 0 ? Math.round((usage.success_calls / usage.total_calls) * 1000) / 10 : 100;
+  const dashboardAlert = buildDashboardAlert(usage.records);
+  return `
+    ${renderDashboardAlert(dashboardAlert)}
+    <section class="grid metric-grid">
+      ${metricCard("Rate Per Minute<br>(RPM)", `${formatNumber(recentMinuteCalls)} <span class="muted">/ ${rpmText(state.user.rpm)}</span>`, "speed", "User-level shared rate limit", rpmPct >= 90 ? "bad" : "good", rpmProgress)}
+      ${metricCard("Success Rate", `${successRate}%`, "check_circle", usage.total_calls ? "Based on completed calls" : "No traffic yet", "good", null)}
+      ${metricCard("Success Limit", `${formatNumber(state.user.success_calls)} <span class="muted">/ ${limitText(state.user.success_limit)}</span>`, "check_circle", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct)}
+    </section>
+    <section class="grid viz-grid">
+      <div class="card panel">
+        <div class="panel-head">
+          <h3>Traffic Volume</h3>
+          <button class="button secondary small" data-action="go" data-route="usage" type="button">Last 24 Hours</button>
+        </div>
+        ${renderBars(usage.records)}
+      </div>
+      ${renderToolUsage(usage)}
+    </section>
+    ${renderRecentActivity(usage.records, true)}`;
+}
