@@ -404,23 +404,27 @@ Authorization: Bearer YOUR_MCP_API_KEY</code></pre>
 
         <article class="card tutorial-card">
           <div class="tutorial-card-head">
-            <span class="material-symbols-outlined">terminal</span>
+            <span class="material-symbols-outlined">developer_board</span>
             <div>
-              <h3>Claude Code</h3>
-              <p>Add this server as an HTTP MCP server with a bearer token header.</p>
+              <h3>Cursor</h3>
+              <p>Add this server to the global or project MCP configuration file.</p>
             </div>
           </div>
           <ol class="tutorial-steps">
-            <li>Open a terminal in the project where Claude Code should use this server.</li>
-            <li>Replace the endpoint and token placeholders below.</li>
-            <li>List MCP servers in Claude Code and confirm the server is connected.</li>
+            <li>Open <span class="mono">~/.cursor/mcp.json</span> for global setup, or <span class="mono">.cursor/mcp.json</span> for project setup.</li>
+            <li>Add the server configuration below.</li>
+            <li>Save the file, then restart Cursor or reload MCP tools.</li>
           </ol>
-          <pre class="tutorial-code"><code>claude mcp add grok-search \\
-  --transport http \\
-  --header "Authorization: Bearer YOUR_MCP_API_KEY" \\
-  http://localhost:8080/mcp
-
-claude mcp list</code></pre>
+          <pre class="tutorial-code"><code>{
+  "mcpServers": {
+    "grok-search": {
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_API_KEY"
+      }
+    }
+  }
+}</code></pre>
         </article>
 
         <article class="card tutorial-card">
@@ -453,27 +457,23 @@ args = [
 
         <article class="card tutorial-card">
           <div class="tutorial-card-head">
-            <span class="material-symbols-outlined">developer_board</span>
+            <span class="material-symbols-outlined">terminal</span>
             <div>
-              <h3>Cursor</h3>
-              <p>Add this server to the global or project MCP configuration file.</p>
+              <h3>Claude Code</h3>
+              <p>Add this server as an HTTP MCP server with a bearer token header.</p>
             </div>
           </div>
           <ol class="tutorial-steps">
-            <li>Open <span class="mono">~/.cursor/mcp.json</span> for global setup, or <span class="mono">.cursor/mcp.json</span> for project setup.</li>
-            <li>Add the server configuration below.</li>
-            <li>Save the file, then restart Cursor or reload MCP tools.</li>
+            <li>Open a terminal in the project where Claude Code should use this server.</li>
+            <li>Replace the endpoint and token placeholders below.</li>
+            <li>List MCP servers in Claude Code and confirm the server is connected.</li>
           </ol>
-          <pre class="tutorial-code"><code>{
-  "mcpServers": {
-    "grok-search": {
-      "url": "http://localhost:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_MCP_API_KEY"
-      }
-    }
-  }
-}</code></pre>
+          <pre class="tutorial-code"><code>claude mcp add grok-search \\
+  --transport http \\
+  --header "Authorization: Bearer YOUR_MCP_API_KEY" \\
+  http://localhost:8080/mcp
+
+claude mcp list</code></pre>
         </article>
 
         <article class="card tutorial-card">
