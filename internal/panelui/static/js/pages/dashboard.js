@@ -16,7 +16,7 @@ export function renderDashboard() {
     ${renderDashboardAlert(dashboardAlert)}
     <section class="grid metric-grid">
       ${metricCard("Rate Per Minute<br>(RPM)", `${formatNumber(recentMinuteCalls)} <span class="muted">/ ${rpmText(state.user.rpm)}</span>`, "speed", "User-level shared rate limit", rpmPct >= 90 ? "bad" : "good", rpmProgress)}
-      ${metricCard("Success Rate", successRateValue, "check_circle", usage.total_calls ? "Based on completed calls" : "No traffic yet", "good", null)}
+      ${metricCard("Success Rate", successRateValue, "check_circle", usage.total_calls ? "Based on completed calls" : "No traffic yet", "good", null, { reserveProgressSpace: true })}
       ${metricCard("Success Limit", `${formatNumber(state.user.success_calls)} <span class="muted">/ ${limitText(state.user.success_limit)}</span>`, "check_circle", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct)}
     </section>
     <section class="grid viz-grid">

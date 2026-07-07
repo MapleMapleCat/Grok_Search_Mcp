@@ -1,7 +1,12 @@
 import { filteredRecords } from "../state.js";
 import { bucketRecords, clamp, escapeAttr, escapeHTML, formatNumber, percentOf, relativeTime, trimToolName } from "../utils.js";
 
-export function metricCard(title, value, icon, note, tone, progress) {
+export function metricCard(title, value, icon, note, tone, progress, options = {}) {
+  const shouldReserveProgressSpace = options.reserveProgressSpace === true;
+  const progressMarkup = progress === null
+    ? (shouldReserveProgressSpace ? `<div class="progress metric-progress-placeholder" style="margin-top: 16px;" aria-hidden="true"></div>` : "")
+    : `<div class="progress" style="margin-top: 16px;"><div class="progress-bar" style="width: ${clamp(progress, 0, 100)}%;"></div></div>`;
+
   return `
     <div class="card metric-card">
       <div class="metric-top">
@@ -10,7 +15,7 @@ export function metricCard(title, value, icon, note, tone, progress) {
       </div>
       <div>
         <div class="metric-value">${value}</div>
-        ${progress === null ? "" : `<div class="progress" style="margin-top: 16px;"><div class="progress-bar" style="width: ${clamp(progress, 0, 100)}%;"></div></div>`}
+        ${progressMarkup}
         <div class="metric-note ${tone || ""}">
           <span class="material-symbols-outlined" style="font-size: 16px;">${tone === "bad" ? "trending_up" : "trending_flat"}</span>
           <span>${escapeHTML(note || "Stable")}</span>

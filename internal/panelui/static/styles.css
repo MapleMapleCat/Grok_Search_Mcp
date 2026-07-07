@@ -882,6 +882,10 @@ a {
   transition: width 240ms ease;
 }
 
+.metric-progress-placeholder {
+  visibility: hidden;
+}
+
 .panel {
   padding: 20px;
 }
