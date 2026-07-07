@@ -1038,7 +1038,7 @@ table {
 }
 
 .compact-activity-table table {
-  width: max-content;
+  width: 100%;
   min-width: 0;
 }
 
@@ -1054,7 +1054,7 @@ table {
 }
 
 .compact-activity-table .activity-timestamp-column {
-  width: max-content;
+  width: auto;
 }
 
 th,
