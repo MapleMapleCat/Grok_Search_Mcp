@@ -117,6 +117,18 @@ a {
   color: var(--outline);
 }
 
+.success-rate-value.good {
+  color: var(--success);
+}
+
+.success-rate-value.warning {
+  color: var(--warning);
+}
+
+.success-rate-value.bad {
+  color: var(--error);
+}
+
 .hidden {
   display: none !important;
 }
