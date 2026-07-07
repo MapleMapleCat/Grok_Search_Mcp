@@ -271,8 +271,8 @@ func (s *SQLiteStore) RecordUsage(ctx context.Context, record UsageRecord) error
 		success = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO usage_log (key_id, tool_name, timestamp, duration_ms, success) VALUES (?, ?, ?, ?, ?)`,
-		record.KeyID, record.ToolName, formatTime(record.Timestamp.UTC()), record.DurationMs, success,
+		`INSERT INTO usage_log (key_id, tool_name, timestamp, duration_ms, success, debug_json) VALUES (?, ?, ?, ?, ?, ?)`,
+		record.KeyID, record.ToolName, formatTime(record.Timestamp.UTC()), record.DurationMs, success, record.DebugJSON,
 	)
 	return err
 }
@@ -346,7 +346,7 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	rows.Close()
 
 	recRows, err := s.db.QueryContext(ctx,
-		`SELECT id, key_id, tool_name, timestamp, duration_ms, success FROM usage_log WHERE `+where+` AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500`,
+		`SELECT id, key_id, tool_name, timestamp, duration_ms, success, debug_json FROM usage_log WHERE `+where+` AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500`,
 		args...,
 	)
 	if err != nil {
@@ -358,7 +358,7 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 		var r UsageRecord
 		var ts string
 		var success int
-		if err := recRows.Scan(&r.ID, &r.KeyID, &r.ToolName, &ts, &r.DurationMs, &success); err != nil {
+		if err := recRows.Scan(&r.ID, &r.KeyID, &r.ToolName, &ts, &r.DurationMs, &success, &r.DebugJSON); err != nil {
 			return nil, err
 		}
 		r.Success = success != 0

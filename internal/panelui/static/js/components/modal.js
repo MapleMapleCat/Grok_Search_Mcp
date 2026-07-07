@@ -14,8 +14,31 @@ export function renderModal() {
   if (state.modal.type === "edit-tier") return renderEditTierModal(state.modal.tier);
   if (state.modal.type === "user-usage") return renderUserUsageModal(state.modal.user, state.modal.usage);
   if (state.modal.type === "user-usage-logs") return renderUserUsageLogsModal(state.modal.user, state.modal.usage);
+  if (state.modal.type === "debug-json") return renderDebugJSONModal(state.modal.record);
   if (state.modal.type === "delete-confirm") return renderDeleteConfirmModal(state.modal);
   return "";
+}
+
+export function renderDebugJSONModal(record) {
+  if (!record) return "";
+  const requestID = `req_${String(record.id || "").padStart(8, "0").slice(-8)}`;
+  let formattedDebugJSON = String(record.debug_json || "{}");
+  try {
+    formattedDebugJSON = JSON.stringify(JSON.parse(formattedDebugJSON), null, 2);
+  } catch {
+    // Keep the raw debug payload when it is not valid JSON for any reason.
+  }
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal debug-json-modal" role="dialog" aria-modal="true" aria-label="Debug JSON" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>Debug JSON</h3>
+          <p>${escapeHTML(requestID)} full captured request and response payload.</p>
+          <pre class="debug-json-block"><code>${escapeHTML(formattedDebugJSON)}</code></pre>
+        </div>
+      </section>
+    </div>`;
 }
 
 export function renderCreateKeyModal() {

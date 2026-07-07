@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/grok-mcp/internal/auth"
@@ -47,9 +48,11 @@ func PeekToolName(r *http.Request) string {
 // responseRecorder 捕获 HTTP 状态码；SSE 流式响应仅保留最后一条 data 行用于判断 isError。
 type responseRecorder struct {
 	http.ResponseWriter
-	status      int
-	lastSSEData []byte
-	jsonCapture []byte
+	status            int
+	lastSSEData       []byte
+	jsonCapture       []byte
+	debugEnabled      bool
+	debugResponseBody []byte
 }
 
 const maxJSONCapture = 256 << 10
@@ -64,16 +67,25 @@ func (s *responseRecorder) Write(p []byte) (int, error) {
 		s.status = http.StatusOK
 	}
 	s.captureSSEData(p)
+	s.captureDebugResponse(p)
 	if len(s.lastSSEData) == 0 {
 		room := maxJSONCapture - len(s.jsonCapture)
 		if room > 0 {
-			if len(p) > room {
-				p = p[:room]
+			captureBytes := p
+			if len(captureBytes) > room {
+				captureBytes = captureBytes[:room]
 			}
-			s.jsonCapture = append(s.jsonCapture, p...)
+			s.jsonCapture = append(s.jsonCapture, captureBytes...)
 		}
 	}
 	return s.ResponseWriter.Write(p)
+}
+
+func (s *responseRecorder) captureDebugResponse(p []byte) {
+	if !s.debugEnabled || len(p) == 0 {
+		return
+	}
+	s.debugResponseBody = append(s.debugResponseBody, p...)
 }
 
 func (s *responseRecorder) captureSSEData(p []byte) {
@@ -123,9 +135,16 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 				return
 			}
 
+			debugEnabled := serverDebugEnabled(r.Context(), st)
+			var debugRequestBody []byte
+			var debugRequestBodyTruncated bool
+			if debugEnabled {
+				debugRequestBody, debugRequestBodyTruncated = captureAndRestoreRequestBody(r)
+			}
+
 			user, hasUser := auth.UserFromContext(r.Context())
 			start := time.Now()
-			rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+			rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK, debugEnabled: debugEnabled}
 
 			// recover 捕获 handler panic：将状态视为失败并执行 release 逻辑，
 			// 随后重新 panic 让 http.Server 在连接层处理（关闭连接）。
@@ -156,14 +175,102 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 				}
 			}
 			if writer != nil {
+				debugJSON := ""
+				if debugEnabled {
+					debugJSON = buildDebugJSON(r, key, user, hasUser, toolName, start, dur, success, rec, debugRequestBody, debugRequestBodyTruncated)
+				}
 				writer.Enqueue(store.UsageRecord{KeyID: key.ID, TouchKey: true})
 				writer.Enqueue(store.UsageRecord{
 					KeyID: key.ID, ToolName: toolName,
 					Timestamp: time.Now().UTC(), DurationMs: dur,
-					Success: success,
+					Success: success, DebugJSON: debugJSON,
 				})
 			}
 		})
+	}
+}
+
+func serverDebugEnabled(ctx context.Context, st store.Store) bool {
+	settings, err := st.GetServerSettings(ctx)
+	return err == nil && settings != nil && settings.Debug
+}
+
+func captureAndRestoreRequestBody(r *http.Request) ([]byte, bool) {
+	if r.Body == nil {
+		return nil, false
+	}
+	body, err := io.ReadAll(r.Body)
+	// Restore every byte already read plus the unread tail, so downstream MCP handling
+	// still receives the original request body.
+	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+	if err != nil {
+		return []byte("read request body failed: " + err.Error()), false
+	}
+	return body, false
+}
+
+func buildDebugJSON(r *http.Request, key *store.APIKey, user *store.User, hasUser bool, toolName string, startedAt time.Time, durationMs int64, success bool, rec *responseRecorder, requestBody []byte, requestBodyTruncated bool) string {
+	debugPayload := map[string]any{
+		"version":     1,
+		"captured_at": time.Now().UTC().Format(time.RFC3339Nano),
+		"auth": map[string]any{
+			"key_id":     key.ID,
+			"key_prefix": key.KeyPrefix,
+		},
+		"mcp": map[string]any{
+			"tool_name":   toolName,
+			"success":     success,
+			"duration_ms": durationMs,
+			"started_at":  startedAt.UTC().Format(time.RFC3339Nano),
+		},
+		"request": map[string]any{
+			"method":         r.Method,
+			"path":           r.URL.Path,
+			"query":          r.URL.RawQuery,
+			"remote_addr":    r.RemoteAddr,
+			"host":           r.Host,
+			"content_length": r.ContentLength,
+			"headers":        headerSnapshot(r.Header),
+			"body":           string(requestBody),
+			"body_truncated": requestBodyTruncated,
+		},
+		"response": map[string]any{
+			"status":         rec.status,
+			"headers":        headerSnapshot(rec.Header()),
+			"body":           string(rec.debugResponseBody),
+			"body_truncated": false,
+		},
+	}
+	if hasUser {
+		debugPayload["auth"].(map[string]any)["user_id"] = user.ID
+	}
+	body, err := json.MarshalIndent(debugPayload, "", "  ")
+	if err != nil {
+		return "{\"error\":\"failed to marshal debug payload\"}"
+	}
+	return string(body)
+}
+
+func headerSnapshot(headers http.Header) map[string][]string {
+	out := make(map[string][]string, len(headers))
+	for name, values := range headers {
+		copiedValues := append([]string(nil), values...)
+		if isSensitiveHeader(name) {
+			for index := range copiedValues {
+				copiedValues[index] = "[redacted]"
+			}
+		}
+		out[name] = copiedValues
+	}
+	return out
+}
+
+func isSensitiveHeader(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key":
+		return true
+	default:
+		return false
 	}
 }
 

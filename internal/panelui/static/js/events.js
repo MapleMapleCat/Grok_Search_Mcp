@@ -345,6 +345,8 @@ export async function onClick(event) {
     await openUserUsage(actionEl.dataset.userId);
   } else if (action === "view-user-usage-logs") {
     await viewUserUsageLogs(actionEl.dataset.userId);
+  } else if (action === "view-debug-json") {
+    openDebugJSONModal(actionEl.dataset.recordId);
   } else if (action === "logout") {
     clearSession();
     notify("已退出登录。", "success");
@@ -382,6 +384,15 @@ export function onInput(event) {
       next.setSelectionRange(next.value.length, next.value.length);
     }
   }
+}
+
+export function openDebugJSONModal(id) {
+  const modalUsageRecords = state.modal && state.modal.usage ? state.modal.usage.records || [] : [];
+  const records = [...(state.usage.records || []), ...modalUsageRecords];
+  const record = records.find((item) => String(item.id) === String(id));
+  if (!record || !record.debug_json) return;
+  state.modal = { type: "debug-json", record };
+  render();
 }
 
 export async function updateKeyEnabled(id, enabled) {

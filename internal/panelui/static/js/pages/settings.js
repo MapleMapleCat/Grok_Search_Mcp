@@ -93,8 +93,8 @@ export function renderServerSettings() {
 
           <div class="field-row">
             <span>
-              <strong>Debug Logging</strong>
-              <span class="hint" style="display: block;">启用上游请求调试日志。请避免在生产环境长期打开。</span>
+              <strong>Debug Request Capture</strong>
+              <span class="hint" style="display: block;">启用后完整捕获每次 MCP tools/call 的请求、响应和元数据，并在调用记录中查看 JSON。请避免在生产环境长期打开。</span>
             </span>
             <label class="toggle">
               <input type="checkbox" name="debug" ${debugEnabled ? "checked" : ""}>

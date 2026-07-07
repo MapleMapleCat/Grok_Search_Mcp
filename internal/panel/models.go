@@ -135,6 +135,7 @@ type UsageRecordDTO struct {
 	Timestamp  time.Time `json:"timestamp"`
 	DurationMs int64     `json:"duration_ms"`
 	Success    bool      `json:"success"`
+	DebugJSON  string    `json:"debug_json,omitempty"`
 }
 
 func toUserResponse(u *store.User) UserResponse {
@@ -210,6 +211,7 @@ func toUsageStatsResponse(s *store.UsageStats) UsageStatsResponse {
 		out.Records = append(out.Records, UsageRecordDTO{
 			ID: r.ID, KeyID: r.KeyID, ToolName: r.ToolName,
 			Timestamp: r.Timestamp, DurationMs: r.DurationMs, Success: r.Success,
+			DebugJSON: r.DebugJSON,
 		})
 	}
 	return out

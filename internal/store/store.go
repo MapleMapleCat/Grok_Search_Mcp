@@ -90,6 +90,8 @@ type UsageRecord struct {
 	Timestamp  time.Time
 	DurationMs int64
 	Success    bool
+	// DebugJSON 保存 debug 模式下捕获的完整调用上下文；为空表示该记录未开启 debug 捕获。
+	DebugJSON string
 	// TouchKey 为 true 时异步执行 TouchKeyUsage，不写 usage_log。
 	TouchKey bool
 }

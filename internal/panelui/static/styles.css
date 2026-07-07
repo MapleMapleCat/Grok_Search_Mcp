@@ -1374,6 +1374,25 @@ tbody tr:last-child td {
   width: min(100%, 1100px);
 }
 
+.debug-json-modal {
+  width: min(100%, 1000px);
+}
+
+.debug-json-block {
+  max-height: min(62vh, 720px);
+  overflow: auto;
+  margin: 20px 0 0;
+  padding: 16px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius);
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+}
+
 .confirm-icon {
   width: 52px;
   height: 52px;

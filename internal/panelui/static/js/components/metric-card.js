@@ -88,8 +88,9 @@ export function renderRecentActivity(records, compact, options = {}) {
   const showViewAllButton = options.showViewAllButton ?? compact;
   const showRequestIdColumn = options.showRequestIdColumn ?? true;
   const showLatencyColumn = options.showLatencyColumn ?? true;
+  const showDebugColumn = options.showDebugColumn ?? true;
   const useCompactTableLayout = Boolean(options.compactTable);
-  const visibleColumnCount = [true, showRequestIdColumn, true, showLatencyColumn, true].filter(Boolean).length;
+  const visibleColumnCount = [true, showRequestIdColumn, true, showLatencyColumn, true, showDebugColumn].filter(Boolean).length;
   const viewAllAction = options.viewAllAction || "go";
   const viewAllRoute = options.viewAllRoute || "usage";
   const viewAllLabel = options.viewAllLabel || "View All Logs";
@@ -118,10 +119,11 @@ export function renderRecentActivity(records, compact, options = {}) {
               <th class="activity-timestamp-column">TIMESTAMP</th>
               ${showLatencyColumn ? "<th>LATENCY</th>" : ""}
               <th class="activity-status-column right">STATUS</th>
+              ${showDebugColumn ? "<th class=\"activity-debug-column right\">DEBUG</th>" : ""}
             </tr>
           </thead>
           <tbody>
-            ${rows.length ? rows.map((record) => renderActivityRow(record, { showRequestIdColumn, showLatencyColumn })).join("") : renderEmptyRow("receipt_long", "No usage records", "MCP tools/call activity will appear here.", visibleColumnCount)}
+            ${rows.length ? rows.map((record) => renderActivityRow(record, { showRequestIdColumn, showLatencyColumn, showDebugColumn })).join("") : renderEmptyRow("receipt_long", "No usage records", "MCP tools/call activity will appear here.", visibleColumnCount)}
           </tbody>
         </table>
       </div>
@@ -131,6 +133,8 @@ export function renderRecentActivity(records, compact, options = {}) {
 export function renderActivityRow(record, options = {}) {
   const showRequestIdColumn = options.showRequestIdColumn ?? true;
   const showLatencyColumn = options.showLatencyColumn ?? true;
+  const showDebugColumn = options.showDebugColumn ?? true;
+  const hasDebugJSON = Boolean(record.debug_json);
   return `
     <tr>
       <td class="activity-tool-column mono" style="color: var(--primary);">${escapeHTML(record.tool_name || "unknown")}</td>
@@ -138,6 +142,7 @@ export function renderActivityRow(record, options = {}) {
       <td class="activity-timestamp-column">${relativeTime(record.timestamp)}</td>
       ${showLatencyColumn ? `<td>${record.duration_ms ? `${formatNumber(record.duration_ms)}ms` : "--"}</td>` : ""}
       <td class="activity-status-column right"><span class="badge ${record.success ? "" : "error"}">${record.success ? "Success" : "Failed"}</span></td>
+      ${showDebugColumn ? `<td class="activity-debug-column right">${hasDebugJSON ? `<button class="mini-icon" data-action="view-debug-json" data-record-id="${escapeAttr(record.id)}" title="View Debug JSON" type="button"><span class="material-symbols-outlined">data_object</span></button>` : `<span class="muted">--</span>`}</td>` : ""}
     </tr>`;
 }
 
