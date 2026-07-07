@@ -195,12 +195,27 @@ export async function submitEditTier(form) {
   }
 }
 
+export function openDeleteTierModal(id) {
+  const tier = state.tiers.find((item) => item.id === id);
+  if (!tier) return;
+  state.modal = {
+    type: "delete-confirm",
+    title: "Delete tier?",
+    message: `Delete tier "${tier.name}"?`,
+    detail: "Users must be reassigned before an in-use tier can be deleted.",
+    confirmLabel: "Delete Tier",
+    confirmAction: "confirm-delete-tier",
+    targetId: tier.id
+  };
+  render();
+}
+
 export async function deleteTier(id) {
   const tier = state.tiers.find((item) => item.id === id);
   if (!tier) return;
-  if (!window.confirm(`Delete tier "${tier.name}"?`)) return;
   try {
     await api(`/admin/tiers/${encodeURIComponent(id)}`, { method: "DELETE" });
+    state.modal = null;
     await loadTiers();
     notify("等级已删除。", "success");
     render();
@@ -210,12 +225,27 @@ export async function deleteTier(id) {
   }
 }
 
+export function openDeleteUserModal(id) {
+  const user = state.users.find((item) => item.id === id);
+  if (!user) return;
+  state.modal = {
+    type: "delete-confirm",
+    title: "Delete user?",
+    message: `Delete user "${user.username}"?`,
+    detail: "This will also delete this user's API keys and usage logs.",
+    confirmLabel: "Delete User",
+    confirmAction: "confirm-delete-user",
+    targetId: user.id
+  };
+  render();
+}
+
 export async function deleteUser(id) {
   const user = state.users.find((item) => item.id === id);
   if (!user) return;
-  if (!window.confirm(`Delete user "${user.username}"? This will also delete this user's API keys and usage logs.`)) return;
   try {
     await api(`/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+    state.modal = null;
     await loadUsers();
     notify("用户已删除。", "success");
     render();
@@ -253,7 +283,7 @@ export async function onClick(event) {
     state.modal = { type: "edit-key", key };
     render();
   } else if (action === "delete-key") {
-    await deleteKey(actionEl.dataset.keyId);
+    openDeleteKeyModal(actionEl.dataset.keyId);
   } else if (action === "key-usage") {
     state.selectedKeyID = actionEl.dataset.keyId || "all";
     navigate("usage");
@@ -262,7 +292,9 @@ export async function onClick(event) {
     state.modal = { type: "edit-user", user };
     render();
   } else if (action === "delete-user") {
-    await deleteUser(actionEl.dataset.userId);
+    openDeleteUserModal(actionEl.dataset.userId);
+  } else if (action === "confirm-delete-user") {
+    await deleteUser(actionEl.dataset.targetId);
   } else if (action === "open-create-tier") {
     state.modal = { type: "create-tier" };
     render();
@@ -271,7 +303,11 @@ export async function onClick(event) {
     state.modal = { type: "edit-tier", tier };
     render();
   } else if (action === "delete-tier") {
-    await deleteTier(actionEl.dataset.tierId);
+    openDeleteTierModal(actionEl.dataset.tierId);
+  } else if (action === "confirm-delete-tier") {
+    await deleteTier(actionEl.dataset.targetId);
+  } else if (action === "confirm-delete-key") {
+    await deleteKey(actionEl.dataset.targetId);
   } else if (action === "user-usage") {
     await openUserUsage(actionEl.dataset.userId);
   } else if (action === "logout") {
@@ -330,12 +366,27 @@ export async function updateKeyEnabled(id, enabled) {
   }
 }
 
+export function openDeleteKeyModal(id) {
+  const key = state.keys.find((item) => item.id === id);
+  if (!key) return;
+  state.modal = {
+    type: "delete-confirm",
+    title: "Delete API key?",
+    message: `Delete API key "${key.name || key.key_prefix}"?`,
+    detail: "MCP clients using this key will stop working immediately.",
+    confirmLabel: "Delete Key",
+    confirmAction: "confirm-delete-key",
+    targetId: key.id
+  };
+  render();
+}
+
 export async function deleteKey(id) {
   const key = state.keys.find((item) => item.id === id);
   if (!key) return;
-  if (!window.confirm(`Delete API key "${key.name || key.key_prefix}"?`)) return;
   try {
     await api(`/keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+    state.modal = null;
     await loadKeys();
     notify("Key 已删除。", "success");
     render();

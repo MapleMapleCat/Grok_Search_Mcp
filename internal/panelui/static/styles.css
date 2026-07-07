@@ -1258,6 +1258,30 @@ tbody tr:last-child td {
   margin-top: 24px;
 }
 
+.confirm-modal {
+  width: min(100%, 480px);
+}
+
+.confirm-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 16px;
+  border-radius: 999px;
+  background: var(--surface-high);
+  color: var(--primary);
+}
+
+.confirm-icon.danger {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.confirm-icon .material-symbols-outlined {
+  font-size: 28px;
+}
+
 .warning-box {
   display: flex;
   gap: 12px;
@@ -1267,6 +1291,10 @@ tbody tr:last-child td {
   border-radius: var(--radius);
   background: rgba(255, 218, 214, 0.45);
   color: var(--error);
+}
+
+.warning-box.compact {
+  margin: 18px 0 0;
 }
 
 .key-copy {

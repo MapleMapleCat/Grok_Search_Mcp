@@ -13,6 +13,7 @@ export function renderModal() {
   if (state.modal.type === "create-tier") return renderCreateTierModal();
   if (state.modal.type === "edit-tier") return renderEditTierModal(state.modal.tier);
   if (state.modal.type === "user-usage") return renderUserUsageModal(state.modal.user, state.modal.usage);
+  if (state.modal.type === "delete-confirm") return renderDeleteConfirmModal(state.modal);
   return "";
 }
 
@@ -175,6 +176,36 @@ export function renderUserUsageModal(user, usage) {
             ${metricCard("Success Calls", formatNumber(usage.success_calls), "check_circle", `${successPercent(usage)} success`, "good", null)}
           </div>
           ${renderRecentActivity(usage.records || [], true)}
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderDeleteConfirmModal(modal) {
+  const title = modal.title || "Confirm Delete";
+  const message = modal.message || "Are you sure you want to delete this item?";
+  const detail = modal.detail || "This action cannot be undone.";
+  const confirmLabel = modal.confirmLabel || "Delete";
+  const confirmAction = modal.confirmAction || "close-modal";
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal confirm-modal" role="alertdialog" aria-modal="true" aria-label="${escapeAttr(title)}" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <div class="confirm-icon danger"><span class="material-symbols-outlined">delete</span></div>
+          <h3>${escapeHTML(title)}</h3>
+          <p>${escapeHTML(message)}</p>
+          <div class="warning-box compact">
+            <span class="material-symbols-outlined">warning</span>
+            <div>
+              <strong>Dangerous action</strong>
+              <p>${escapeHTML(detail)}</p>
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+            <button class="button danger" data-action="${escapeAttr(confirmAction)}" data-target-id="${escapeAttr(modal.targetId || "")}" type="button"><span class="material-symbols-outlined">delete</span><span>${escapeHTML(confirmLabel)}</span></button>
+          </div>
         </div>
       </section>
     </div>`;
