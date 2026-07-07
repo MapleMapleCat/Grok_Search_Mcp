@@ -1055,6 +1055,11 @@ table {
 
 .compact-activity-table .activity-timestamp-column {
   width: auto;
+  text-align: center;
+}
+
+.compact-activity-table .activity-status-column {
+  padding-right: 28px;
 }
 
 th,
