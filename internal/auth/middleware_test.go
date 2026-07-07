@@ -70,23 +70,26 @@ func TestAPIKeyMiddleware(t *testing.T) {
 
 func TestAPIKeyMiddlewareRejectsInvalidDisabledKeyAndDisabledUser(t *testing.T) {
 	testCases := []struct {
-		name string
-		key  *store.APIKey
-		user *store.User
-		want int
+		name     string
+		key      *store.APIKey
+		user     *store.User
+		want     int
+		wantBody string
 	}{
-		{name: "unknown key", want: http.StatusForbidden},
+		{name: "unknown key", want: http.StatusForbidden, wantBody: "invalid API key"},
 		{
-			name: "disabled key",
-			key:  &store.APIKey{ID: "k-disabled", UserID: "u1", Enabled: false},
-			user: &store.User{ID: "u1", Enabled: true},
-			want: http.StatusForbidden,
+			name:     "disabled key",
+			key:      &store.APIKey{ID: "k-disabled", UserID: "u1", Enabled: false},
+			user:     &store.User{ID: "u1", Enabled: true},
+			want:     http.StatusForbidden,
+			wantBody: "API key disabled",
 		},
 		{
-			name: "disabled user",
-			key:  &store.APIKey{ID: "k-user-disabled", UserID: "u1", Enabled: true},
-			user: &store.User{ID: "u1", Enabled: false},
-			want: http.StatusForbidden,
+			name:     "disabled user",
+			key:      &store.APIKey{ID: "k-user-disabled", UserID: "u1", Enabled: true},
+			user:     &store.User{ID: "u1", Enabled: false},
+			want:     http.StatusForbidden,
+			wantBody: "user disabled",
 		},
 	}
 
@@ -112,6 +115,9 @@ func TestAPIKeyMiddlewareRejectsInvalidDisabledKeyAndDisabledUser(t *testing.T) 
 
 			if rec.Code != testCase.want {
 				t.Fatalf("status = %d, want %d", rec.Code, testCase.want)
+			}
+			if !strings.Contains(rec.Body.String(), testCase.wantBody) {
+				t.Fatalf("response body = %q, want it to contain %q", rec.Body.String(), testCase.wantBody)
 			}
 		})
 	}

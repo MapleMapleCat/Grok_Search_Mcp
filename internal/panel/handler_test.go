@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/grok-mcp/internal/auth"
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/store"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func panelTestServer(t *testing.T) (*httptest.Server, *store.SQLiteStore, *config.Config) {
@@ -27,9 +29,8 @@ func panelTestServerWithAuthProtector(t *testing.T, authProtector *AuthProtector
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	cfg := &config.Config{
-		JWTSecret:             "jwt-secret-must-be-at-least-32-bytes!",
-		DefaultUserRPM:        60,
-		PanelRegistrationMode: config.PanelRegistrationOpen,
+		JWTSecret:      "jwt-secret-must-be-at-least-32-bytes!",
+		DefaultUserRPM: 60,
 	}
 	h := &Handler{Store: st, Config: cfg, AuthProtector: authProtector}
 	mux := NewMux(h)
@@ -49,7 +50,7 @@ func withJWT(req *http.Request, jwt string) *http.Request {
 	return req
 }
 
-func TestRegisterFirstUserIsAdmin(t *testing.T) {
+func TestRegisterCreatesRegularUser(t *testing.T) {
 	ts, _, _ := panelTestServer(t)
 	defer ts.Close()
 
@@ -67,8 +68,8 @@ func TestRegisterFirstUserIsAdmin(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
 		t.Fatal(err)
 	}
-	if u.Role != store.RoleAdmin {
-		t.Fatalf("expected admin, got %s", u.Role)
+	if u.Role != store.RoleUser {
+		t.Fatalf("expected regular user, got %s", u.Role)
 	}
 }
 
@@ -141,55 +142,6 @@ func TestSecondUserIsNotAdmin(t *testing.T) {
 	resp.Body.Close()
 	if lr.User.Role != store.RoleUser {
 		t.Fatalf("expected user role, got %s", lr.User.Role)
-	}
-}
-
-func TestBootstrapOnlyRegistrationRejectsSecondSelfSignup(t *testing.T) {
-	ts, _, cfg := panelTestServer(t)
-	cfg.PanelRegistrationMode = config.PanelRegistrationBootstrapOnly
-	defer ts.Close()
-
-	firstUser := registerPanelUser(t, ts, "bootstrapadmin", "password123")
-	if firstUser.Role != store.RoleAdmin {
-		t.Fatalf("expected bootstrap user to be admin, got %s", firstUser.Role)
-	}
-
-	secondRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(`{"username":"blockeduser","password":"password123"}`))
-	secondResponse, err := http.DefaultClient.Do(secondRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer secondResponse.Body.Close()
-	if secondResponse.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected bootstrap-only mode to reject second registration with 403, got %d", secondResponse.StatusCode)
-	}
-}
-
-func TestBootstrapRegistrationRequiresSetupTokenWhenConfigured(t *testing.T) {
-	ts, _, cfg := panelTestServer(t)
-	cfg.PanelRegistrationMode = config.PanelRegistrationBootstrapOnly
-	cfg.SetupToken = "setup-secret"
-	defer ts.Close()
-
-	missingTokenRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(`{"username":"missingtoken","password":"password123"}`))
-	missingTokenResponse, err := http.DefaultClient.Do(missingTokenRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	missingTokenResponse.Body.Close()
-	if missingTokenResponse.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected missing setup token to return 403, got %d", missingTokenResponse.StatusCode)
-	}
-
-	validTokenRequestBody := `{"username":"withtoken","password":"password123","setup_token":"setup-secret"}`
-	validTokenRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(validTokenRequestBody))
-	validTokenResponse, err := http.DefaultClient.Do(validTokenRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer validTokenResponse.Body.Close()
-	if validTokenResponse.StatusCode != http.StatusCreated {
-		t.Fatalf("expected valid setup token registration to return 201, got %d", validTokenResponse.StatusCode)
 	}
 }
 
@@ -400,10 +352,10 @@ func TestKeyLifecycleOnlyReturnsRawKeyOnCreate(t *testing.T) {
 }
 
 func TestAdminRoutesRequireAdminRole(t *testing.T) {
-	ts, _, _ := panelTestServer(t)
+	ts, st, _ := panelTestServer(t)
 	defer ts.Close()
 
-	registerPanelUser(t, ts, "firstadmin", "password123")
+	createPanelAdminUser(t, st, "firstadmin", "password123")
 	registerPanelUser(t, ts, "plainuser", "password123")
 	loginResponse := loginPanelUser(t, ts, "plainuser", "password123")
 
@@ -420,10 +372,10 @@ func TestAdminRoutesRequireAdminRole(t *testing.T) {
 }
 
 func TestAdminRevokeTokensInvalidatesExistingJWT(t *testing.T) {
-	ts, _, _ := panelTestServer(t)
+	ts, st, _ := panelTestServer(t)
 	defer ts.Close()
 
-	registerPanelUser(t, ts, "tokenadmin", "password123")
+	createPanelAdminUser(t, st, "tokenadmin", "password123")
 	registerPanelUser(t, ts, "tokenuser", "password123")
 	adminLogin := loginPanelUser(t, ts, "tokenadmin", "password123")
 	userLogin := loginPanelUser(t, ts, "tokenuser", "password123")
@@ -468,6 +420,19 @@ func registerPanelUser(t *testing.T, ts *httptest.Server, username string, passw
 		t.Fatal(err)
 	}
 	return userResponse
+}
+
+func createPanelAdminUser(t *testing.T, st store.Store, username string, password string) UserResponse {
+	t.Helper()
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.CreateUser(context.Background(), username, string(passwordHash), store.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return toUserResponse(user)
 }
 
 func loginPanelUser(t *testing.T, ts *httptest.Server, username string, password string) LoginResponse {

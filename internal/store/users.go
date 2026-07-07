@@ -71,7 +71,7 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 	return s.GetUserByID(ctx, id)
 }
 
-// RegisterUser 插入新用户；若当前无用户则 role=admin，否则 role=user。全程在同一事务内完成。
+// RegisterUser 插入自助注册用户；自助注册始终创建普通用户，启动 bootstrap 负责创建管理员。
 // 限额由默认 tier0 决定，不再随用户保存。
 func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash string) (*User, error) {
 	username = strings.TrimSpace(username)
@@ -84,14 +84,6 @@ func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash s
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var count int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
-		return nil, err
-	}
-	role := RoleUser
-	if count == 0 {
-		role = RoleAdmin
-	}
 	id, err := randomID()
 	if err != nil {
 		return nil, err
@@ -102,7 +94,7 @@ func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash s
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, success_calls, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, 1, ?, 0, ?, ?)`,
-		id, username, passwordHash, string(role), tierID, now, now,
+		id, username, passwordHash, string(RoleUser), tierID, now, now,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {

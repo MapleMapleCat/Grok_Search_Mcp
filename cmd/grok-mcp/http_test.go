@@ -1,0 +1,73 @@
+package main
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/grok-mcp/internal/store"
+	"golang.org/x/crypto/bcrypt"
+)
+
+func TestEnsureBootstrapAdminCreatesAdminForEmptyStore(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "bootstrap.db")
+	sqliteStore, err := store.OpenSQLite(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqliteStore.Close()
+
+	credentials, err := ensureBootstrapAdmin(context.Background(), sqliteStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credentials == nil {
+		t.Fatalf("expected bootstrap credentials for an empty database")
+	}
+	if credentials.Username != bootstrapAdminUsername {
+		t.Fatalf("bootstrap username = %q, want %q", credentials.Username, bootstrapAdminUsername)
+	}
+	if len(credentials.Password) != 12 {
+		t.Fatalf("bootstrap password length = %d, want 12", len(credentials.Password))
+	}
+
+	adminUser, err := sqliteStore.GetUserByUsername(context.Background(), bootstrapAdminUsername)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adminUser == nil || adminUser.Role != store.RoleAdmin {
+		t.Fatalf("expected created admin user, got %+v", adminUser)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(adminUser.PasswordHash), []byte(credentials.Password)); err != nil {
+		t.Fatalf("bootstrap password does not match stored hash: %v", err)
+	}
+
+	secondCredentials, err := ensureBootstrapAdmin(context.Background(), sqliteStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondCredentials != nil {
+		t.Fatalf("expected no credentials when users already exist, got %+v", secondCredentials)
+	}
+}
+
+func TestEnsureBootstrapAdminSkipsNonEmptyStore(t *testing.T) {
+	storePath := filepath.Join(t.TempDir(), "bootstrap-non-empty.db")
+	sqliteStore, err := store.OpenSQLite(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqliteStore.Close()
+
+	if _, err := sqliteStore.CreateUser(context.Background(), "existing", "hash", store.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+
+	credentials, err := ensureBootstrapAdmin(context.Background(), sqliteStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credentials != nil {
+		t.Fatalf("expected no bootstrap credentials for non-empty database, got %+v", credentials)
+	}
+}

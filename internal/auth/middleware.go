@@ -69,15 +69,15 @@ func APIKeyMiddleware(resolver APIKeyResolver) func(http.Handler) http.Handler {
 				return
 			}
 			if key == nil {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				http.Error(w, "invalid API key", http.StatusForbidden)
 				return
 			}
 			if !key.Enabled {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				http.Error(w, "API key disabled", http.StatusForbidden)
 				return
 			}
 			if !user.Enabled {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				http.Error(w, "user disabled", http.StatusForbidden)
 				return
 			}
 

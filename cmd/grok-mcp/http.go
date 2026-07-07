@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"strings"
@@ -18,7 +20,15 @@ import (
 	"github.com/grok-mcp/internal/store"
 	"github.com/grok-mcp/internal/usage"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/crypto/bcrypt"
 )
+
+const bootstrapAdminUsername = "admin"
+
+type bootstrapAdminCredentials struct {
+	Username string
+	Password string
+}
 
 // runHTTP 启动 HTTP 模式：/mcp 为 MCP 端点，/panel 为管理面板 API。
 func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error {
@@ -27,6 +37,14 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
+
+	bootstrapCredentials, err := ensureBootstrapAdmin(ctx, st)
+	if err != nil {
+		return fmt.Errorf("bootstrap admin: %w", err)
+	}
+	if bootstrapCredentials != nil {
+		log.Printf("BOOTSTRAP ADMIN CREATED username=%s password=%s", bootstrapCredentials.Username, bootstrapCredentials.Password)
+	}
 
 	usageWriter := store.NewAsyncUsageWriter(st, 256)
 	defer usageWriter.Close()
@@ -104,6 +122,48 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 	case err := <-errCh:
 		return err
 	}
+}
+
+func ensureBootstrapAdmin(ctx context.Context, st store.Store) (*bootstrapAdminCredentials, error) {
+	userCount, err := st.CountUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count users: %w", err)
+	}
+	if userCount > 0 {
+		return nil, nil
+	}
+
+	password, err := randomBootstrapPassword(12)
+	if err != nil {
+		return nil, fmt.Errorf("generate password: %w", err)
+	}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	if err != nil {
+		return nil, fmt.Errorf("hash password: %w", err)
+	}
+	if _, err := st.CreateUser(ctx, bootstrapAdminUsername, string(passwordHash), store.RoleAdmin); err != nil {
+		return nil, fmt.Errorf("create admin user: %w", err)
+	}
+
+	return &bootstrapAdminCredentials{Username: bootstrapAdminUsername, Password: password}, nil
+}
+
+func randomBootstrapPassword(length int) (string, error) {
+	const passwordAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+	if length <= 0 {
+		return "", fmt.Errorf("password length must be positive")
+	}
+
+	passwordBytes := make([]byte, length)
+	maxIndex := big.NewInt(int64(len(passwordAlphabet)))
+	for index := range passwordBytes {
+		randomIndex, err := rand.Int(rand.Reader, maxIndex)
+		if err != nil {
+			return "", err
+		}
+		passwordBytes[index] = passwordAlphabet[randomIndex.Int64()]
+	}
+	return string(passwordBytes), nil
 }
 
 func securityHeadersMiddleware(next http.Handler) http.Handler {

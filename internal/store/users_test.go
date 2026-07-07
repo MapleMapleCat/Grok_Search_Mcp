@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestRegisterUserOnlyOneAdminUnderConcurrency(t *testing.T) {
+func TestRegisterUserCreatesOnlyRegularUsersUnderConcurrency(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 	const n = 16
@@ -45,8 +45,8 @@ func TestRegisterUserOnlyOneAdminUnderConcurrency(t *testing.T) {
 			admins++
 		}
 	}
-	if admins != 1 {
-		t.Fatalf("want exactly 1 admin got %d", admins)
+	if admins != 0 {
+		t.Fatalf("self-registration should not create admins, got %d", admins)
 	}
 }
 

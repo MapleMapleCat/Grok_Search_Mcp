@@ -1,7 +1,6 @@
 package panel
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -134,9 +133,6 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
-	if !h.allowSelfRegistration(w, r, req.SetupToken) {
-		return
-	}
 	username, err := validatePanelAuthCredentials(req.Username, req.Password)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -165,50 +161,11 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "registration failed")
 		return
 	}
-	if h.registrationMode() == config.PanelRegistrationBootstrapOnly && user.Role != store.RoleAdmin {
-		_ = h.Store.DeleteUser(r.Context(), user.ID)
-		writeError(w, http.StatusForbidden, "registration is disabled after bootstrap")
-		return
-	}
 	var tier *store.Tier
 	if user.TierID != "" {
 		tier, _ = h.Store.GetTierByID(r.Context(), user.TierID)
 	}
 	writeJSON(w, http.StatusCreated, toUserResponseWithTier(user, tier))
-}
-
-func (h *Handler) allowSelfRegistration(w http.ResponseWriter, r *http.Request, setupToken string) bool {
-	mode := h.registrationMode()
-	if mode == config.PanelRegistrationDisabled {
-		writeError(w, http.StatusForbidden, "registration is disabled")
-		return false
-	}
-	if h.Config != nil && h.Config.SetupToken != "" && subtle.ConstantTimeCompare([]byte(setupToken), []byte(h.Config.SetupToken)) != 1 {
-		writeError(w, http.StatusForbidden, "invalid setup token")
-		return false
-	}
-	if mode == config.PanelRegistrationOpen {
-		return true
-	}
-
-	userCount, err := h.Store.CountUsers(r.Context())
-	if err != nil {
-		log.Printf("count users before register failed: %v", err)
-		writeError(w, http.StatusInternalServerError, "registration failed")
-		return false
-	}
-	if userCount > 0 {
-		writeError(w, http.StatusForbidden, "registration is disabled after bootstrap")
-		return false
-	}
-	return true
-}
-
-func (h *Handler) registrationMode() string {
-	if h.Config == nil || strings.TrimSpace(h.Config.PanelRegistrationMode) == "" {
-		return config.PanelRegistrationBootstrapOnly
-	}
-	return strings.ToLower(strings.TrimSpace(h.Config.PanelRegistrationMode))
 }
 
 // dummyBcryptHash 是用于拉平登录时序的固定 bcrypt 哈希。

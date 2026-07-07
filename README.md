@@ -29,7 +29,7 @@ xAI / Grok
 ## 功能
 
 - Streamable HTTP MCP 端点：`/mcp`
-- 管理面板 API：`/panel/v1/*`（默认仅允许空库 bootstrap 首个管理员；登录开放；其他接口需 JWT；管理员接口需 `role=admin`）
+- 管理面板 API：`/panel/v1/*`（空库启动自动创建 `admin`；注册/登录开放；其他接口需 JWT；管理员接口需 `role=admin`）
 - 客户端 API Key 鉴权（Key 归属用户）
 - 按用户汇总的 RPM 与 success limit
 - SQLite 持久化 API Key 与调用明细
@@ -82,18 +82,14 @@ set +a
 - 管理面板前端：`http://127.0.0.1:8080/panel/`
 - 面板 API：`http://127.0.0.1:8080/panel/v1/*`
 
-### 3. Bootstrap 管理员、登录并创建客户端 API Key
+### 3. 获取自动初始化管理员、登录并创建客户端 API Key
 
-默认 `GROK_PANEL_REGISTRATION=bootstrap-only`：只允许空库注册首个管理员，后续用户请由管理员在面板中管理。如配置了 `GROK_SETUP_TOKEN`，注册请求还必须携带同名的 `setup_token` JSON 字段。
+空库首次启动时，服务会自动创建用户名为 `admin` 的管理员账号，并在控制台 / Docker 日志中输出一次性随机 12 位密码。请首次登录后尽快在面板中创建新的管理员或轮换凭据。
 
 ```bash
-curl -sS -X POST "http://127.0.0.1:8080/panel/v1/auth/register" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"you","password":"your-password"}'
-
 login_token="$(curl -sS -X POST "http://127.0.0.1:8080/panel/v1/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"you","password":"your-password"}' | jq -r '.token')"
+  -d '{"username":"admin","password":"password-from-startup-log"}' | jq -r '.token')"
 
 curl -sS -X POST "http://127.0.0.1:8080/panel/v1/keys" \
   -H "Authorization: Bearer ${login_token}" \
@@ -235,8 +231,6 @@ docker compose up -d --build
 |---|:---:|---|---|
 | `CPA_API_KEY` | 是 | 无 | 调用 CPA 的 Bearer Key |
 | `GROK_JWT_SECRET` | 是 | 无 | 面板 JWT HS256 签名密钥 |
-| `GROK_PANEL_REGISTRATION` | 否 | `bootstrap-only` | 自助注册策略：`bootstrap-only`、`open` 或 `disabled` |
-| `GROK_SETUP_TOKEN` | 否 | 无 | 设置后，注册请求必须携带匹配的 `setup_token` |
 | `GROK_DEFAULT_USER_RPM` | 否 | `60` | 内存限流器的兜底 RPM；用户实际 RPM 由 tier 决定 |
 | `GROK_MCP_IP_RPM` | 否 | `300` | `/mcp` API key 鉴权前按 TCP 来源 IP 限流的 RPM |
 | `CPA_BASE_URL` | 否 | `http://127.0.0.1:8317` | CPA 根地址，不含尾部 `/` |
@@ -334,7 +328,7 @@ PATCH  /panel/v1/admin/users/{id}
 GET    /panel/v1/admin/users/{id}/usage
 ```
 
-默认注册策略为 `bootstrap-only`：首个注册用户自动为 `admin`，空库初始化完成后自助注册会返回 403。若确需继续开放注册，可显式设置 `GROK_PANEL_REGISTRATION=open`；生产公网部署建议保留默认值，并可额外设置 `GROK_SETUP_TOKEN` 防止首个管理员被抢注。用户限额（`rpm`、`success_limit`）以 tier 为唯一来源，管理员通过 Tier Management 页维护 tier 预设，并在用户编辑页为用户指定 tier。
+空库启动时会自动创建 `admin` 管理员并在启动日志输出一次性随机 12 位密码；自助注册接口创建的用户始终为普通用户。用户限额（`rpm`、`success_limit`）以 tier 为唯一来源，管理员通过 Tier Management 页维护 tier 预设，并在用户编辑页为用户指定 tier。
 
 ## 代码结构
 

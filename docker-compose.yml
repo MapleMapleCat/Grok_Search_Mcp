@@ -20,8 +20,6 @@ services:
       GROK_JWT_SECRET: "${GROK_JWT_SECRET:?GROK_JWT_SECRET is required}"
       GROK_HTTP_ADDR: ":8080"
       GROK_DB_PATH: "/app/data/grok-mcp.db"
-      GROK_PANEL_REGISTRATION: "${GROK_PANEL_REGISTRATION:-bootstrap-only}"
-      GROK_SETUP_TOKEN: "${GROK_SETUP_TOKEN:-}"
       GROK_DEFAULT_USER_RPM: "${GROK_DEFAULT_USER_RPM:-60}"
       GROK_MCP_IP_RPM: "${GROK_MCP_IP_RPM:-300}"
       GROK_MODEL: "${GROK_MODEL:-grok-4.3}"
