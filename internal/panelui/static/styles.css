@@ -1262,6 +1262,10 @@ tbody tr:last-child td {
   width: min(100%, 480px);
 }
 
+.usage-logs-modal {
+  width: min(100%, 1100px);
+}
+
 .confirm-icon {
   width: 52px;
   height: 52px;

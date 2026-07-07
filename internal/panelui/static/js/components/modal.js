@@ -13,6 +13,7 @@ export function renderModal() {
   if (state.modal.type === "create-tier") return renderCreateTierModal();
   if (state.modal.type === "edit-tier") return renderEditTierModal(state.modal.tier);
   if (state.modal.type === "user-usage") return renderUserUsageModal(state.modal.user, state.modal.usage);
+  if (state.modal.type === "user-usage-logs") return renderUserUsageLogsModal(state.modal.user, state.modal.usage);
   if (state.modal.type === "delete-confirm") return renderDeleteConfirmModal(state.modal);
   return "";
 }
@@ -180,6 +181,25 @@ export function renderUserUsageModal(user, usage) {
             viewAllRoute: "",
             viewAllDataset: { userId: user.id }
           })}
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderUserUsageLogsModal(user, usage) {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal usage-logs-modal" role="dialog" aria-modal="true" aria-label="User Usage Logs" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>User Usage Logs</h3>
+          <p>${escapeHTML(user.username)} complete usage log view.</p>
+          <div class="grid metric-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 24px 0;">
+            ${metricCard("Total Calls", formatNumber(usage.total_calls), "data_usage", "All user keys", "good", null)}
+            ${metricCard("Success Calls", formatNumber(usage.success_calls), "check_circle", `${successPercent(usage)} success`, "good", null)}
+            ${metricCard("Failed Calls", formatNumber(Math.max(0, usage.total_calls - usage.success_calls)), "error", "Not counted as success quota", usage.total_calls === usage.success_calls ? "good" : "bad", null)}
+          </div>
+          ${renderRecentActivity(usage.records || [], false, { showViewAllButton: false })}
         </div>
       </section>
     </div>`;
