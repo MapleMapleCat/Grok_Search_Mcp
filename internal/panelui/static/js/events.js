@@ -1,5 +1,5 @@
 import { loadRouteData, render } from "../app.js";
-import { api, loadKeys, loadTiers, loadUsers } from "./api.js";
+import { api, loadKeys, loadServerSettings, loadTiers, loadUsers } from "./api.js";
 import { notify } from "./components/toast.js";
 import { navigate } from "./router.js";
 import { clearSession, state, storage } from "./state.js";
@@ -24,6 +24,8 @@ export async function onSubmit(event) {
     await submitCreateTier(form);
   } else if (form.id === "edit-tier-form") {
     await submitEditTier(form);
+  } else if (form.id === "server-settings-form") {
+    await submitServerSettings(form);
   }
 }
 
@@ -195,6 +197,33 @@ export async function submitEditTier(form) {
   }
 }
 
+export async function submitServerSettings(form) {
+  const data = new FormData(form);
+  const cpaAPIKey = String(data.get("cpa_api_key") || "").trim();
+  const body = {
+    cpa_base_url: String(data.get("cpa_base_url") || "").trim(),
+    model: String(data.get("model") || "").trim(),
+    timeout_seconds: Number(data.get("timeout_seconds") || 0),
+    proxy_url: String(data.get("proxy_url") || "").trim(),
+    proxy_enabled: data.get("proxy_enabled") === "on",
+    debug: data.get("debug") === "on"
+  };
+  if (cpaAPIKey !== "") {
+    body.cpa_api_key = cpaAPIKey;
+  }
+  try {
+    state.serverSettings = await api("/admin/settings", {
+      method: "PATCH",
+      body
+    });
+    notify("服务器设置已保存。", "success");
+    render();
+  } catch (err) {
+    notify(errorText(err), "error");
+    render();
+  }
+}
+
 export function openDeleteTierModal(id) {
   const tier = state.tiers.find((item) => item.id === id);
   if (!tier) return;
@@ -267,6 +296,10 @@ export async function onClick(event) {
     navigate(actionEl.dataset.route || "dashboard");
   } else if (action === "refresh") {
     await loadRouteData();
+    render();
+  } else if (action === "reload-server-settings") {
+    await loadServerSettings();
+    notify("服务器设置已刷新。", "success");
     render();
   } else if (action === "open-create-key") {
     state.modal = { type: "create-key" };

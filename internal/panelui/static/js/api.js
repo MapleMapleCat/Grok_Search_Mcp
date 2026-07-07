@@ -54,6 +54,10 @@ export async function loadTiers() {
   state.tiers = Array.isArray(data.tiers) ? data.tiers : [];
 }
 
+export async function loadServerSettings() {
+  state.serverSettings = await api("/admin/settings");
+}
+
 export async function loadAggregatedUsage(mode) {
   const since = sinceQuery(mode);
   const data = await api(`/usage${since}`);

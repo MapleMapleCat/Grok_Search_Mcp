@@ -15,6 +15,7 @@ export const state = {
   keys: [],
   users: [],
   tiers: [],
+  serverSettings: null,
   usage: emptyUsage(),
   selectedKeyID: "all",
   sinceMode: "24h",
@@ -28,6 +29,8 @@ export function clearSession() {
   state.user = null;
   state.keys = [];
   state.users = [];
+  state.tiers = [];
+  state.serverSettings = null;
   state.usage = emptyUsage();
   state.selectedKeyID = "all";
   removeStored(storage.token);

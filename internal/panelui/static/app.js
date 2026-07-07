@@ -1,4 +1,4 @@
-import { api, loadAggregatedUsage, loadKeys, loadTiers, loadUsageForSelection, loadUsers } from "./js/api.js";
+import { api, loadAggregatedUsage, loadKeys, loadServerSettings, loadTiers, loadUsageForSelection, loadUsers } from "./js/api.js";
 import { renderAuth } from "./js/components/forms.js";
 import { renderShell } from "./js/components/layout.js";
 import { renderLoading } from "./js/components/loading.js";
@@ -66,6 +66,8 @@ export async function loadRouteData() {
       await loadTiers();
     } else if (state.route === "tiers" && isAdmin()) {
       await loadTiers();
+    } else if (state.route === "settings" && isAdmin()) {
+      await loadServerSettings();
     }
   } catch (err) {
     handleAPIError(err);

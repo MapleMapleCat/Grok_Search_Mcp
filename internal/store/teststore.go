@@ -71,3 +71,8 @@ func (TestStore) GetGlobalStats(context.Context, time.Time) (*UsageStats, error)
 	return nil, nil
 }
 func (TestStore) TouchKeyUsage(context.Context, string) error { return nil }
+
+func (TestStore) GetServerSettings(context.Context) (*ServerSettings, error) { return nil, nil }
+func (TestStore) UpsertServerSettings(context.Context, ServerSettings) (*ServerSettings, error) {
+	return nil, nil
+}

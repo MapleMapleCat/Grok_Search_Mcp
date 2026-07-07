@@ -3,12 +3,13 @@ import { renderAccount } from "./pages/account.js";
 import { renderDashboard } from "./pages/dashboard.js";
 import { renderKeys } from "./pages/keys.js";
 import { renderTiers } from "./pages/tiers.js";
+import { renderServerSettings } from "./pages/settings.js";
 import { renderConfigurationTutorial } from "./pages/tutorial.js";
 import { renderUsage } from "./pages/usage.js";
 import { renderUsers } from "./pages/users.js";
 import { isAdmin, state } from "./state.js";
 
-export const routes = ["dashboard", "keys", "usage", "users", "tiers", "tutorial", "account"];
+export const routes = ["dashboard", "keys", "usage", "users", "tiers", "tutorial", "settings", "account"];
 
 export const routeMeta = {
   dashboard: { label: "Dashboard", icon: "dashboard" },
@@ -16,7 +17,8 @@ export const routeMeta = {
   usage: { label: "Usage Stats", icon: "bar_chart" },
   users: { label: "User Management", icon: "group", admin: true },
   tiers: { label: "Tier Management", icon: "workspace_premium", admin: true },
-  tutorial: { label: "Configuration Tutorial", icon: "menu_book", bottom: true },
+  tutorial: { label: "Configuration Tutorial", icon: "menu_book" },
+  settings: { label: "Server Settings", icon: "settings_applications", bottom: true, admin: true },
   account: { label: "Account Settings", icon: "settings", bottom: true }
 };
 
@@ -27,6 +29,7 @@ export function renderRoute() {
   if (state.route === "users") return renderUsers();
   if (state.route === "tiers") return renderTiers();
   if (state.route === "tutorial") return renderConfigurationTutorial();
+  if (state.route === "settings") return renderServerSettings();
   if (state.route === "account") return renderAccount();
   return renderDashboard();
 }

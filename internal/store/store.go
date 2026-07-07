@@ -102,6 +102,23 @@ type UsageStats struct {
 	Records      []UsageRecord
 }
 
+// ServerSettings stores runtime-tunable upstream configuration for the MCP
+// server. Secrets are persisted because the server must be able to reconnect to
+// the upstream gateway after a restart without exposing them back through the
+// panel API.
+type ServerSettings struct {
+	ID             string
+	CPABaseURL     string
+	CPAAPIKey      string
+	Model          string
+	TimeoutSeconds int
+	ProxyURL       string
+	ProxyEnabled   bool
+	Debug          bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
 // KeyUpdates 用于 PATCH 式更新密钥；指针字段为 nil 表示不修改该列。
 type KeyUpdates struct {
 	Name    *string
@@ -163,4 +180,7 @@ type Store interface {
 	GetUserUsageStats(ctx context.Context, userID string, since time.Time) (*UsageStats, error)
 	GetGlobalStats(ctx context.Context, since time.Time) (*UsageStats, error)
 	TouchKeyUsage(ctx context.Context, keyID string) error
+
+	GetServerSettings(ctx context.Context) (*ServerSettings, error)
+	UpsertServerSettings(ctx context.Context, settings ServerSettings) (*ServerSettings, error)
 }

@@ -43,12 +43,16 @@ type bootstrapAdminCredentials struct {
 }
 
 // runHTTP 启动 HTTP 模式：/mcp 为 MCP 端点，/panel 为管理面板 API。
-func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error {
+func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server, settingsApplier panel.ServerSettingsApplier) error {
 	st, err := store.OpenSQLite(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
+
+	if err := initializeServerSettings(ctx, st, cfg, settingsApplier); err != nil {
+		return fmt.Errorf("initialize server settings: %w", err)
+	}
 
 	bootstrapCredentials, err := ensureBootstrapAdmin(ctx, st)
 	if err != nil {
@@ -85,7 +89,7 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 	rootMux.Handle("/mcp/", mcpChain)
 	rootMux.Handle("/mcp", mcpChain)
 
-	panelHandler := &panel.Handler{Store: st, Config: cfg, AuthCache: authResolver}
+	panelHandler := &panel.Handler{Store: st, Config: cfg, SettingsApplier: settingsApplier, AuthCache: authResolver}
 	panelMux := panel.NewMux(panelHandler)
 	jwtSkip := map[string]struct{}{
 		"/panel/v1/auth/register": {},
@@ -134,6 +138,50 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server) error 
 	case err := <-errCh:
 		return err
 	}
+}
+
+func initializeServerSettings(ctx context.Context, st store.Store, cfg *config.Config, settingsApplier panel.ServerSettingsApplier) error {
+	storedSettings, err := st.GetServerSettings(ctx)
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+
+	settings := cfg.ServerSettings()
+	if storedSettings != nil {
+		settings = config.ServerSettings{
+			CPABaseURL:     storedSettings.CPABaseURL,
+			CPAAPIKey:      storedSettings.CPAAPIKey,
+			Model:          storedSettings.Model,
+			TimeoutSeconds: storedSettings.TimeoutSeconds,
+			ProxyURL:       storedSettings.ProxyURL,
+			ProxyEnabled:   storedSettings.ProxyEnabled,
+			Debug:          storedSettings.Debug,
+		}
+	}
+
+	normalizedSettings, err := config.NormalizeServerSettings(settings)
+	if err != nil {
+		return err
+	}
+	if _, err := st.UpsertServerSettings(ctx, store.ServerSettings{
+		CPABaseURL:     normalizedSettings.CPABaseURL,
+		CPAAPIKey:      normalizedSettings.CPAAPIKey,
+		Model:          normalizedSettings.Model,
+		TimeoutSeconds: normalizedSettings.TimeoutSeconds,
+		ProxyURL:       normalizedSettings.ProxyURL,
+		ProxyEnabled:   normalizedSettings.ProxyEnabled,
+		Debug:          normalizedSettings.Debug,
+	}); err != nil {
+		return fmt.Errorf("persist settings: %w", err)
+	}
+
+	cfg.ApplyServerSettings(normalizedSettings)
+	if settingsApplier != nil {
+		if err := settingsApplier.ApplyServerSettings(normalizedSettings); err != nil {
+			return fmt.Errorf("apply settings: %w", err)
+		}
+	}
+	return nil
 }
 
 func ensureBootstrapAdmin(ctx context.Context, st store.Store) (*bootstrapAdminCredentials, error) {

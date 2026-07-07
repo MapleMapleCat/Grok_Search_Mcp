@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -36,6 +37,21 @@ type Config struct {
 	JWTSecret      string
 	DefaultUserRPM int
 	MCPIPRPM       int
+	ProxyURL       string
+	ProxyEnabled   bool
+}
+
+// ServerSettings contains the runtime-tunable upstream settings exposed in the
+// admin panel. It intentionally excludes listener address, database path, and
+// JWT secret because changing those safely requires a process restart.
+type ServerSettings struct {
+	CPABaseURL     string
+	CPAAPIKey      string
+	Model          string
+	TimeoutSeconds int
+	ProxyURL       string
+	ProxyEnabled   bool
+	Debug          bool
 }
 
 // Load 读取并校验配置。
@@ -51,6 +67,8 @@ func Load() (*Config, error) {
 		JWTSecret:      strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
 		DefaultUserRPM: defaultLimiterRPM,
 		MCPIPRPM:       defaultMCPIPRPM,
+		ProxyURL:       strings.TrimSpace(os.Getenv("GROK_PROXY_URL")),
+		ProxyEnabled:   parseBoolEnv("GROK_PROXY_ENABLED"),
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("GROK_HTTP_TIMEOUT")); raw != "" {
@@ -87,6 +105,11 @@ func Load() (*Config, error) {
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("GROK_MODEL must not be empty")
 	}
+	serverSettings, err := NormalizeServerSettings(cfg.ServerSettings())
+	if err != nil {
+		return nil, err
+	}
+	cfg.ApplyServerSettings(serverSettings)
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("GROK_JWT_SECRET is required")
 	}
@@ -98,6 +121,80 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// ServerSettings returns the current runtime-tunable server settings.
+func (c *Config) ServerSettings() ServerSettings {
+	timeoutSeconds := int(c.Timeout / time.Second)
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = int(defaultTimeout / time.Second)
+	}
+	return ServerSettings{
+		CPABaseURL:     c.CPABaseURL,
+		CPAAPIKey:      c.CPAAPIKey,
+		Model:          c.Model,
+		TimeoutSeconds: timeoutSeconds,
+		ProxyURL:       c.ProxyURL,
+		ProxyEnabled:   c.ProxyEnabled,
+		Debug:          c.Debug,
+	}
+}
+
+// ApplyServerSettings updates the runtime-tunable fields on the config object.
+func (c *Config) ApplyServerSettings(settings ServerSettings) {
+	c.CPABaseURL = settings.CPABaseURL
+	c.CPAAPIKey = settings.CPAAPIKey
+	c.Model = settings.Model
+	c.Timeout = time.Duration(settings.TimeoutSeconds) * time.Second
+	c.ProxyURL = settings.ProxyURL
+	c.ProxyEnabled = settings.ProxyEnabled
+	c.Debug = settings.Debug
+}
+
+// NormalizeServerSettings trims, validates, and canonicalizes settings that can
+// be edited from the admin panel.
+func NormalizeServerSettings(settings ServerSettings) (ServerSettings, error) {
+	settings.CPABaseURL = strings.TrimRight(strings.TrimSpace(settings.CPABaseURL), "/")
+	settings.CPAAPIKey = strings.TrimSpace(settings.CPAAPIKey)
+	settings.Model = strings.TrimSpace(settings.Model)
+	settings.ProxyURL = strings.TrimSpace(settings.ProxyURL)
+
+	if settings.CPAAPIKey == "" {
+		return settings, fmt.Errorf("CPA_API_KEY is required")
+	}
+	if settings.CPABaseURL == "" {
+		return settings, fmt.Errorf("CPA_BASE_URL must not be empty")
+	}
+	if err := validateHTTPURL("CPA_BASE_URL", settings.CPABaseURL); err != nil {
+		return settings, err
+	}
+	if settings.Model == "" {
+		return settings, fmt.Errorf("GROK_MODEL must not be empty")
+	}
+	if settings.TimeoutSeconds <= 0 {
+		return settings, fmt.Errorf("GROK_HTTP_TIMEOUT must be a positive integer (seconds), got %d", settings.TimeoutSeconds)
+	}
+	if settings.ProxyEnabled {
+		if settings.ProxyURL == "" {
+			return settings, fmt.Errorf("GROK_PROXY_URL is required when proxy is enabled")
+		}
+		if err := validateHTTPURL("GROK_PROXY_URL", settings.ProxyURL); err != nil {
+			return settings, err
+		}
+	}
+
+	return settings, nil
+}
+
+func validateHTTPURL(name, rawURL string) error {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return fmt.Errorf("%s must be a valid http(s) URL", name)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("%s must use http or https", name)
+	}
+	return nil
 }
 
 func envOrDefault(key, fallback string) string {

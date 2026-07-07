@@ -18,10 +18,16 @@ import (
 
 // Handler 实现面板 API；路由由 NewMux 注册。
 type Handler struct {
-	Store         store.Store
-	Config        *config.Config
-	AuthCache     AuthCacheInvalidator // 可选；管理员变更用户/等级/密钥后清空 MCP 鉴权缓存
-	AuthProtector *AuthProtector       // 可选；未设置时使用内置面板登录/注册防护
+	Store           store.Store
+	Config          *config.Config
+	SettingsApplier ServerSettingsApplier // 可选；保存服务器设置后热更新上游客户端
+	AuthCache       AuthCacheInvalidator  // 可选；管理员变更用户/等级/密钥后清空 MCP 鉴权缓存
+	AuthProtector   *AuthProtector        // 可选；未设置时使用内置面板登录/注册防护
+}
+
+// ServerSettingsApplier 接收热更新后的上游连接设置。
+type ServerSettingsApplier interface {
+	ApplyServerSettings(config.ServerSettings) error
 }
 
 // NewMux 注册 /panel/v1 路由。鉴权分两层：
@@ -61,6 +67,8 @@ func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("POST /panel/v1/admin/tiers", h.adminCreateTier)
 	admin.HandleFunc("PATCH /panel/v1/admin/tiers/{id}", h.adminUpdateTier)
 	admin.HandleFunc("DELETE /panel/v1/admin/tiers/{id}", h.adminDeleteTier)
+	admin.HandleFunc("GET /panel/v1/admin/settings", h.adminGetServerSettings)
+	admin.HandleFunc("PATCH /panel/v1/admin/settings", h.adminUpdateServerSettings)
 	mux.Handle("/panel/v1/admin/", auth.RequireAdmin()(admin))
 }
 

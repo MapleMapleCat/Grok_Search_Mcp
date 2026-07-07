@@ -711,6 +711,73 @@ a {
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
 }
 
+.settings-card {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  padding: 20px;
+}
+
+.card-head-inline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.card-head-inline h3,
+.settings-card h3 {
+  margin: 0;
+  color: var(--on-surface);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.card-head-inline p,
+.settings-card p {
+  margin: 4px 0 0;
+  color: var(--on-surface-variant);
+}
+
+.settings-form {
+  gap: 20px;
+}
+
+.two-column-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.two-column-fields > span {
+  display: grid;
+  gap: 8px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.settings-summary-list {
+  gap: 16px;
+}
+
+.settings-summary-item {
+  grid-template-columns: 130px minmax(0, 1fr);
+}
+
+.settings-summary-item .mono {
+  overflow-wrap: anywhere;
+}
+
+.settings-warning-box {
+  margin-top: 4px;
+}
+
 .tutorial-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;

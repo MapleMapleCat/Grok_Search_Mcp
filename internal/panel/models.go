@@ -4,6 +4,7 @@ package panel
 import (
 	"time"
 
+	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/store"
 )
 
@@ -98,6 +99,28 @@ type UpdateTierRequest struct {
 	SuccessLimit *int    `json:"success_limit,omitempty"`
 }
 
+type ServerSettingsResponse struct {
+	CPABaseURL       string     `json:"cpa_base_url"`
+	CPAAPIKeySet     bool       `json:"cpa_api_key_set"`
+	CPAAPIKeyPreview string     `json:"cpa_api_key_preview,omitempty"`
+	Model            string     `json:"model"`
+	TimeoutSeconds   int        `json:"timeout_seconds"`
+	ProxyURL         string     `json:"proxy_url"`
+	ProxyEnabled     bool       `json:"proxy_enabled"`
+	Debug            bool       `json:"debug"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+}
+
+type UpdateServerSettingsRequest struct {
+	CPABaseURL     *string `json:"cpa_base_url,omitempty"`
+	CPAAPIKey      *string `json:"cpa_api_key,omitempty"`
+	Model          *string `json:"model,omitempty"`
+	TimeoutSeconds *int    `json:"timeout_seconds,omitempty"`
+	ProxyURL       *string `json:"proxy_url,omitempty"`
+	ProxyEnabled   *bool   `json:"proxy_enabled,omitempty"`
+	Debug          *bool   `json:"debug,omitempty"`
+}
+
 type UsageStatsResponse struct {
 	TotalCalls   int64            `json:"total_calls"`
 	SuccessCalls int64            `json:"success_calls"`
@@ -144,6 +167,31 @@ func toTierResponse(t *store.Tier, userCount int64) TierResponse {
 		RPM: t.RPM, SuccessLimit: t.SuccessLimit,
 		UserCount: userCount, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
+}
+
+func toServerSettingsResponse(settings config.ServerSettings, updatedAt *time.Time) ServerSettingsResponse {
+	apiKeyPreview := ""
+	if settings.CPAAPIKey != "" {
+		apiKeyPreview = maskSecret(settings.CPAAPIKey)
+	}
+	return ServerSettingsResponse{
+		CPABaseURL:       settings.CPABaseURL,
+		CPAAPIKeySet:     settings.CPAAPIKey != "",
+		CPAAPIKeyPreview: apiKeyPreview,
+		Model:            settings.Model,
+		TimeoutSeconds:   settings.TimeoutSeconds,
+		ProxyURL:         settings.ProxyURL,
+		ProxyEnabled:     settings.ProxyEnabled,
+		Debug:            settings.Debug,
+		UpdatedAt:        updatedAt,
+	}
+}
+
+func maskSecret(secret string) string {
+	if len(secret) <= 8 {
+		return "configured"
+	}
+	return secret[:4] + "..." + secret[len(secret)-4:]
 }
 
 func toKeyResponse(k *store.APIKey) KeyResponse {

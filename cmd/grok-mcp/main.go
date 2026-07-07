@@ -45,7 +45,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := runHTTP(ctx, cfg, server); err != nil {
+	if err := runHTTP(ctx, cfg, server, client); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

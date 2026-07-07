@@ -382,3 +382,110 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	stats.SuccessCalls = succCount
 	return stats, nil
 }
+
+const serverSettingsID = "default"
+
+func scanServerSettings(row interface {
+	Scan(dest ...any) error
+}) (*ServerSettings, error) {
+	var settings ServerSettings
+	var proxyEnabled int
+	var debug int
+	var createdAt string
+	var updatedAt string
+	err := row.Scan(
+		&settings.ID,
+		&settings.CPABaseURL,
+		&settings.CPAAPIKey,
+		&settings.Model,
+		&settings.TimeoutSeconds,
+		&settings.ProxyURL,
+		&proxyEnabled,
+		&debug,
+		&createdAt,
+		&updatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	settings.ProxyEnabled = proxyEnabled != 0
+	settings.Debug = debug != 0
+	var parseErr error
+	settings.CreatedAt, parseErr = parseTime(createdAt)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	settings.UpdatedAt, parseErr = parseTime(updatedAt)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	return &settings, nil
+}
+
+const serverSettingsColumns = `id, cpa_base_url, cpa_api_key, model, timeout_seconds, proxy_url, proxy_enabled, debug, created_at, updated_at`
+
+func (s *SQLiteStore) GetServerSettings(ctx context.Context) (*ServerSettings, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+serverSettingsColumns+` FROM server_settings WHERE id = ?`, serverSettingsID)
+	settings, err := scanServerSettings(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return settings, err
+}
+
+func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerSettings) (*ServerSettings, error) {
+	cpaBaseURL := strings.TrimSpace(settings.CPABaseURL)
+	cpaAPIKey := strings.TrimSpace(settings.CPAAPIKey)
+	model := strings.TrimSpace(settings.Model)
+	proxyURL := strings.TrimSpace(settings.ProxyURL)
+	if cpaBaseURL == "" {
+		return nil, fmt.Errorf("cpa_base_url is required")
+	}
+	if cpaAPIKey == "" {
+		return nil, fmt.Errorf("cpa_api_key is required")
+	}
+	if model == "" {
+		return nil, fmt.Errorf("model is required")
+	}
+	if settings.TimeoutSeconds <= 0 {
+		return nil, fmt.Errorf("timeout_seconds must be positive")
+	}
+
+	proxyEnabled := 0
+	if settings.ProxyEnabled {
+		proxyEnabled = 1
+	}
+	debug := 0
+	if settings.Debug {
+		debug = 1
+	}
+	now := formatTime(time.Now().UTC())
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO server_settings (
+			id, cpa_base_url, cpa_api_key, model, timeout_seconds, proxy_url, proxy_enabled, debug, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			cpa_base_url = excluded.cpa_base_url,
+			cpa_api_key = excluded.cpa_api_key,
+			model = excluded.model,
+			timeout_seconds = excluded.timeout_seconds,
+			proxy_url = excluded.proxy_url,
+			proxy_enabled = excluded.proxy_enabled,
+			debug = excluded.debug,
+			updated_at = excluded.updated_at`,
+		serverSettingsID,
+		cpaBaseURL,
+		cpaAPIKey,
+		model,
+		settings.TimeoutSeconds,
+		proxyURL,
+		proxyEnabled,
+		debug,
+		now,
+		now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("upsert server settings: %w", err)
+	}
+	return s.GetServerSettings(ctx)
+}
