@@ -81,6 +81,9 @@ export function renderToolUsage(usage) {
 export function renderRecentActivity(records, compact, options = {}) {
   const rows = filteredRecords(records || []).slice(0, compact ? 5 : 500);
   const showViewAllButton = options.showViewAllButton ?? compact;
+  const showRequestIdColumn = options.showRequestIdColumn ?? true;
+  const showLatencyColumn = options.showLatencyColumn ?? true;
+  const visibleColumnCount = [true, showRequestIdColumn, true, showLatencyColumn, true].filter(Boolean).length;
   const viewAllAction = options.viewAllAction || "go";
   const viewAllRoute = options.viewAllRoute || "usage";
   const viewAllLabel = options.viewAllLabel || "View All Logs";
@@ -104,35 +107,38 @@ export function renderRecentActivity(records, compact, options = {}) {
           <thead>
             <tr>
               <th>TOOL NAME</th>
-              <th>REQUEST ID</th>
+              ${showRequestIdColumn ? "<th>REQUEST ID</th>" : ""}
               <th>TIMESTAMP</th>
-              <th>LATENCY</th>
+              ${showLatencyColumn ? "<th>LATENCY</th>" : ""}
               <th class="right">STATUS</th>
             </tr>
           </thead>
           <tbody>
-            ${rows.length ? rows.map(renderActivityRow).join("") : renderEmptyRow("receipt_long", "No usage records", "MCP tools/call activity will appear here.")}
+            ${rows.length ? rows.map((record) => renderActivityRow(record, { showRequestIdColumn, showLatencyColumn })).join("") : renderEmptyRow("receipt_long", "No usage records", "MCP tools/call activity will appear here.", visibleColumnCount)}
           </tbody>
         </table>
       </div>
     </section>`;
 }
 
-export function renderActivityRow(record) {
+export function renderActivityRow(record, options = {}) {
+  const showRequestIdColumn = options.showRequestIdColumn ?? true;
+  const showLatencyColumn = options.showLatencyColumn ?? true;
   return `
     <tr>
       <td class="mono" style="color: var(--primary);">${escapeHTML(record.tool_name || "unknown")}</td>
-      <td class="muted">${escapeHTML(`req_${String(record.id || "").padStart(8, "0").slice(-8)}`)}</td>
+      ${showRequestIdColumn ? `<td class="muted">${escapeHTML(`req_${String(record.id || "").padStart(8, "0").slice(-8)}`)}</td>` : ""}
       <td>${relativeTime(record.timestamp)}</td>
-      <td>${record.duration_ms ? `${formatNumber(record.duration_ms)}ms` : "--"}</td>
+      ${showLatencyColumn ? `<td>${record.duration_ms ? `${formatNumber(record.duration_ms)}ms` : "--"}</td>` : ""}
       <td class="right"><span class="badge ${record.success ? "" : "error"}">${record.success ? "Success" : "Failed"}</span></td>
     </tr>`;
 }
 
-export function renderEmptyRow(icon, title, text) {
+export function renderEmptyRow(icon, title, text, columnCount = 5) {
+  const safeColumnCount = Math.max(1, Number(columnCount) || 5);
   return `
     <tr>
-      <td colspan="8">
+      <td colspan="${safeColumnCount}">
         <div class="empty">
           <div>
             <span class="material-symbols-outlined">${icon}</span>

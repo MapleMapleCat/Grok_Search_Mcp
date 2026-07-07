@@ -179,7 +179,9 @@ export function renderUserUsageModal(user, usage) {
           ${renderRecentActivity(usage.records || [], true, {
             viewAllAction: "view-user-usage-logs",
             viewAllRoute: "",
-            viewAllDataset: { userId: user.id }
+            viewAllDataset: { userId: user.id },
+            showRequestIdColumn: false,
+            showLatencyColumn: false
           })}
         </div>
       </section>
