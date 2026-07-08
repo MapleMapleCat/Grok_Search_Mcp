@@ -53,9 +53,12 @@ export function renderTiers() {
 }
 
 export function renderTierRow(tier) {
+  const shouldShowTierID = String(tier.name || "").toLowerCase() !== "tier0";
+  const tierIDHint = shouldShowTierID ? `<div class="hint mono">${escapeHTML(shortID(tier.id))}</div>` : "";
+
   return `
     <tr>
-      <td><strong>${escapeHTML(tier.name)}</strong><div class="hint mono">${escapeHTML(shortID(tier.id))}</div></td>
+      <td><strong>${escapeHTML(tier.name)}</strong>${tierIDHint}</td>
       <td><span class="badge off">L${tier.level}</span></td>
       <td class="mono">${rpmText(tier.rpm)}</td>
       <td class="mono">${limitText(tier.success_limit)}</td>
