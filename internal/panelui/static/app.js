@@ -79,9 +79,16 @@ export async function loadRouteData() {
 }
 
 function resetUsageActivityView(previousRoute, nextRoute) {
-  if (nextRoute === "usage" && previousRoute !== "usage") {
-    state.usageActivityCompact = true;
+  if (nextRoute !== "usage") {
+    state.expandUsageActivityOnNextUsageNavigation = false;
+    return;
   }
+
+  if (previousRoute !== "usage") {
+    state.usageActivityCompact = !state.expandUsageActivityOnNextUsageNavigation;
+  }
+
+  state.expandUsageActivityOnNextUsageNavigation = false;
 }
 
 export function render() {

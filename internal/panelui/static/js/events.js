@@ -341,7 +341,9 @@ export async function onClick(event) {
     state.authMode = actionEl.dataset.tab === "register" ? "register" : "login";
     render();
   } else if (action === "go") {
-    navigate(actionEl.dataset.route || "dashboard");
+    const nextRoute = actionEl.dataset.route || "dashboard";
+    state.expandUsageActivityOnNextUsageNavigation = nextRoute === "usage" && actionEl.dataset.expandUsageActivity === "true";
+    navigate(nextRoute);
   } else if (action === "refresh") {
     await loadRouteData();
     render();

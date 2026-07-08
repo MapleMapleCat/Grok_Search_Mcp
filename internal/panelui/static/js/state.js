@@ -20,6 +20,7 @@ export const state = {
   selectedKeyID: "all",
   sinceMode: "24h",
   usageActivityCompact: true,
+  expandUsageActivityOnNextUsageNavigation: false,
   search: "",
   modal: null,
   toast: null

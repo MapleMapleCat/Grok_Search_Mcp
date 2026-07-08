@@ -30,7 +30,9 @@ export function renderDashboard() {
       </div>
       ${renderToolUsage(usage)}
     </section>
-    ${renderRecentActivity(usage.records, true)}`;
+    ${renderRecentActivity(usage.records, true, {
+      viewAllDataset: { expandUsageActivity: "true" }
+    })}`;
 }
 
 function classifySuccessRateTone(successRate, totalCalls) {
