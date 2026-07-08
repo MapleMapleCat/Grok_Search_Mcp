@@ -71,15 +71,16 @@ func decodeModelsResponse(body io.Reader) ([]Model, error) {
 	return models, nil
 }
 
-// FilterGrokModels normalizes, deduplicates, and keeps only model IDs that
-// contain the "grok" keyword, case-insensitively.
+// FilterGrokModels normalizes, deduplicates, and keeps only Grok model IDs that
+// are suitable for search tools. Image/video generation models are excluded so
+// downstream clients do not offer unsupported model families for search calls.
 func FilterGrokModels(models []Model) []Model {
 	filteredModels := make([]Model, 0, len(models))
 	seenModelIDs := make(map[string]struct{}, len(models))
 
 	for _, model := range models {
 		modelID := strings.TrimSpace(model.ID)
-		if modelID == "" || !strings.Contains(strings.ToLower(modelID), "grok") {
+		if !isSearchModelID(modelID) {
 			continue
 		}
 		if _, alreadySeen := seenModelIDs[modelID]; alreadySeen {
@@ -91,4 +92,18 @@ func FilterGrokModels(models []Model) []Model {
 	}
 
 	return filteredModels
+}
+
+func isSearchModelID(modelID string) bool {
+	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
+	if normalizedModelID == "" {
+		return false
+	}
+	if !strings.Contains(normalizedModelID, "grok") {
+		return false
+	}
+	if strings.Contains(normalizedModelID, "imagine") || strings.Contains(normalizedModelID, "video") {
+		return false
+	}
+	return true
 }

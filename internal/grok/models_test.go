@@ -15,6 +15,10 @@ func TestFilterGrokModelsKeepsOnlyGrokModels(t *testing.T) {
 		{ID: "grok-4.3"},
 		{ID: " gpt-4 "},
 		{ID: "Grok-Beta"},
+		{ID: "grok-imagine-image"},
+		{ID: "GROK-IMAGINE-IMAGE"},
+		{ID: "grok-imagine-video-1.5-preview"},
+		{ID: "grok-video-preview"},
 		{ID: "   "},
 		{ID: "grok-4.3"},
 		{ID: "custom-grok-search"},
@@ -41,7 +45,7 @@ func TestListModelsCallsUpstreamAndFiltersGrokModels(t *testing.T) {
 			t.Fatalf("Authorization = %q, want %q", authorization, "Bearer test-key")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"grok-4.3"},{"id":"gpt-4"},{"id":" Grok-Beta "},{"id":"grok-4.3"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"grok-4.3"},{"id":"gpt-4"},{"id":" Grok-Beta "},{"id":"grok-imagine-image"},{"id":"grok-imagine-video"},{"id":"grok-video-preview"},{"id":"grok-4.3"}]}`))
 	}))
 	defer server.Close()
 

@@ -498,6 +498,9 @@ func TestAdminListModelsFiltersNonGrokModels(t *testing.T) {
 		{ID: "grok-4.3"},
 		{ID: "claude-3"},
 		{ID: " Grok-Beta "},
+		{ID: "grok-imagine-image"},
+		{ID: "grok-imagine-video"},
+		{ID: "grok-video-preview"},
 		{ID: "grok-4.3"},
 	}}
 	ts, st, _ := panelTestServerWithModelLister(t, modelLister)

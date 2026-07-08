@@ -33,7 +33,7 @@ const (
 	listModelsToolTitle       = "Grok List Models"
 	listModelsToolDescription = "List Grok models available from upstream CPA " +
 		"/v1/models. The server filters the upstream response and exposes only " +
-		"model IDs that contain the grok keyword."
+		"model IDs that contain the grok keyword and do not contain imagine or video."
 )
 
 // WebSearchInput 为 grok_web_search 的 JSON 入参，字段名与 jsonschema 标签供客户端生成表单。
@@ -66,7 +66,7 @@ type SearchOutput struct {
 
 // ListModelsOutput 为模型列表工具成功时的结构化返回。
 type ListModelsOutput struct {
-	Models []grok.Model `json:"models,omitempty" jsonschema:"Available Grok model IDs filtered by the grok keyword"`
+	Models []grok.Model `json:"models,omitempty" jsonschema:"Available Grok model IDs filtered by the grok keyword while excluding imagine/video models"`
 }
 
 // RegisterTools 在 MCP Server 上注册模型列表、网页搜索与 X 搜索工具。

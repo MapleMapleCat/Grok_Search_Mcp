@@ -25,6 +25,8 @@ func TestServerInstructionsDocumentSearchToolUsage(t *testing.T) {
 		"query is required",
 		"model is optional",
 		"grok keyword",
+		"imagine",
+		"video",
 		"allowed_domains",
 		"excluded_domains",
 		"Do not provide allowed_domains and excluded_domains together",
@@ -100,7 +102,7 @@ func TestNewListModelsToolMetadata(t *testing.T) {
 	if tool.Title != listModelsToolTitle {
 		t.Fatalf("Title = %q, want %q", tool.Title, listModelsToolTitle)
 	}
-	if !strings.Contains(tool.Description, "grok keyword") {
+	if !strings.Contains(tool.Description, "grok keyword") || !strings.Contains(tool.Description, "imagine or video") {
 		t.Fatalf("Description must mention Grok keyword filtering; description=%q", tool.Description)
 	}
 	if tool.Annotations == nil {
@@ -378,7 +380,7 @@ func TestRunListModelsReturnsOnlyFilteredGrokModels(t *testing.T) {
 			t.Fatalf("Authorization = %q, want %q", authorization, "Bearer test-cpa-key")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"grok-4.3"},{"id":"gpt-4"},{"id":" Grok-Beta "},{"id":"grok-4.3"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"grok-4.3"},{"id":"gpt-4"},{"id":" Grok-Beta "},{"id":"grok-imagine-image"},{"id":"grok-imagine-video"},{"id":"grok-video-preview"},{"id":"grok-4.3"}]}`))
 	}))
 	defer server.Close()
 
