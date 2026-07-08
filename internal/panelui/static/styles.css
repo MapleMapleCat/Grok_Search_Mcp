@@ -1428,7 +1428,6 @@ summary.debug-json-panel-head {
   flex-direction: column;
   align-items: flex-end;
   justify-content: space-between;
-  padding-bottom: 18px;
   color: var(--on-surface-variant);
   font-family: var(--mono);
   font-size: 12px;
@@ -1445,7 +1444,7 @@ summary.debug-json-panel-head {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 32px 12px 0;
+  padding: 0 12px;
   border-bottom: 1px solid var(--outline-variant);
   border-left: 1px solid var(--outline-variant);
 }
@@ -1455,9 +1454,9 @@ summary.debug-json-panel-head {
   inset: 0 0 0 0;
   content: "";
   background:
-    linear-gradient(to bottom, transparent 24%, var(--surface-highest) 24%, transparent calc(24% + 1px)),
-    linear-gradient(to bottom, transparent 49%, var(--surface-highest) 49%, transparent calc(49% + 1px)),
-    linear-gradient(to bottom, transparent 74%, var(--surface-highest) 74%, transparent calc(74% + 1px));
+    linear-gradient(to bottom, transparent 25%, var(--surface-highest) 25%, transparent calc(25% + 1px)),
+    linear-gradient(to bottom, transparent 50%, var(--surface-highest) 50%, transparent calc(50% + 1px)),
+    linear-gradient(to bottom, transparent 75%, var(--surface-highest) 75%, transparent calc(75% + 1px));
   opacity: 0.68;
   pointer-events: none;
 }

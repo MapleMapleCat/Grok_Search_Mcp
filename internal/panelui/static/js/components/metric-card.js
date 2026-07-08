@@ -77,7 +77,7 @@ function createBarHeightPercent(value, maximumValue) {
   if (safeValue <= 0) {
     return 0;
   }
-  return Math.max(8, Math.round((safeValue / Math.max(1, maximumValue)) * 92));
+  return clamp(Math.round((safeValue / Math.max(1, maximumValue)) * 100), 0, 100);
 }
 
 function createChartTimeLabels(mode, records = []) {
