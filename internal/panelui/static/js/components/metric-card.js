@@ -1,5 +1,5 @@
 import { filteredRecords } from "../state.js";
-import { bucketRecords, clamp, escapeAttr, escapeHTML, formatNumber, percentOf, relativeTime, trimToolName } from "../utils.js";
+import { bucketRecords, clamp, escapeAttr, escapeHTML, formatDate, formatNumber, percentOf, relativeTime, trimToolName } from "../utils.js";
 
 const DEFAULT_ACTIVITY_PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 
@@ -44,11 +44,12 @@ export function renderDashboardAlert(alert) {
 }
 
 export function renderBars(records, mode = "24h") {
-  const buckets = bucketRecords(records || [], mode);
+  const sourceRecords = records || [];
+  const buckets = bucketRecords(sourceRecords, mode);
   const maximumBucketValue = Math.max(0, ...buckets);
   const verticalAxisValues = createChartAxisValues(maximumBucketValue);
   const verticalAxisMaximum = verticalAxisValues[0] || 1;
-  const horizontalAxisLabels = createChartTimeLabels(mode);
+  const horizontalAxisLabels = createChartTimeLabels(mode, sourceRecords);
 
   return `
     <div class="bar-chart-shell" role="img" aria-label="流量柱状图">
@@ -79,14 +80,31 @@ function createBarHeightPercent(value, maximumValue) {
   return Math.max(8, Math.round((safeValue / Math.max(1, maximumValue)) * 92));
 }
 
-function createChartTimeLabels(mode) {
+function createChartTimeLabels(mode, records = []) {
   if (mode === "7d") {
     return ["7d ago", "5d ago", "3d ago", "1d ago", "Now"];
   }
   if (mode === "all") {
-    return ["Oldest", "25%", "50%", "75%", "Now"];
+    return createAllTimeChartDateLabels(records);
   }
   return ["24h ago", "18h ago", "12h ago", "6h ago", "Now"];
+}
+
+function createAllTimeChartDateLabels(records) {
+  const now = Date.now();
+  const historicalTimestamps = (records || [])
+    .map((record) => new Date(record.timestamp).getTime())
+    .filter((timestamp) => Number.isFinite(timestamp) && timestamp <= now);
+  const oneDayInMilliseconds = 24 * 60 * 60 * 1000;
+  const oldestTimestamp = historicalTimestamps.length ? Math.min(...historicalTimestamps) : now - oneDayInMilliseconds;
+  const chartStartTimestamp = oldestTimestamp < now ? oldestTimestamp : now - oneDayInMilliseconds;
+  const chartEndTimestamp = now;
+  const chartDuration = Math.max(1, chartEndTimestamp - chartStartTimestamp);
+
+  return [0, 0.25, 0.5, 0.75, 1].map((datePositionRatio) => {
+    const labelTimestamp = chartStartTimestamp + chartDuration * datePositionRatio;
+    return formatDate(new Date(labelTimestamp));
+  });
 }
 
 export function renderToolUsage(usage) {
