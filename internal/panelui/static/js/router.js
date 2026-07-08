@@ -18,7 +18,7 @@ export const routeMeta = {
   users: { label: "User Management", icon: "group", admin: true, hideWhenUnauthorized: true },
   tiers: { label: "Tier Management", icon: "workspace_premium", admin: true, hideWhenUnauthorized: true },
   tutorial: { label: "Configuration Tutorial", icon: "menu_book" },
-  settings: { label: "Server Settings", icon: "settings_applications", bottom: true, admin: true },
+  settings: { label: "Server Settings", icon: "settings_applications", bottom: true, admin: true, hideWhenUnauthorized: true },
   account: { label: "Account Settings", icon: "settings", bottom: true }
 };
 
