@@ -15,12 +15,17 @@ export const routeMeta = {
   dashboard: { label: "Dashboard", icon: "dashboard" },
   keys: { label: "Keys", icon: "vpn_key" },
   usage: { label: "Usage Stats", icon: "bar_chart" },
-  users: { label: "User Management", icon: "group", admin: true },
-  tiers: { label: "Tier Management", icon: "workspace_premium", admin: true },
+  users: { label: "User Management", icon: "group", admin: true, hideWhenUnauthorized: true },
+  tiers: { label: "Tier Management", icon: "workspace_premium", admin: true, hideWhenUnauthorized: true },
   tutorial: { label: "Configuration Tutorial", icon: "menu_book" },
   settings: { label: "Server Settings", icon: "settings_applications", bottom: true, admin: true },
   account: { label: "Account Settings", icon: "settings", bottom: true }
 };
+
+export function isRouteVisibleInNavigation(route) {
+  const meta = routeMeta[route];
+  return !(meta.hideWhenUnauthorized && !isAdmin());
+}
 
 export function renderRoute() {
   if (state.route === "dashboard") return renderDashboard();

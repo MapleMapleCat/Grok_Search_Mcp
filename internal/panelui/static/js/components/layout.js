@@ -1,5 +1,5 @@
 import { renderInlineLoading } from "./loading.js";
-import { renderRoute, routeMeta, routes } from "../router.js";
+import { isRouteVisibleInNavigation, renderRoute, routeMeta, routes } from "../router.js";
 import { isAdmin, state } from "../state.js";
 import { escapeHTML, initials } from "../utils.js";
 
@@ -29,8 +29,9 @@ export function renderShell() {
 }
 
 export function renderSidebar() {
-  const top = routes.filter((route) => !routeMeta[route].bottom).map(renderNavLink).join("");
-  const bottom = routes.filter((route) => routeMeta[route].bottom).map(renderNavLink).join("");
+  const visibleRoutes = routes.filter(isRouteVisibleInNavigation);
+  const top = visibleRoutes.filter((route) => !routeMeta[route].bottom).map(renderNavLink).join("");
+  const bottom = visibleRoutes.filter((route) => routeMeta[route].bottom).map(renderNavLink).join("");
   return `
     <aside class="sidebar">
       <div class="brand">
