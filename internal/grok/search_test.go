@@ -149,7 +149,7 @@ func TestSearchStreamValidateSearchRequestErrors(t *testing.T) {
 			req: grok.SearchRequest{
 				Query:    "test",
 				ToolType: grok.ToolTypeWebSearch,
-				Model:    "grok-evil",
+				Model:    "gpt-4",
 			},
 			want: "unsupported model",
 		},

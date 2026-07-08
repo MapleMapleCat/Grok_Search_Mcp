@@ -5,18 +5,13 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
+
+	"github.com/grok-mcp/internal/config"
 )
 
-// allowedModels 为可透传至 CPA 的模型白名单；用户指定的 model 与默认模型均须命中。
-var allowedModels = map[string]struct{}{
-	"grok-4.3": {},
-}
-
+// validateModel 委托给 config.ValidateModel，确保请求时与面板保存时使用同一校验规则。
 func validateModel(model string) error {
-	if _, ok := allowedModels[model]; !ok {
-		return fmt.Errorf("unsupported model: %q", model)
-	}
-	return nil
+	return config.ValidateModel(model)
 }
 
 // validateSearchRequest 校验查询、工具类型，以及 web_search 域名过滤参数的互斥与数量上限。

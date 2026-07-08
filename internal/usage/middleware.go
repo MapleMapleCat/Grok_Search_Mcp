@@ -64,14 +64,19 @@ func writeJSONRPCBatchUnsupported(w http.ResponseWriter) {
 // responseRecorder 捕获 HTTP 状态码；SSE 流式响应仅保留最后一条 data 行用于判断 isError。
 type responseRecorder struct {
 	http.ResponseWriter
-	status            int
-	lastSSEData       []byte
-	jsonCapture       []byte
-	debugEnabled      bool
-	debugResponseBody []byte
+	status                 int
+	lastSSEData            []byte
+	jsonCapture            []byte
+	debugEnabled           bool
+	debugResponseBody      []byte
+	debugResponseTruncated bool
 }
 
 const maxJSONCapture = 256 << 10
+
+// maxDebugResponseBody 限制 debug 模式下缓存的响应体大小（10 MiB），
+// 避免上游返回超大 SSE 流时内存无限增长。
+const maxDebugResponseBody = 10 << 20
 
 func (s *responseRecorder) WriteHeader(code int) {
 	s.status = code
@@ -99,6 +104,16 @@ func (s *responseRecorder) Write(p []byte) (int, error) {
 
 func (s *responseRecorder) captureDebugResponse(p []byte) {
 	if !s.debugEnabled || len(p) == 0 {
+		return
+	}
+	room := maxDebugResponseBody - len(s.debugResponseBody)
+	if room <= 0 {
+		s.debugResponseTruncated = true
+		return
+	}
+	if len(p) > room {
+		s.debugResponseBody = append(s.debugResponseBody, p[:room]...)
+		s.debugResponseTruncated = true
 		return
 	}
 	s.debugResponseBody = append(s.debugResponseBody, p...)
@@ -254,7 +269,7 @@ func buildDebugJSON(r *http.Request, key *store.APIKey, user *store.User, hasUse
 			"status":         rec.status,
 			"headers":        headerSnapshot(rec.Header()),
 			"body":           string(rec.debugResponseBody),
-			"body_truncated": false,
+			"body_truncated": rec.debugResponseTruncated,
 		},
 	}
 	if hasUser {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -201,10 +202,38 @@ func ensureBootstrapAdmin(ctx context.Context, st store.Store) (*bootstrapAdminC
 	if err != nil {
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
+
 	if _, err := st.CreateUser(ctx, bootstrapAdminUsername, string(passwordHash), store.RoleAdmin); err != nil {
+		if errors.Is(err, store.ErrUsernameTaken) {
+			return promoteExistingBootstrapAdmin(ctx, st, string(passwordHash), password)
+		}
 		return nil, fmt.Errorf("create admin user: %w", err)
 	}
 
+	return &bootstrapAdminCredentials{Username: bootstrapAdminUsername, Password: password}, nil
+}
+
+// promoteExistingBootstrapAdmin 在 "admin" 用户名已被普通用户占用时，
+// 将其提升为启用状态的管理员并重置密码，返回新的凭证。
+func promoteExistingBootstrapAdmin(ctx context.Context, st store.Store, passwordHash, password string) (*bootstrapAdminCredentials, error) {
+	existingUser, err := st.GetUserByUsername(ctx, bootstrapAdminUsername)
+	if err != nil {
+		return nil, fmt.Errorf("lookup existing admin user: %w", err)
+	}
+	if existingUser == nil {
+		return nil, fmt.Errorf("username taken but user not found")
+	}
+	enabled := true
+	adminRole := store.RoleAdmin
+	revokeTokens := true
+	if _, err := st.UpdateUser(ctx, existingUser.ID, store.UserUpdates{
+		Enabled:      &enabled,
+		Role:         &adminRole,
+		PasswordHash: &passwordHash,
+		RevokeTokens: &revokeTokens,
+	}); err != nil {
+		return nil, fmt.Errorf("promote existing admin: %w", err)
+	}
 	return &bootstrapAdminCredentials{Username: bootstrapAdminUsername, Password: password}, nil
 }
 

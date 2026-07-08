@@ -171,6 +171,9 @@ func NormalizeServerSettings(settings ServerSettings) (ServerSettings, error) {
 	if settings.Model == "" {
 		return settings, fmt.Errorf("GROK_MODEL must not be empty")
 	}
+	if err := ValidateModel(settings.Model); err != nil {
+		return settings, err
+	}
 	if settings.TimeoutSeconds <= 0 {
 		return settings, fmt.Errorf("GROK_HTTP_TIMEOUT must be a positive integer (seconds), got %d", settings.TimeoutSeconds)
 	}
@@ -184,6 +187,16 @@ func NormalizeServerSettings(settings ServerSettings) (ServerSettings, error) {
 	}
 
 	return settings, nil
+}
+
+// ValidateModel 校验模型名是否合法：只需包含 "grok"（不区分大小写）即可。
+// 供 config.NormalizeServerSettings 与 grok.validateModel 共享同一规则，
+// 避免面板保存的模型名在请求时被 grok 层拒绝导致全部搜索不可用。
+func ValidateModel(model string) error {
+	if !strings.Contains(strings.ToLower(model), "grok") {
+		return fmt.Errorf("unsupported model: %q (must contain 'grok')", model)
+	}
+	return nil
 }
 
 func validateHTTPURL(name, rawURL string) error {

@@ -190,6 +190,15 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		sets = append(sets, "tier_id = ?")
 		args = append(args, nullableString(*updates.TierID))
 	}
+	if updates.PasswordHash != nil {
+		passwordHash := strings.TrimSpace(*updates.PasswordHash)
+		if passwordHash == "" {
+			return nil, fmt.Errorf("password_hash must not be empty")
+		}
+		sets = append(sets, "password_hash = ?")
+		args = append(args, passwordHash)
+		bumpTokenVersion = true
+	}
 	if updates.RevokeTokens != nil && *updates.RevokeTokens {
 		bumpTokenVersion = true
 	}

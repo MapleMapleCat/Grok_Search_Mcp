@@ -13,6 +13,7 @@ import (
 const testSecret = "jwt-secret-must-be-at-least-32-bytes!"
 
 // jwtTestStore 打开一个临时 SQLite 库并预置一名 admin 用户。
+// 同时创建第二个 admin 作为备份，使"降级/禁用首个 admin"的测试不会触发 ErrLastAdmin 守卫。
 func jwtTestStore(t *testing.T) (*store.SQLiteStore, *store.User) {
 	t.Helper()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "jwt.db"))
@@ -23,6 +24,9 @@ func jwtTestStore(t *testing.T) (*store.SQLiteStore, *store.User) {
 
 	user, err := st.CreateUser(t.Context(), "admin", "hash", store.RoleAdmin)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUser(t.Context(), "backup-admin", "hash", store.RoleAdmin); err != nil {
 		t.Fatal(err)
 	}
 	return st, user

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,13 +14,18 @@ import (
 	"github.com/grok-mcp/internal/store"
 )
 
+// fakeStore 的 touched/lastID 字段会被 AsyncUsageWriter 后台 goroutine 写入、
+// 测试主 goroutine 读取，因此用 mutex 保护以避免数据竞争。
 type fakeStore struct {
 	store.TestStore
+	mu      sync.Mutex
 	touched int
 	lastID  string
 }
 
 func (f *fakeStore) TouchKeyUsage(_ context.Context, keyID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.touched++
 	f.lastID = keyID
 	return nil
@@ -29,6 +35,18 @@ func (f *fakeStore) ReleaseSuccessCall(context.Context, string) error { return n
 
 func (f *fakeStore) TryIncrementUserSuccessCalls(context.Context, string, int) error {
 	return nil
+}
+
+func (f *fakeStore) Touched() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.touched
+}
+
+func (f *fakeStore) LastID() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastID
 }
 
 func TestMCPMiddlewareGatesUsageByToolCall(t *testing.T) {
@@ -44,8 +62,8 @@ func TestMCPMiddlewareGatesUsageByToolCall(t *testing.T) {
 	req = req.WithContext(auth.WithAPIKey(req.Context(), key))
 	req = req.WithContext(auth.WithUser(req.Context(), user))
 	h.ServeHTTP(httptest.NewRecorder(), req)
-	if st.touched != 0 {
-		t.Fatalf("initialize must not touch usage, got touched=%d", st.touched)
+	if st.Touched() != 0 {
+		t.Fatalf("initialize must not touch usage, got touched=%d", st.Touched())
 	}
 
 	req2 := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -54,11 +72,11 @@ func TestMCPMiddlewareGatesUsageByToolCall(t *testing.T) {
 	req2 = req2.WithContext(auth.WithUser(req2.Context(), user))
 	h.ServeHTTP(httptest.NewRecorder(), req2)
 	deadline := time.Now().Add(2 * time.Second)
-	for st.touched < 1 && time.Now().Before(deadline) {
+	for st.Touched() < 1 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if st.touched != 1 || st.lastID != "k1" {
-		t.Fatalf("tools/call should touch usage once for k1, got touched=%d id=%q", st.touched, st.lastID)
+	if st.Touched() != 1 || st.LastID() != "k1" {
+		t.Fatalf("tools/call should touch usage once for k1, got touched=%d id=%q", st.Touched(), st.LastID())
 	}
 }
 
@@ -322,10 +340,10 @@ func TestMCPMiddlewareUsesContextToolName(t *testing.T) {
 
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	deadline := time.Now().Add(2 * time.Second)
-	for st.touched < 1 && time.Now().Before(deadline) {
+	for st.Touched() < 1 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if st.touched != 1 {
-		t.Fatalf("expected usage touched via context tool name, got %d", st.touched)
+	if st.Touched() != 1 {
+		t.Fatalf("expected usage touched via context tool name, got %d", st.Touched())
 	}
 }
