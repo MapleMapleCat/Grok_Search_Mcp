@@ -144,7 +144,7 @@ export function nextNaturalMonthResetText(referenceDate = new Date()) {
   const resetDate = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 1);
   const resetMonth = String(resetDate.getMonth() + 1).padStart(2, "0");
   const resetDay = String(resetDate.getDate()).padStart(2, "0");
-  return `在${resetMonth}.${resetDay}进行重置`;
+  return `Resets on ${resetMonth}.${resetDay}`;
 }
 
 export function percentOf(value, limit) {
