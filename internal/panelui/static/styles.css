@@ -1353,6 +1353,10 @@ summary.debug-json-panel-head {
   line-height: 36px;
 }
 
+.dashboard-tier-body {
+  padding-bottom: 52px;
+}
+
 .metric-note {
   display: flex;
   align-items: center;
