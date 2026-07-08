@@ -345,7 +345,7 @@ export function renderEditKeyModal(key) {
             <input type="hidden" name="id" value="${escapeAttr(key.id)}">
             <div class="field">
               <label for="edit-key-name">Name</label>
-              <input id="edit-key-name" name="name" class="input" value="${escapeAttr(key.name || "")}" required>
+              <input id="edit-key-name" name="name" class="input" value="${escapeAttr(key.name || "")}">
             </div>
             <div class="field-row">
               <span>
@@ -359,7 +359,7 @@ export function renderEditKeyModal(key) {
             </div>
             <div class="modal-actions">
               <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-              <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+              <button class="button" data-action="submit-edit-key" type="button"><span class="material-symbols-outlined">save</span><span>Save</span></button>
             </div>
           </form>
         </div>

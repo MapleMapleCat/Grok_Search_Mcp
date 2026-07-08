@@ -110,19 +110,40 @@ export async function submitCreateKey(form) {
 export async function submitEditKey(form) {
   const data = new FormData(form);
   const id = String(data.get("id") || "");
+  const name = String(data.get("name") || "").trim();
+  if (!id) {
+    notify("Key 信息缺失，请刷新后重试。", "error");
+    render();
+    return;
+  }
+  if (!name) {
+    notify("请输入 API Key 名称后再保存。", "error");
+    render();
+    return;
+  }
+  const submitButton = form.querySelector('[data-action="submit-edit-key"]');
+  const originalSubmitButtonHTML = submitButton ? submitButton.innerHTML : "";
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span><span>Saving...</span>';
+  }
   try {
-    await api(`/keys/${encodeURIComponent(id)}`, {
+    const updatedKey = await api(`/keys/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: {
-        name: String(data.get("name") || "").trim(),
+        name,
         enabled: data.get("enabled") === "on"
       }
     });
+    state.keys = state.keys.map((key) => key.id === updatedKey.id ? updatedKey : key);
     state.modal = null;
-    await loadKeys();
     notify("Key 已更新。", "success");
     render();
   } catch (err) {
+    if (submitButton && document.contains(submitButton)) {
+      submitButton.disabled = false;
+      submitButton.innerHTML = originalSubmitButtonHTML;
+    }
     notify(errorText(err), "error");
     render();
   }
@@ -351,8 +372,15 @@ export async function onClick(event) {
     await copyCreatedKey();
   } else if (action === "edit-key") {
     const key = state.keys.find((item) => item.id === actionEl.dataset.keyId);
+    if (!key) return;
     state.modal = { type: "edit-key", key };
     render();
+  } else if (action === "submit-edit-key") {
+    event.preventDefault();
+    const form = actionEl.closest("form");
+    if (form instanceof HTMLFormElement) {
+      await submitEditKey(form);
+    }
   } else if (action === "delete-key") {
     openDeleteKeyModal(actionEl.dataset.keyId);
   } else if (action === "key-usage") {
