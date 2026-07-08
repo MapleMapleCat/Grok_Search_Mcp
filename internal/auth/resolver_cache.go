@@ -12,11 +12,11 @@ const defaultAuthCacheTTL = 30 * time.Second
 
 type cacheEntry struct {
 	key   *store.APIKey
-	user  *store.User
 	until time.Time
 }
 
-// CachedAPIKeyResolver 缓存 MCP 鉴权链上的 key + 带 tier 限额的用户，减少热路径 DB 查询。
+// CachedAPIKeyResolver 缓存 MCP 鉴权链上的 key，减少热路径 key hash 查询。
+// 用户与 tier 限额每次 Resolve 都重新加载，保证管理员更新 tier 后旧 API key 立即使用新限额。
 type CachedAPIKeyResolver struct {
 	st     store.Store
 	ttl    time.Duration
@@ -41,8 +41,12 @@ func (c *CachedAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*st
 	now := time.Now()
 	c.mu.Lock()
 	if e, ok := c.byHash[keyHash]; ok && now.Before(e.until) {
-		key, user := e.key, e.user
+		key := cloneAPIKey(e.key)
 		c.mu.Unlock()
+		user, err := LoadUserWithTierLimits(ctx, c.st, key.UserID)
+		if err != nil {
+			return nil, nil, err
+		}
 		return cloneAPIKey(key), cloneUser(user), nil
 	}
 	c.mu.Unlock()
@@ -62,7 +66,6 @@ func (c *CachedAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*st
 	c.mu.Lock()
 	c.byHash[keyHash] = cacheEntry{
 		key:   key,
-		user:  user,
 		until: now.Add(c.ttl),
 	}
 	c.mu.Unlock()

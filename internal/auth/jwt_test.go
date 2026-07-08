@@ -207,7 +207,7 @@ func TestJWTDisabledUserRejected(t *testing.T) {
 	}
 }
 
-// TestJWTTierOnlyUpdateKeepsTokenValid 验证仅调整 tier_id 不会误伤有效 token。
+// TestJWTTierOnlyUpdateKeepsTokenValid 验证仅调整到已有内置 tier 不会误伤有效 token。
 func TestJWTTierOnlyUpdateKeepsTokenValid(t *testing.T) {
 	st, user := jwtTestStore(t)
 	h := guardedHandler(testSecret, st)
@@ -216,9 +216,12 @@ func TestJWTTierOnlyUpdateKeepsTokenValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 仅改 tier_id（空串），不应自增 token_version。
-	empty := ""
-	if _, err := st.UpdateUser(t.Context(), user.ID, store.UserUpdates{TierID: &empty}); err != nil {
+	tier1, err := st.GetTierByName(t.Context(), "tier1")
+	if err != nil || tier1 == nil {
+		t.Fatalf("tier1 should be seeded by migration: %v", err)
+	}
+	// 仅改 tier_id 到已有内置 tier，不应自增 token_version。
+	if _, err := st.UpdateUser(t.Context(), user.ID, store.UserUpdates{TierID: &tier1.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if code := do(t, h, token); code != http.StatusOK {

@@ -3,6 +3,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -65,6 +66,10 @@ func APIKeyMiddleware(resolver APIKeyResolver) func(http.Handler) http.Handler {
 
 			key, user, err := resolver.Resolve(r.Context(), keyhash.HashAPIKey(token))
 			if err != nil {
+				if errors.Is(err, store.ErrTierNotFound) {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 				http.Error(w, "authentication failed", http.StatusInternalServerError)
 				return
 			}

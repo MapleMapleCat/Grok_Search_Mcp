@@ -25,6 +25,9 @@ var ErrTierNameTaken = errors.New("tier name already taken")
 // ErrTierInUse 表示等级仍被用户引用，不能删除。
 var ErrTierInUse = errors.New("tier in use")
 
+// ErrTierNotAssignable 表示用户只能被分配到仍存在的内置 tier0~tier6。
+var ErrTierNotAssignable = errors.New("tier must be one of existing tier0~tier6")
+
 // ErrQuotaSuccess 表示用户成功请求额度已耗尽。
 var ErrQuotaSuccess = errors.New("success request limit exceeded")
 
@@ -50,6 +53,9 @@ type User struct {
 	RPM          int
 	SuccessLimit int
 	SuccessCalls int64
+	// SuccessPeriod 是 success_calls 所属的 UTC 月份（YYYY-MM）。success_calls 表示该月成功调用数，
+	// 进入新月份后会在读写用户或预留 quota 时重置为 0。
+	SuccessPeriod string
 	// TokenVersion 写入 JWT 的 "tv" 声明；中间件比对 DB 当前值，不一致即拒签。
 	// 角色/启用状态变更或显式吊销时自增，令所有未刷新的 token 立即失效。
 	TokenVersion int64

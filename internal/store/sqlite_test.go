@@ -226,9 +226,9 @@ func TestUpdateUserTokenVersionSemantics(t *testing.T) {
 	}
 	initialTokenVersion := user.TokenVersion
 
-	tier, err := s.CreateTier(ctx, "token-version-tier", 10, 100, 200)
-	if err != nil {
-		t.Fatal(err)
+	tier, err := s.GetTierByName(ctx, "tier1")
+	if err != nil || tier == nil {
+		t.Fatalf("tier1 should be seeded by migration: %v", err)
 	}
 	updated, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &tier.ID})
 	if err != nil {
@@ -293,10 +293,14 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &tier.ID}); err != nil {
+	inUseTier, err := s.GetTierByName(ctx, "tier1")
+	if err != nil || inUseTier == nil {
+		t.Fatalf("tier1 should be seeded by migration: %v", err)
+	}
+	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &inUseTier.ID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteTier(ctx, tier.ID); !errors.Is(err, ErrTierInUse) {
+	if err := s.DeleteTier(ctx, inUseTier.ID); !errors.Is(err, ErrTierInUse) {
 		t.Fatalf("expected in-use tier delete to fail, got %v", err)
 	}
 

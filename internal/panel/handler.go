@@ -465,6 +465,10 @@ func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "cannot remove last enabled admin")
 			return
 		}
+		if errors.Is(err, store.ErrTierNotAssignable) {
+			writeError(w, http.StatusBadRequest, "tier_id must reference an existing tier0~tier6")
+			return
+		}
 		log.Printf("admin update user %s failed: %v", id, err)
 		writeError(w, http.StatusBadRequest, "failed to update user")
 		return

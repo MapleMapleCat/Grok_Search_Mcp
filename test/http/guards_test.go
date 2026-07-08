@@ -288,15 +288,12 @@ func TestHTTPMCPQuotaExhaustionSkipsUpstreamAndUsage(t *testing.T) {
 
 	env := bootIntegrationEnv(t, cpa)
 	ctx := context.Background()
-	key, err := env.st.GetKeyByID(ctx, env.created.Key.ID)
-	if err != nil {
-		t.Fatal(err)
+	tier0, err := env.st.GetTierByName(ctx, "tier0")
+	if err != nil || tier0 == nil {
+		t.Fatalf("tier0 should be seeded by migration: %v", err)
 	}
-	tier, err := env.st.CreateTier(ctx, "single-success", 99, 1000, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := env.st.UpdateUser(ctx, key.UserID, store.UserUpdates{TierID: &tier.ID}); err != nil {
+	singleSuccessLimit := 1
+	if _, err := env.st.UpdateTier(ctx, tier0.ID, store.TierUpdates{SuccessLimit: &singleSuccessLimit}); err != nil {
 		t.Fatal(err)
 	}
 

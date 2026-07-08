@@ -30,6 +30,13 @@ func (m *memStore) GetUserByID(_ context.Context, id string) (*store.User, error
 	return nil, store.ErrUserNotFound
 }
 
+func (m *memStore) GetTierByName(_ context.Context, name string) (*store.Tier, error) {
+	if strings.EqualFold(name, "tier0") {
+		return &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800}, nil
+	}
+	return nil, nil
+}
+
 func TestAPIKeyMiddleware(t *testing.T) {
 	raw := "grok_testtoken"
 	hash := keyhash.HashAPIKey(raw)
@@ -165,8 +172,8 @@ func TestCachedAPIKeyResolverReturnsClonesAndInvalidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.keyLookups != 1 || st.userLookups != 1 {
-		t.Fatalf("expected second resolve to use cache, keyLookups=%d userLookups=%d", st.keyLookups, st.userLookups)
+	if st.keyLookups != 1 || st.userLookups != 2 {
+		t.Fatalf("expected second resolve to cache key but reload user limits, keyLookups=%d userLookups=%d", st.keyLookups, st.userLookups)
 	}
 	if !secondKey.Enabled || !secondUser.Enabled || secondUser.RPM != 42 || secondUser.SuccessLimit != 84 {
 		t.Fatalf("cached values must be cloned and tier-enriched, key=%+v user=%+v", secondKey, secondUser)
@@ -181,7 +188,7 @@ func TestCachedAPIKeyResolverReturnsClonesAndInvalidates(t *testing.T) {
 	if thirdKey.Name != "after-invalidate" {
 		t.Fatalf("expected invalidation to force reload, got key=%+v", thirdKey)
 	}
-	if st.keyLookups != 2 || st.userLookups != 2 {
+	if st.keyLookups != 2 || st.userLookups != 3 {
 		t.Fatalf("expected reload after invalidation, keyLookups=%d userLookups=%d", st.keyLookups, st.userLookups)
 	}
 }
@@ -245,6 +252,17 @@ func (s *cacheResolverStore) GetTierByID(_ context.Context, tierID string) (*sto
 	}
 	tierCopy := *s.tier
 	return &tierCopy, nil
+}
+
+func (s *cacheResolverStore) GetTierByName(_ context.Context, tierName string) (*store.Tier, error) {
+	if s.tier != nil && strings.EqualFold(s.tier.Name, tierName) {
+		tierCopy := *s.tier
+		return &tierCopy, nil
+	}
+	if strings.EqualFold(tierName, "tier0") {
+		return &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800}, nil
+	}
+	return nil, nil
 }
 
 func stringsForAuthTest(value string) string {

@@ -99,9 +99,9 @@ func TestUpdateUserChangesTierID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tier, err := s.CreateTier(ctx, "t", 0, 1, 3)
-	if err != nil {
-		t.Fatal(err)
+	tier, err := s.GetTierByName(ctx, "tier1")
+	if err != nil || tier == nil {
+		t.Fatalf("tier1 should be seeded by migration: %v", err)
 	}
 	updated, err := s.UpdateUser(ctx, u.ID, UserUpdates{TierID: &tier.ID})
 	if err != nil {
@@ -109,6 +109,76 @@ func TestUpdateUserChangesTierID(t *testing.T) {
 	}
 	if updated.TierID != tier.ID {
 		t.Fatalf("tier_id want %s got %s", tier.ID, updated.TierID)
+	}
+}
+
+func TestUpdateUserRejectsUnassignableTierID(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, "tier-target", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	customTier, err := s.CreateTier(ctx, "custom", 9, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &customTier.ID}); !errors.Is(err, ErrTierNotAssignable) {
+		t.Fatalf("expected custom tier to be rejected, got %v", err)
+	}
+	missingTierID := "00000000-0000-4000-8000-missingtier"
+	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &missingTierID}); !errors.Is(err, ErrTierNotAssignable) {
+		t.Fatalf("expected missing tier to be rejected, got %v", err)
+	}
+	emptyTierID := ""
+	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &emptyTierID}); !errors.Is(err, ErrTierNotAssignable) {
+		t.Fatalf("expected empty tier to be rejected, got %v", err)
+	}
+}
+
+func TestCreateAndRegisterUserFailClosedWithoutTier0(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	tier0, err := s.GetTierByName(ctx, "tier0")
+	if err != nil || tier0 == nil {
+		t.Fatalf("tier0 should be seeded by migration: %v", err)
+	}
+	if err := s.DeleteTier(ctx, tier0.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateUser(ctx, "without-tier0", "hash", RoleUser); !errors.Is(err, ErrTierNotFound) {
+		t.Fatalf("expected CreateUser to fail closed without tier0, got %v", err)
+	}
+	if _, err := s.RegisterUser(ctx, "registered-without-tier0", "hash"); !errors.Is(err, ErrTierNotFound) {
+		t.Fatalf("expected RegisterUser to fail closed without tier0, got %v", err)
+	}
+}
+
+func TestSuccessQuotaResetsEachUTCMonth(t *testing.T) {
+	s := openTestDB(t)
+	januaryContext := WithSuccessQuotaNow(context.Background(), time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC))
+	februaryContext := WithSuccessQuotaNow(context.Background(), time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC))
+
+	user, err := s.CreateUser(januaryContext, "monthly-quota", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveSuccessCall(januaryContext, user.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReserveSuccessCall(januaryContext, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+		t.Fatalf("expected January quota exhaustion, got %v", err)
+	}
+
+	if err := s.ReserveSuccessCall(februaryContext, user.ID, 1); err != nil {
+		t.Fatalf("new month should reset quota before reserve: %v", err)
+	}
+	updatedUser, err := s.GetUserByID(februaryContext, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != "2026-02" {
+		t.Fatalf("monthly reset should leave one February call, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
 	}
 }
 
