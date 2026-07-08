@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,21 +28,155 @@ import (
 
 const mcpAccept = "application/json, text/event-stream"
 
+type cpaMockExpectation struct {
+	APIKey   string
+	Model    string
+	Query    string
+	ToolType string
+}
+
+type cpaResponsesRequest struct {
+	Model  string              `json:"model"`
+	Input  []cpaInputMessage   `json:"input"`
+	Tools  []cpaToolDefinition `json:"tools"`
+	Stream *bool               `json:"stream"`
+}
+
+type cpaInputMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type cpaToolDefinition struct {
+	Type                     string          `json:"type"`
+	AllowedDomains           json.RawMessage `json:"allowed_domains,omitempty"`
+	ExcludedDomains          json.RawMessage `json:"excluded_domains,omitempty"`
+	EnableImageUnderstanding json.RawMessage `json:"enable_image_understanding,omitempty"`
+	EnableImageSearch        json.RawMessage `json:"enable_image_search,omitempty"`
+}
+
 func setMCPHeaders(req *http.Request, apiKey string) {
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", mcpAccept)
 }
 
-func cpaMockSSE(t *testing.T) *httptest.Server {
+func newWebSearchCPAExpectation(query string) cpaMockExpectation {
+	return cpaMockExpectation{
+		APIKey:   "cpa-mock-key",
+		Model:    "grok-4.3",
+		Query:    query,
+		ToolType: "web_search",
+	}
+}
+
+func newXSearchCPAExpectation(query string) cpaMockExpectation {
+	return cpaMockExpectation{
+		APIKey:   "cpa-mock-key",
+		Model:    "grok-4.3",
+		Query:    query,
+		ToolType: "x_search",
+	}
+}
+
+func cpaMockSSE(t *testing.T, expectations ...cpaMockExpectation) *httptest.Server {
 	t.Helper()
-	responseJSON := `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"mock integration answer"}]}]}`
-	completed := `{"type":"response.completed","response":` + strings.TrimSpace(responseJSON) + `}`
-	body := "data: " + completed + "\n\n"
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte(body))
+	if len(expectations) > 1 {
+		t.Fatalf("cpaMockSSE accepts at most one expectation, got %d", len(expectations))
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if len(expectations) == 0 {
+			t.Errorf("CPA mock received unexpected request: %s %s", r.Method, r.URL.String())
+			http.Error(w, "unexpected CPA mock request", http.StatusInternalServerError)
+			return
+		}
+
+		expected := expectations[0]
+		if err := validateCPAMockRequest(r, expected); err != nil {
+			t.Errorf("CPA mock received invalid request: %v", err)
+			http.Error(w, "invalid CPA mock request", http.StatusBadRequest)
+			return
+		}
+		writeCPAMockSSEResponse(w, "mock integration answer")
 	}))
+}
+
+func writeCPAMockSSEResponse(w http.ResponseWriter, answer string) {
+	responseJSON := fmt.Sprintf(`{"output":[{"role":"assistant","content":[{"type":"output_text","text":%q}]}]}`, answer)
+	completed := `{"type":"response.completed","response":` + strings.TrimSpace(responseJSON) + `}`
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = w.Write([]byte("data: " + completed + "\n\n"))
+}
+
+func validateCPAMockRequest(r *http.Request, expected cpaMockExpectation) error {
+	if r.Method != http.MethodPost {
+		return fmt.Errorf("method = %q, want %q", r.Method, http.MethodPost)
+	}
+	if r.URL.Path != "/v1/responses" {
+		return fmt.Errorf("path = %q, want %q", r.URL.Path, "/v1/responses")
+	}
+	if r.URL.RawQuery != "" {
+		return fmt.Errorf("raw query = %q, want empty", r.URL.RawQuery)
+	}
+	if got, want := r.Header.Get("Authorization"), "Bearer "+expected.APIKey; got != want {
+		return fmt.Errorf("Authorization header = %q, want %q", got, want)
+	}
+	if got := r.Header.Get("Content-Type"); got != "application/json" {
+		return fmt.Errorf("Content-Type header = %q, want %q", got, "application/json")
+	}
+	if got := r.Header.Get("Accept"); got != "text/event-stream" {
+		return fmt.Errorf("Accept header = %q, want %q", got, "text/event-stream")
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return fmt.Errorf("read request body: %w", err)
+	}
+	var req cpaResponsesRequest
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return fmt.Errorf("decode request body %q: %w", truncate(string(body), 512), err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("request body contains trailing JSON data: %w", err)
+	}
+
+	if req.Model != expected.Model {
+		return fmt.Errorf("model = %q, want %q", req.Model, expected.Model)
+	}
+	if req.Stream == nil || !*req.Stream {
+		return fmt.Errorf("stream = %v, want true", req.Stream)
+	}
+	if len(req.Input) != 1 {
+		return fmt.Errorf("input length = %d, want 1", len(req.Input))
+	}
+	if req.Input[0].Role != "user" {
+		return fmt.Errorf("input[0].role = %q, want %q", req.Input[0].Role, "user")
+	}
+	if req.Input[0].Content != expected.Query {
+		return fmt.Errorf("input[0].content = %q, want %q", req.Input[0].Content, expected.Query)
+	}
+	if len(req.Tools) != 1 {
+		return fmt.Errorf("tools length = %d, want 1", len(req.Tools))
+	}
+	if req.Tools[0].Type != expected.ToolType {
+		return fmt.Errorf("tools[0].type = %q, want %q", req.Tools[0].Type, expected.ToolType)
+	}
+	if len(req.Tools[0].AllowedDomains) != 0 {
+		return fmt.Errorf("tools[0].allowed_domains unexpectedly present: %s", req.Tools[0].AllowedDomains)
+	}
+	if len(req.Tools[0].ExcludedDomains) != 0 {
+		return fmt.Errorf("tools[0].excluded_domains unexpectedly present: %s", req.Tools[0].ExcludedDomains)
+	}
+	if len(req.Tools[0].EnableImageUnderstanding) != 0 {
+		return fmt.Errorf("tools[0].enable_image_understanding unexpectedly present: %s", req.Tools[0].EnableImageUnderstanding)
+	}
+	if len(req.Tools[0].EnableImageSearch) != 0 {
+		return fmt.Errorf("tools[0].enable_image_search unexpectedly present: %s", req.Tools[0].EnableImageSearch)
+	}
+
+	return nil
 }
 
 func TestHTTPPanelAndMCPFlow(t *testing.T) {
@@ -51,7 +186,7 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 	}
 	defer st.Close()
 
-	cpa := cpaMockSSE(t)
+	cpa := cpaMockSSE(t, newWebSearchCPAExpectation("integration test"))
 	defer cpa.Close()
 
 	usageWriter := store.NewAsyncUsageWriter(st, 64)

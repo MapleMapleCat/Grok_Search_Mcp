@@ -166,3 +166,86 @@ func TestDeleteUserRejectsLastAdmin(t *testing.T) {
 		t.Fatalf("expected last admin deletion to fail, got %v", err)
 	}
 }
+
+func TestUpdateUserRejectsRemovingLastEnabledAdmin(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	admin, err := s.CreateUser(ctx, "only-enabled-admin", "hash", RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	disabled := false
+	if _, err := s.UpdateUser(ctx, admin.ID, UserUpdates{Enabled: &disabled}); !errors.Is(err, ErrLastAdmin) {
+		t.Fatalf("expected disabling last enabled admin to fail, got %v", err)
+	}
+	adminAfterDisableAttempt, err := s.GetUserByID(ctx, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adminAfterDisableAttempt.Enabled || adminAfterDisableAttempt.Role != RoleAdmin {
+		t.Fatalf("failed update must leave admin enabled, got enabled=%v role=%s", adminAfterDisableAttempt.Enabled, adminAfterDisableAttempt.Role)
+	}
+
+	regularUserRole := RoleUser
+	if _, err := s.UpdateUser(ctx, admin.ID, UserUpdates{Role: &regularUserRole}); !errors.Is(err, ErrLastAdmin) {
+		t.Fatalf("expected downgrading last enabled admin to fail, got %v", err)
+	}
+	adminAfterRoleAttempt, err := s.GetUserByID(ctx, admin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adminAfterRoleAttempt.Enabled || adminAfterRoleAttempt.Role != RoleAdmin {
+		t.Fatalf("failed update must leave admin enabled, got enabled=%v role=%s", adminAfterRoleAttempt.Enabled, adminAfterRoleAttempt.Role)
+	}
+}
+
+func TestUpdateUserAllowsRemovingAdminWhenAnotherEnabledAdminRemains(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	adminToDowngrade, err := s.CreateUser(ctx, "admin-to-downgrade", "hash", RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateUser(ctx, "remaining-admin", "hash", RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+
+	regularUserRole := RoleUser
+	updated, err := s.UpdateUser(ctx, adminToDowngrade.ID, UserUpdates{Role: &regularUserRole})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Role != RoleUser {
+		t.Fatalf("role after downgrade want %s got %s", RoleUser, updated.Role)
+	}
+
+	enabledAdminCount, err := s.CountEnabledAdmins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabledAdminCount != 1 {
+		t.Fatalf("enabled admin count want 1 got %d", enabledAdminCount)
+	}
+}
+
+func TestDeleteUserRejectsDeletingLastEnabledAdmin(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	enabledAdmin, err := s.CreateUser(ctx, "enabled-admin", "hash", RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabledAdmin, err := s.CreateUser(ctx, "disabled-admin", "hash", RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	if _, err := s.UpdateUser(ctx, disabledAdmin.ID, UserUpdates{Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteUser(ctx, enabledAdmin.ID); !errors.Is(err, ErrLastAdmin) {
+		t.Fatalf("expected deleting last enabled admin to fail, got %v", err)
+	}
+}

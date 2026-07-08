@@ -441,12 +441,26 @@ func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
+	if currentUser, ok := auth.UserFromContext(r.Context()); ok && currentUser.ID == id {
+		if req.Enabled != nil && !*req.Enabled {
+			writeError(w, http.StatusConflict, "cannot disable current user")
+			return
+		}
+		if req.Role != nil && *req.Role == store.RoleUser {
+			writeError(w, http.StatusConflict, "cannot downgrade current user")
+			return
+		}
+	}
 	u, err := h.Store.UpdateUser(r.Context(), id, store.UserUpdates{
 		Enabled: req.Enabled, Role: req.Role, TierID: req.TierID, RevokeTokens: req.RevokeTokens,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrUserNotFound) {
 			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		if errors.Is(err, store.ErrLastAdmin) {
+			writeError(w, http.StatusConflict, "cannot remove last enabled admin")
 			return
 		}
 		log.Printf("admin update user %s failed: %v", id, err)
@@ -474,7 +488,7 @@ func (h *Handler) adminDeleteUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, store.ErrLastAdmin) {
-			writeError(w, http.StatusConflict, "cannot delete last admin")
+			writeError(w, http.StatusConflict, "cannot remove last enabled admin")
 			return
 		}
 		log.Printf("admin delete user %s failed: %v", id, err)

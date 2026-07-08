@@ -147,13 +147,26 @@ func (s *SQLiteStore) ListUsers(ctx context.Context) ([]*User, error) {
 }
 
 func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpdates) (*User, error) {
-	if _, err := s.GetUserByID(ctx, id); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = tx.Rollback() }()
+
+	existingUser, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+
 	var sets []string
 	var args []any
 	// 角色、启用状态变更或显式吊销均会自增 token_version，使存量 JWT 立即失效。
 	bumpTokenVersion := false
+	updatedRole := existingUser.Role
+	updatedEnabled := existingUser.Enabled
 	if updates.Enabled != nil {
 		en := 0
 		if *updates.Enabled {
@@ -162,6 +175,7 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		sets = append(sets, "enabled = ?")
 		args = append(args, en)
 		bumpTokenVersion = true
+		updatedEnabled = *updates.Enabled
 	}
 	if updates.Role != nil {
 		if *updates.Role != RoleAdmin && *updates.Role != RoleUser {
@@ -170,6 +184,7 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		sets = append(sets, "role = ?")
 		args = append(args, string(*updates.Role))
 		bumpTokenVersion = true
+		updatedRole = *updates.Role
 	}
 	if updates.TierID != nil {
 		sets = append(sets, "tier_id = ?")
@@ -182,16 +197,45 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		sets = append(sets, "token_version = token_version + 1")
 	}
 	if len(sets) == 0 {
-		return s.GetUserByID(ctx, id)
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return existingUser, nil
 	}
 	sets = append(sets, "updated_at = ?")
 	args = append(args, formatTime(nowUTC()))
 	args = append(args, id)
 	q := `UPDATE users SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
-	if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+	result, err := tx.ExecContext(ctx, q, args...)
+	if err != nil {
 		return nil, err
 	}
-	return s.GetUserByID(ctx, id)
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return nil, ErrUserNotFound
+	}
+
+	removesEnabledAdmin := existingUser.Role == RoleAdmin && existingUser.Enabled && (updatedRole != RoleAdmin || !updatedEnabled)
+	if removesEnabledAdmin {
+		var enabledAdminCount int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM users WHERE role = ? AND enabled = 1`, string(RoleAdmin),
+		).Scan(&enabledAdminCount); err != nil {
+			return nil, err
+		}
+		if enabledAdminCount < 1 {
+			return nil, ErrLastAdmin
+		}
+	}
+
+	updatedUser, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return updatedUser, nil
 }
 
 func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
@@ -202,19 +246,22 @@ func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
 	defer func() { _ = tx.Rollback() }()
 
 	var role string
-	if err := tx.QueryRowContext(ctx, `SELECT role FROM users WHERE id = ?`, id).Scan(&role); err != nil {
+	var enabled int
+	if err := tx.QueryRowContext(ctx, `SELECT role, enabled FROM users WHERE id = ?`, id).Scan(&role, &enabled); err != nil {
 		if err == sql.ErrNoRows {
 			return ErrUserNotFound
 		}
 		return err
 	}
 
-	if UserRole(role) == RoleAdmin {
-		var adminCount int64
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role = ?`, string(RoleAdmin)).Scan(&adminCount); err != nil {
+	if UserRole(role) == RoleAdmin && enabled != 0 {
+		var enabledAdminCount int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM users WHERE role = ? AND enabled = 1`, string(RoleAdmin),
+		).Scan(&enabledAdminCount); err != nil {
 			return err
 		}
-		if adminCount <= 1 {
+		if enabledAdminCount <= 1 {
 			return ErrLastAdmin
 		}
 	}

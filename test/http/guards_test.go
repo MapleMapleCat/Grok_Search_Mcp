@@ -162,12 +162,14 @@ func TestHTTPMCPDisabledAPIKeyForbidden(t *testing.T) {
 
 func TestHTTPPanelKeyUpdateInvalidatesMCPAuthCache(t *testing.T) {
 	var upstreamCalls atomic.Int64
-	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := validateCPAMockRequest(r, newWebSearchCPAExpectation("warm cache")); err != nil {
+			t.Errorf("CPA mock received invalid request: %v", err)
+			http.Error(w, "invalid CPA mock request", http.StatusBadRequest)
+			return
+		}
 		upstreamCalls.Add(1)
-		responseJSON := `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"cache warm answer"}]}]}`
-		completed := `{"type":"response.completed","response":` + strings.TrimSpace(responseJSON) + `}`
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: " + completed + "\n\n"))
+		writeCPAMockSSEResponse(w, "cache warm answer")
 	}))
 	defer cpa.Close()
 
@@ -228,7 +230,12 @@ func TestHTTPMCPDisabledUserForbidden(t *testing.T) {
 }
 
 func TestHTTPToolCallUpstreamFailureRecordsUnsuccessfulUsage(t *testing.T) {
-	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := validateCPAMockRequest(r, newWebSearchCPAExpectation("fail upstream")); err != nil {
+			t.Errorf("CPA mock received invalid request: %v", err)
+			http.Error(w, "invalid CPA mock request", http.StatusBadRequest)
+			return
+		}
 		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte("bad"))
 	}))
@@ -268,12 +275,14 @@ func TestHTTPToolCallUpstreamFailureRecordsUnsuccessfulUsage(t *testing.T) {
 
 func TestHTTPMCPQuotaExhaustionSkipsUpstreamAndUsage(t *testing.T) {
 	var upstreamCalls atomic.Int64
-	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := validateCPAMockRequest(r, newWebSearchCPAExpectation("quota test")); err != nil {
+			t.Errorf("CPA mock received invalid request: %v", err)
+			http.Error(w, "invalid CPA mock request", http.StatusBadRequest)
+			return
+		}
 		upstreamCalls.Add(1)
-		responseJSON := `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"quota success answer"}]}]}`
-		completed := `{"type":"response.completed","response":` + strings.TrimSpace(responseJSON) + `}`
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: " + completed + "\n\n"))
+		writeCPAMockSSEResponse(w, "quota success answer")
 	}))
 	defer cpa.Close()
 
@@ -316,19 +325,15 @@ func TestHTTPMCPQuotaExhaustionSkipsUpstreamAndUsage(t *testing.T) {
 }
 
 func TestHTTPMCPXSearchFlowForwardsXTool(t *testing.T) {
-	var capturedRequest map[string]any
+	var upstreamCalls atomic.Int64
 	cpa := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read upstream request body: %v", err)
+		if err := validateCPAMockRequest(r, newXSearchCPAExpectation("x integration")); err != nil {
+			t.Errorf("CPA mock received invalid request: %v", err)
+			http.Error(w, "invalid CPA mock request", http.StatusBadRequest)
+			return
 		}
-		if err := json.Unmarshal(body, &capturedRequest); err != nil {
-			t.Fatalf("decode upstream request body: %v", err)
-		}
-		responseJSON := `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"mock x answer"}]}]}`
-		completed := `{"type":"response.completed","response":` + strings.TrimSpace(responseJSON) + `}`
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: " + completed + "\n\n"))
+		upstreamCalls.Add(1)
+		writeCPAMockSSEResponse(w, "mock x answer")
 	}))
 	defer cpa.Close()
 
@@ -338,22 +343,8 @@ func TestHTTPMCPXSearchFlowForwardsXTool(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(body, "mock x answer") {
 		t.Fatalf("expected x_search tools/call success, status=%d body=%s", status, truncate(body, 512))
 	}
-
-	tools, ok := capturedRequest["tools"].([]any)
-	if !ok || len(tools) != 1 {
-		t.Fatalf("unexpected upstream tools payload: %+v", capturedRequest["tools"])
-	}
-	tool, ok := tools[0].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected upstream tool payload: %+v", tools[0])
-	}
-	if tool["type"] != "x_search" {
-		t.Fatalf("upstream tool type = %v, want x_search", tool["type"])
-	}
-	for _, webOnlyField := range []string{"allowed_domains", "excluded_domains", "enable_image_understanding", "enable_image_search"} {
-		if _, exists := tool[webOnlyField]; exists {
-			t.Fatalf("x_search upstream request must not include %q: %+v", webOnlyField, tool)
-		}
+	if upstreamCalls.Load() != 1 {
+		t.Fatalf("expected one x_search upstream call, got %d", upstreamCalls.Load())
 	}
 }
 

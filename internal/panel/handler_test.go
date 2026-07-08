@@ -50,6 +50,96 @@ func withJWT(req *http.Request, jwt string) *http.Request {
 	return req
 }
 
+func TestAdminUpdateUserRejectsSelfDisableAndDowngrade(t *testing.T) {
+	ts, st, cfg := panelTestServer(t)
+	defer ts.Close()
+
+	currentAdmin, err := st.CreateUser(context.Background(), "self-update-admin", "hash", store.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := auth.IssuePanelToken(cfg.JWTSecret, currentAdmin, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	disableRequest, _ := http.NewRequest(
+		http.MethodPatch,
+		ts.URL+"/panel/v1/admin/users/"+currentAdmin.ID,
+		bytes.NewBufferString(`{"enabled":false}`),
+	)
+	disableResponse, err := http.DefaultClient.Do(withJWT(disableRequest, token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	disableResponse.Body.Close()
+	if disableResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected self-disable to return 409, got %d", disableResponse.StatusCode)
+	}
+
+	downgradeRequest, _ := http.NewRequest(
+		http.MethodPatch,
+		ts.URL+"/panel/v1/admin/users/"+currentAdmin.ID,
+		bytes.NewBufferString(`{"role":"user"}`),
+	)
+	downgradeResponse, err := http.DefaultClient.Do(withJWT(downgradeRequest, token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	downgradeResponse.Body.Close()
+	if downgradeResponse.StatusCode != http.StatusConflict {
+		t.Fatalf("expected self-downgrade to return 409, got %d", downgradeResponse.StatusCode)
+	}
+
+	adminAfterAttempts, err := st.GetUserByID(context.Background(), currentAdmin.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adminAfterAttempts.Enabled || adminAfterAttempts.Role != store.RoleAdmin {
+		t.Fatalf("self update attempts must leave admin enabled, got enabled=%v role=%s", adminAfterAttempts.Enabled, adminAfterAttempts.Role)
+	}
+}
+
+func TestAdminUpdateUserAllowsDisablingOtherAdminWhenCurrentAdminRemains(t *testing.T) {
+	ts, st, cfg := panelTestServer(t)
+	defer ts.Close()
+
+	currentAdmin, err := st.CreateUser(context.Background(), "current-admin", "hash", store.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetAdmin, err := st.CreateUser(context.Background(), "target-admin", "hash", store.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := auth.IssuePanelToken(cfg.JWTSecret, currentAdmin, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request, _ := http.NewRequest(
+		http.MethodPatch,
+		ts.URL+"/panel/v1/admin/users/"+targetAdmin.ID,
+		bytes.NewBufferString(`{"enabled":false}`),
+	)
+	response, err := http.DefaultClient.Do(withJWT(request, token))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected disabling another admin to return 200, got %d", response.StatusCode)
+	}
+
+	enabledAdminCount, err := st.CountEnabledAdmins(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabledAdminCount != 1 {
+		t.Fatalf("enabled admin count want 1 got %d", enabledAdminCount)
+	}
+}
+
 func TestRegisterCreatesRegularUser(t *testing.T) {
 	ts, _, _ := panelTestServer(t)
 	defer ts.Close()

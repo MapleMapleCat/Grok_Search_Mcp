@@ -10,8 +10,8 @@ import (
 // ErrUserNotFound 表示按 ID 未找到用户。
 var ErrUserNotFound = errors.New("user not found")
 
-// ErrLastAdmin 表示试图删除系统中最后一个管理员用户。
-var ErrLastAdmin = errors.New("cannot delete last admin")
+// ErrLastAdmin 表示试图移除系统中最后一个启用中的管理员用户。
+var ErrLastAdmin = errors.New("cannot remove last enabled admin")
 
 // ErrUsernameTaken 表示用户名已存在。
 var ErrUsernameTaken = errors.New("username already taken")
