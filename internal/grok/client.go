@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,12 +92,20 @@ func newHTTPClientWithProxy(timeout time.Duration, proxyURL string, proxyEnabled
 		timeout = defaultTimeoutFallback()
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	explicitProxyURL := strings.TrimSpace(proxyURL)
 	if proxyEnabled {
-		parsedProxyURL, err := url.Parse(proxyURL)
+		if explicitProxyURL == "" {
+			return nil, fmt.Errorf("proxy URL is required when proxy is enabled")
+		}
+		parsedProxyURL, err := url.Parse(explicitProxyURL)
 		if err != nil {
 			return nil, fmt.Errorf("parse proxy URL: %w", err)
 		}
 		transport.Proxy = http.ProxyURL(parsedProxyURL)
+	} else {
+		// No explicit proxy is configured, so honor standard HTTP_PROXY,
+		// HTTPS_PROXY, and NO_PROXY environment variables for outbound requests.
+		transport.Proxy = http.ProxyFromEnvironment
 	}
 	return &http.Client{
 		Timeout:   timeout,

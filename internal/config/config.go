@@ -56,6 +56,7 @@ type ServerSettings struct {
 
 // Load 读取并校验配置。
 func Load() (*Config, error) {
+	proxyURL := strings.TrimSpace(os.Getenv("GROK_PROXY_URL"))
 	cfg := &Config{
 		CPABaseURL:     strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
 		CPAAPIKey:      strings.TrimSpace(os.Getenv("CPA_API_KEY")),
@@ -67,8 +68,8 @@ func Load() (*Config, error) {
 		JWTSecret:      strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
 		DefaultUserRPM: defaultLimiterRPM,
 		MCPIPRPM:       defaultMCPIPRPM,
-		ProxyURL:       strings.TrimSpace(os.Getenv("GROK_PROXY_URL")),
-		ProxyEnabled:   parseBoolEnv("GROK_PROXY_ENABLED"),
+		ProxyURL:       proxyURL,
+		ProxyEnabled:   resolveProxyEnabledFromEnv(proxyURL),
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("GROK_HTTP_TIMEOUT")); raw != "" {
@@ -220,4 +221,16 @@ func envOrDefault(key, fallback string) string {
 func parseBoolEnv(key string) bool {
 	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
 	return raw == "1" || raw == "true" || raw == "yes"
+}
+
+func resolveProxyEnabledFromEnv(proxyURL string) bool {
+	if raw, ok := os.LookupEnv("GROK_PROXY_ENABLED"); ok {
+		normalizedRawValue := strings.TrimSpace(strings.ToLower(raw))
+		return normalizedRawValue == "1" || normalizedRawValue == "true" || normalizedRawValue == "yes"
+	}
+
+	// Treat GROK_PROXY_URL by itself as an explicit proxy configuration. When it
+	// is absent, the HTTP client falls back to standard HTTP_PROXY/HTTPS_PROXY
+	// environment variables through net/http.
+	return strings.TrimSpace(proxyURL) != ""
 }

@@ -12,9 +12,26 @@ func setEnv(t *testing.T, key, value string) {
 	t.Setenv(key, value)
 }
 
+func unsetEnv(t *testing.T, key string) {
+	t.Helper()
+	oldValue, hadValue := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("failed to unset %s: %v", key, err)
+	}
+	t.Cleanup(func() {
+		if hadValue {
+			_ = os.Setenv(key, oldValue)
+			return
+		}
+		_ = os.Unsetenv(key)
+	})
+}
+
 // panelEnv 提供 Load 所需的最小环境变量，包括满足最小长度校验的 JWT 密钥。
 func panelEnv(t *testing.T) {
 	t.Helper()
+	unsetEnv(t, "GROK_PROXY_URL")
+	unsetEnv(t, "GROK_PROXY_ENABLED")
 	setEnv(t, "CPA_API_KEY", "test-key")
 	setEnv(t, "GROK_JWT_SECRET", "jwt-secret-must-be-at-least-32-bytes!")
 }
@@ -50,6 +67,49 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Debug {
 		t.Fatalf("expected debug disabled by default")
+	}
+}
+
+func TestLoadEnablesExplicitProxyWhenProxyURLSet(t *testing.T) {
+	panelEnv(t)
+	setEnv(t, "GROK_PROXY_URL", " http://127.0.0.1:7890 ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !cfg.ProxyEnabled {
+		t.Fatalf("expected proxy enabled when GROK_PROXY_URL is set")
+	}
+	if cfg.ProxyURL != "http://127.0.0.1:7890" {
+		t.Fatalf("unexpected proxy URL: %q", cfg.ProxyURL)
+	}
+}
+
+func TestLoadHonorsExplicitProxyEnabledFlag(t *testing.T) {
+	panelEnv(t)
+	setEnv(t, "GROK_PROXY_URL", "http://127.0.0.1:7890")
+	setEnv(t, "GROK_PROXY_ENABLED", "0")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.ProxyEnabled {
+		t.Fatalf("expected GROK_PROXY_ENABLED=0 to disable explicit proxy")
+	}
+	if cfg.ProxyURL != "http://127.0.0.1:7890" {
+		t.Fatalf("unexpected proxy URL: %q", cfg.ProxyURL)
+	}
+}
+
+func TestLoadRejectsEnabledProxyWithoutURL(t *testing.T) {
+	panelEnv(t)
+	setEnv(t, "GROK_PROXY_ENABLED", "true")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "GROK_PROXY_URL is required when proxy is enabled") {
+		t.Fatalf("expected proxy URL validation error, got %v", err)
 	}
 }
 
