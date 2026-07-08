@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/grok-mcp/internal/config"
+	"github.com/grok-mcp/internal/grok"
 	"github.com/grok-mcp/internal/store"
 )
 
@@ -111,6 +112,14 @@ type ServerSettingsResponse struct {
 	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
 }
 
+type ModelResponse struct {
+	ID string `json:"id"`
+}
+
+type ModelsResponse struct {
+	Models []ModelResponse `json:"models"`
+}
+
 type UpdateServerSettingsRequest struct {
 	CPABaseURL     *string `json:"cpa_base_url,omitempty"`
 	CPAAPIKey      *string `json:"cpa_api_key,omitempty"`
@@ -186,6 +195,15 @@ func toServerSettingsResponse(settings config.ServerSettings, updatedAt *time.Ti
 		Debug:            settings.Debug,
 		UpdatedAt:        updatedAt,
 	}
+}
+
+func toModelsResponse(models []grok.Model) ModelsResponse {
+	filteredModels := grok.FilterGrokModels(models)
+	responseModels := make([]ModelResponse, 0, len(filteredModels))
+	for _, model := range filteredModels {
+		responseModels = append(responseModels, ModelResponse{ID: model.ID})
+	}
+	return ModelsResponse{Models: responseModels}
 }
 
 func maskSecret(secret string) string {

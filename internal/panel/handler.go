@@ -21,6 +21,7 @@ type Handler struct {
 	Store           store.Store
 	Config          *config.Config
 	SettingsApplier ServerSettingsApplier // 可选；保存服务器设置后热更新上游客户端
+	ModelLister     ModelLister           // 可选；管理员面板通过它从上游拉取可用 Grok 模型
 	AuthCache       AuthCacheInvalidator  // 可选；管理员变更用户/等级/密钥后清空 MCP 鉴权缓存
 	AuthProtector   *AuthProtector        // 可选；未设置时使用内置面板登录/注册防护
 }
@@ -69,6 +70,7 @@ func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("DELETE /panel/v1/admin/tiers/{id}", h.adminDeleteTier)
 	admin.HandleFunc("GET /panel/v1/admin/settings", h.adminGetServerSettings)
 	admin.HandleFunc("PATCH /panel/v1/admin/settings", h.adminUpdateServerSettings)
+	admin.HandleFunc("GET /panel/v1/admin/models", h.adminListModels)
 	mux.Handle("/panel/v1/admin/", auth.RequireAdmin()(admin))
 }
 

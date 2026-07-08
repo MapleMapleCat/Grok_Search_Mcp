@@ -13,6 +13,7 @@ import (
 
 	"github.com/grok-mcp/internal/auth"
 	"github.com/grok-mcp/internal/config"
+	"github.com/grok-mcp/internal/grok"
 	"github.com/grok-mcp/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -41,6 +42,37 @@ func panelTestServerWithAuthProtector(t *testing.T, authProtector *AuthProtector
 	var chain http.Handler = mux
 	chain = auth.JWTMiddleware(cfg.JWTSecret, st, skip)(chain)
 	return httptest.NewServer(chain), st, cfg
+}
+
+func panelTestServerWithModelLister(t *testing.T, modelLister ModelLister) (*httptest.Server, *store.SQLiteStore, *config.Config) {
+	t.Helper()
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "panel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	cfg := &config.Config{
+		JWTSecret:      "jwt-secret-must-be-at-least-32-bytes!",
+		DefaultUserRPM: 60,
+	}
+	h := &Handler{Store: st, Config: cfg, ModelLister: modelLister}
+	mux := NewMux(h)
+	skip := map[string]struct{}{
+		"/panel/v1/auth/register": {},
+		"/panel/v1/auth/login":    {},
+	}
+	var chain http.Handler = mux
+	chain = auth.JWTMiddleware(cfg.JWTSecret, st, skip)(chain)
+	return httptest.NewServer(chain), st, cfg
+}
+
+type staticModelLister struct {
+	models []grok.Model
+	err    error
+}
+
+func (l staticModelLister) ListModels(context.Context) ([]grok.Model, error) {
+	return l.models, l.err
 }
 
 func withJWT(req *http.Request, jwt string) *http.Request {
@@ -458,6 +490,49 @@ func TestAdminRoutesRequireAdminRole(t *testing.T) {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected non-admin admin route access to return 403, got %d", response.StatusCode)
+	}
+}
+
+func TestAdminListModelsFiltersNonGrokModels(t *testing.T) {
+	modelLister := staticModelLister{models: []grok.Model{
+		{ID: "grok-4.3"},
+		{ID: "claude-3"},
+		{ID: " Grok-Beta "},
+		{ID: "grok-4.3"},
+	}}
+	ts, st, _ := panelTestServerWithModelLister(t, modelLister)
+	defer ts.Close()
+
+	createPanelAdminUser(t, st, "modelsadmin", "password123")
+	adminLogin := loginPanelUser(t, ts, "modelsadmin", "password123")
+
+	request, _ := http.NewRequest(http.MethodGet, ts.URL+"/panel/v1/admin/models", nil)
+	request = withJWT(request, adminLogin.Token)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("expected model list status 200, got %d", response.StatusCode)
+	}
+	var modelsResponse ModelsResponse
+	if err := json.NewDecoder(response.Body).Decode(&modelsResponse); err != nil {
+		t.Fatal(err)
+	}
+	actualModelIDs := make([]string, 0, len(modelsResponse.Models))
+	for _, model := range modelsResponse.Models {
+		actualModelIDs = append(actualModelIDs, model.ID)
+	}
+	expectedModelIDs := []string{"grok-4.3", "Grok-Beta"}
+	if len(actualModelIDs) != len(expectedModelIDs) {
+		t.Fatalf("model IDs = %+v, want %+v", actualModelIDs, expectedModelIDs)
+	}
+	for index, expectedModelID := range expectedModelIDs {
+		if actualModelIDs[index] != expectedModelID {
+			t.Fatalf("model IDs = %+v, want %+v", actualModelIDs, expectedModelIDs)
+		}
 	}
 }
 

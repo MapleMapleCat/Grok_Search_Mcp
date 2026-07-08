@@ -28,6 +28,12 @@ const (
 		"source-backed answers. query is required; model is optional and defaults " +
 		"to GROK_MODEL. This tool accepts only query and model; domain filters " +
 		"and image-related options belong to grok_web_search."
+
+	listModelsToolName        = "grok_list_models"
+	listModelsToolTitle       = "Grok List Models"
+	listModelsToolDescription = "List Grok models available from upstream CPA " +
+		"/v1/models. The server filters the upstream response and exposes only " +
+		"model IDs that contain the grok keyword."
 )
 
 // WebSearchInput 为 grok_web_search 的 JSON 入参，字段名与 jsonschema 标签供客户端生成表单。
@@ -46,6 +52,9 @@ type XSearchInput struct {
 	Model string `json:"model,omitempty" jsonschema:"Optional model override. Defaults to GROK_MODEL env var."`
 }
 
+// ListModelsInput 为 grok_list_models 的 JSON 入参；该工具不需要参数。
+type ListModelsInput struct{}
+
 // SearchOutput 为工具成功时的结构化返回，会序列化为 MCP 工具结果 JSON。
 // 失败时返回零值 SearchOutput（各字段为零值），由 toolError 单独承载错误文案。
 type SearchOutput struct {
@@ -55,11 +64,23 @@ type SearchOutput struct {
 	Usage     *grok.Usage   `json:"usage,omitempty" jsonschema:"Token usage reported by upstream"`
 }
 
-// RegisterTools 在 MCP Server 上注册网页搜索与 X 搜索两个工具。
+// ListModelsOutput 为模型列表工具成功时的结构化返回。
+type ListModelsOutput struct {
+	Models []grok.Model `json:"models,omitempty" jsonschema:"Available Grok model IDs filtered by the grok keyword"`
+}
+
+// RegisterTools 在 MCP Server 上注册模型列表、网页搜索与 X 搜索工具。
 func RegisterTools(server *mcp.Server, client *grok.Client, debug bool) {
 	log := logx.New("mcp", debug)
+	registerListModelsTool(server, client, log)
 	registerWebSearchTool(server, client, log)
 	registerXSearchTool(server, client, log)
+}
+
+func registerListModelsTool(server *mcp.Server, client *grok.Client, log *logx.Logger) {
+	mcp.AddTool(server, newListModelsTool(), func(ctx context.Context, _ *mcp.CallToolRequest, _ ListModelsInput) (*mcp.CallToolResult, ListModelsOutput, error) {
+		return runListModels(ctx, client, log)
+	})
 }
 
 func registerWebSearchTool(server *mcp.Server, client *grok.Client, log *logx.Logger) {
@@ -88,6 +109,19 @@ func registerXSearchTool(server *mcp.Server, client *grok.Client, log *logx.Logg
 	})
 }
 
+func newListModelsTool() *mcp.Tool {
+	openWorldHint := false
+	return &mcp.Tool{
+		Name:        listModelsToolName,
+		Title:       listModelsToolTitle,
+		Description: listModelsToolDescription,
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:  true,
+			OpenWorldHint: &openWorldHint,
+		},
+	}
+}
+
 func newSearchTool(name, title, description string) *mcp.Tool {
 	openWorldHint := true
 	return &mcp.Tool{
@@ -99,6 +133,24 @@ func newSearchTool(name, title, description string) *mcp.Tool {
 			OpenWorldHint: &openWorldHint,
 		},
 	}
+}
+
+// runListModels 调用上游模型列表接口，并在向 MCP 客户端返回前再次应用 Grok 关键词过滤。
+func runListModels(ctx context.Context, client *grok.Client, log *logx.Logger) (*mcp.CallToolResult, ListModelsOutput, error) {
+	if client == nil {
+		return toolError("model listing is not configured"), ListModelsOutput{}, nil
+	}
+
+	log.Debugf("list models start")
+	models, err := client.ListModels(ctx)
+	if err != nil {
+		log.Debugf("list models failed: %v", err)
+		return toolError(classifyListModelsError(err)), ListModelsOutput{}, nil
+	}
+
+	filteredModels := grok.FilterGrokModels(models)
+	log.Debugf("list models done models=%d", len(filteredModels))
+	return nil, ListModelsOutput{Models: filteredModels}, nil
 }
 
 // runSearch 调用上游流式搜索，并在客户端提供 progressToken 时推送每轮搜索进度通知。
@@ -187,5 +239,20 @@ func classifySearchError(err error) string {
 		return "upstream stream error"
 	default:
 		return "search request failed"
+	}
+}
+
+func classifyListModelsError(err error) string {
+	if err == nil {
+		return "model list request failed"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "context deadline exceeded"), strings.Contains(msg, "timeout"):
+		return "upstream model list timed out"
+	case strings.Contains(msg, "upstream returned HTTP"):
+		return strings.TrimSpace(strings.SplitN(msg, ":", 2)[0])
+	default:
+		return "model list request failed"
 	}
 }

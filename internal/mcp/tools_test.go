@@ -21,8 +21,10 @@ func TestServerInstructionsDocumentSearchToolUsage(t *testing.T) {
 	wantedSnippets := []string{
 		webSearchToolName,
 		xSearchToolName,
+		listModelsToolName,
 		"query is required",
 		"model is optional",
+		"grok keyword",
 		"allowed_domains",
 		"excluded_domains",
 		"Do not provide allowed_domains and excluded_domains together",
@@ -87,6 +89,28 @@ func TestNewSearchToolMetadata(t *testing.T) {
 				t.Fatalf("OpenWorldHint must be true")
 			}
 		})
+	}
+}
+
+func TestNewListModelsToolMetadata(t *testing.T) {
+	tool := newListModelsTool()
+	if tool.Name != listModelsToolName {
+		t.Fatalf("Name = %q, want %q", tool.Name, listModelsToolName)
+	}
+	if tool.Title != listModelsToolTitle {
+		t.Fatalf("Title = %q, want %q", tool.Title, listModelsToolTitle)
+	}
+	if !strings.Contains(tool.Description, "grok keyword") {
+		t.Fatalf("Description must mention Grok keyword filtering; description=%q", tool.Description)
+	}
+	if tool.Annotations == nil {
+		t.Fatalf("Annotations must be set")
+	}
+	if !tool.Annotations.ReadOnlyHint {
+		t.Fatalf("ReadOnlyHint must be true")
+	}
+	if tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint {
+		t.Fatalf("OpenWorldHint must be false for model listing")
 	}
 }
 
@@ -341,6 +365,42 @@ func TestRunSearchSendsXSearchToolTypeWithoutWebOnlyFields(t *testing.T) {
 	for _, webOnlyField := range []string{"allowed_domains", "excluded_domains", "enable_image_understanding", "enable_image_search"} {
 		if _, exists := tool[webOnlyField]; exists {
 			t.Fatalf("x_search request must not include %q: %+v", webOnlyField, tool)
+		}
+	}
+}
+
+func TestRunListModelsReturnsOnlyFilteredGrokModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("request path = %q, want %q", r.URL.Path, "/v1/models")
+		}
+		if authorization := r.Header.Get("Authorization"); authorization != "Bearer test-cpa-key" {
+			t.Fatalf("Authorization = %q, want %q", authorization, "Bearer test-cpa-key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"grok-4.3"},{"id":"gpt-4"},{"id":" Grok-Beta "},{"id":"grok-4.3"}]}`))
+	}))
+	defer server.Close()
+
+	toolResult, output, err := runListModels(context.Background(), newMCPTestClient(t, server.URL), logx.New("mcp-test", false))
+	if err != nil {
+		t.Fatalf("runListModels returned Go error: %v", err)
+	}
+	if toolResult != nil {
+		t.Fatalf("runListModels returned unexpected tool error: %+v", toolResult)
+	}
+
+	modelIDs := make([]string, 0, len(output.Models))
+	for _, model := range output.Models {
+		modelIDs = append(modelIDs, model.ID)
+	}
+	wantedModelIDs := []string{"grok-4.3", "Grok-Beta"}
+	if len(modelIDs) != len(wantedModelIDs) {
+		t.Fatalf("model IDs = %+v, want %+v", modelIDs, wantedModelIDs)
+	}
+	for index, wantedModelID := range wantedModelIDs {
+		if modelIDs[index] != wantedModelID {
+			t.Fatalf("model IDs = %+v, want %+v", modelIDs, wantedModelIDs)
 		}
 	}
 }

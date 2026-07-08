@@ -1,14 +1,21 @@
 package panel
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/grok-mcp/internal/config"
+	"github.com/grok-mcp/internal/grok"
 	"github.com/grok-mcp/internal/store"
 )
+
+// ModelLister fetches the currently available upstream Grok models.
+type ModelLister interface {
+	ListModels(context.Context) ([]grok.Model, error)
+}
 
 func (h *Handler) adminGetServerSettings(w http.ResponseWriter, r *http.Request) {
 	settings, updatedAt, err := h.loadEffectiveServerSettings(r)
@@ -60,6 +67,25 @@ func (h *Handler) adminUpdateServerSettings(w http.ResponseWriter, r *http.Reque
 
 	updatedAt := storedSettings.UpdatedAt
 	writeJSON(w, http.StatusOK, toServerSettingsResponse(normalizedSettings, &updatedAt))
+}
+
+func (h *Handler) adminListModels(w http.ResponseWriter, r *http.Request) {
+	if h.ModelLister == nil {
+		writeError(w, http.StatusServiceUnavailable, "model listing is not configured")
+		return
+	}
+
+	models, err := h.ModelLister.ListModels(r.Context())
+	if err != nil {
+		log.Printf("admin list models failed: %v", err)
+		writeError(w, http.StatusBadGateway, "failed to list upstream models")
+		return
+	}
+
+	// Reapply the Grok-only filter at the HTTP boundary even though the upstream
+	// client already filters, so non-Grok models can never be exposed downstream.
+	filteredModels := grok.FilterGrokModels(models)
+	writeJSON(w, http.StatusOK, toModelsResponse(filteredModels))
 }
 
 func (h *Handler) loadEffectiveServerSettings(r *http.Request) (config.ServerSettings, *time.Time, error) {

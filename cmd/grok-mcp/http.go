@@ -91,6 +91,9 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server, settin
 	rootMux.Handle("/mcp", mcpChain)
 
 	panelHandler := &panel.Handler{Store: st, Config: cfg, SettingsApplier: settingsApplier, AuthCache: authResolver}
+	if modelLister, ok := settingsApplier.(panel.ModelLister); ok {
+		panelHandler.ModelLister = modelLister
+	}
 	panelMux := panel.NewMux(panelHandler)
 	jwtSkip := map[string]struct{}{
 		"/panel/v1/auth/register": {},

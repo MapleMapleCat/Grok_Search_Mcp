@@ -52,3 +52,8 @@ type SearchResult struct {
 	Usage       *Usage
 	RawResponse json.RawMessage
 }
+
+// Model 表示从上游模型列表接口过滤后的单个 Grok 模型。
+type Model struct {
+	ID string `json:"id"`
+}
