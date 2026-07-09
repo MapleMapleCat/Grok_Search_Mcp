@@ -26,18 +26,20 @@ type LoginResponse struct {
 }
 
 type UserResponse struct {
-	ID           string         `json:"id"`
-	Username     string         `json:"username"`
-	Role         store.UserRole `json:"role"`
-	Enabled      bool           `json:"enabled"`
-	TierID       string         `json:"tier_id,omitempty"`
-	TierName     string         `json:"tier_name,omitempty"`
-	TierLevel    *int           `json:"tier_level,omitempty"`
-	RPM          int            `json:"rpm"`
-	SuccessLimit int            `json:"success_limit"`
-	SuccessCalls int64          `json:"success_calls"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	ID        string         `json:"id"`
+	Username  string         `json:"username"`
+	Role      store.UserRole `json:"role"`
+	Enabled   bool           `json:"enabled"`
+	TierID    string         `json:"tier_id,omitempty"`
+	TierName  string         `json:"tier_name,omitempty"`
+	TierLevel *int           `json:"tier_level,omitempty"`
+	// LimitsUnavailable 为 true 表示未能解析所属 tier，rpm/success_limit 不可信（勿当作 0=不限）。
+	LimitsUnavailable bool      `json:"limits_unavailable,omitempty"`
+	RPM               int       `json:"rpm"`
+	SuccessLimit      int       `json:"success_limit"`
+	SuccessCalls      int64     `json:"success_calls"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type CreateKeyRequest struct {
@@ -151,23 +153,31 @@ func toUserResponse(u *store.User) UserResponse {
 	return UserResponse{
 		ID: u.ID, Username: u.Username, Role: u.Role, Enabled: u.Enabled,
 		TierID: u.TierID,
-		RPM:    u.RPM, SuccessLimit: u.SuccessLimit,
-		SuccessCalls: u.SuccessCalls,
-		CreatedAt:    u.CreatedAt, UpdatedAt: u.UpdatedAt,
+		// 未附带 tier 时不得把零值限额当成「不限」；由 toUserResponseWithTier 决定。
+		LimitsUnavailable: true,
+		RPM:               0,
+		SuccessLimit:      0,
+		SuccessCalls:      u.SuccessCalls,
+		CreatedAt:         u.CreatedAt, UpdatedAt: u.UpdatedAt,
 	}
 }
 
-// toUserResponseWithTier 填充用户关联的 tier 名称、等级与限额。限额以 tier 为唯一来源，
-// 因此用 tier 的 rpm/success_limit 覆盖用户自身字段；tier 不存在时仅返回基础字段。
+// toUserResponseWithTier 填充用户关联的 tier 名称、等级与限额。限额以 tier 为唯一来源。
+// tier 为 nil 时设置 LimitsUnavailable=true 且 rpm/success_limit 保持 0，避免面板把静默 0 显示成不限。
 func toUserResponseWithTier(u *store.User, tier *store.Tier) UserResponse {
 	resp := toUserResponse(u)
-	if tier != nil {
-		resp.TierName = tier.Name
-		lvl := tier.Level
-		resp.TierLevel = &lvl
-		resp.RPM = tier.RPM
-		resp.SuccessLimit = tier.SuccessLimit
+	if tier == nil {
+		resp.LimitsUnavailable = true
+		resp.RPM = 0
+		resp.SuccessLimit = 0
+		return resp
 	}
+	resp.LimitsUnavailable = false
+	resp.TierName = tier.Name
+	lvl := tier.Level
+	resp.TierLevel = &lvl
+	resp.RPM = tier.RPM
+	resp.SuccessLimit = tier.SuccessLimit
 	return resp
 }
 

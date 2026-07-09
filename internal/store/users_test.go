@@ -132,7 +132,7 @@ func TestUpdateUserChangesTierID(t *testing.T) {
 	}
 }
 
-func TestUpdateUserRejectsUnassignableTierID(t *testing.T) {
+func TestUpdateUserAllowsAnyExistingTierID(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 	user, err := s.CreateUser(ctx, "tier-target", "hash", RoleUser)
@@ -143,8 +143,21 @@ func TestUpdateUserRejectsUnassignableTierID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &customTier.ID}); !errors.Is(err, ErrTierNotAssignable) {
-		t.Fatalf("expected custom tier to be rejected, got %v", err)
+	updated, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &customTier.ID})
+	if err != nil {
+		t.Fatalf("any existing tier should be assignable, got %v", err)
+	}
+	if updated.TierID != customTier.ID {
+		t.Fatalf("tier_id want %s got %s", customTier.ID, updated.TierID)
+	}
+}
+
+func TestUpdateUserRejectsMissingOrEmptyTierID(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	user, err := s.CreateUser(ctx, "tier-target-2", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
 	}
 	missingTierID := "00000000-0000-4000-8000-missingtier"
 	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &missingTierID}); !errors.Is(err, ErrTierNotAssignable) {

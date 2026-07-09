@@ -24,7 +24,7 @@ export function renderTiers() {
     <div class="page-head">
       <div>
         <h2>Tier Management</h2>
-        <p>管理 tier0~tier6 等级预设，注册用户默认分配 tier0。</p>
+        <p>管理等级预设（预置 tier0~tier6，可自定义）；任意已存在的 tier 均可分配给用户，注册默认 tier0。</p>
       </div>
       <span class="row-actions">
         <button class="button secondary" data-action="refresh" type="button"><span class="material-symbols-outlined">refresh</span><span>Refresh</span></button>

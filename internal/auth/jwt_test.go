@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,5 +228,69 @@ func TestJWTTierOnlyUpdateKeepsTokenValid(t *testing.T) {
 	}
 	if code := do(t, h, token); code != http.StatusOK {
 		t.Fatalf("tier-only update should not invalidate token, got %d", code)
+	}
+}
+
+type jwtTierFailStore struct {
+	store.TestStore
+	user *store.User
+	err  error
+}
+
+func (s jwtTierFailStore) GetUserByID(context.Context, string) (*store.User, error) {
+	if s.user == nil {
+		return nil, store.ErrUserNotFound
+	}
+	copyUser := *s.user
+	return &copyUser, nil
+}
+
+func (s jwtTierFailStore) GetTierByID(context.Context, string) (*store.Tier, error) {
+	return nil, s.err
+}
+
+func (s jwtTierFailStore) GetTierByName(context.Context, string) (*store.Tier, error) {
+	return nil, nil
+}
+
+// TestJWTMissingTierReturnsInternalServerError 与 MCP 对齐：tier 缺失返回 500 且 body 含错误信息。
+func TestJWTMissingTierReturnsInternalServerError(t *testing.T) {
+	user := &store.User{ID: "u1", Username: "u", Role: store.RoleUser, Enabled: true, TierID: "missing"}
+	st := jwtTierFailStore{user: user, err: store.ErrTierNotFound}
+	token, _, err := IssuePanelToken(testSecret, user, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := guardedHandler(testSecret, st)
+	req := httptest.NewRequest(http.MethodGet, "/panel/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("missing tier must be 500, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "tier") {
+		t.Fatalf("body should describe tier failure, got %q", rec.Body.String())
+	}
+}
+
+// TestJWTMissingUserReturnsUnauthorized 用户不存在时仍为 401 user not found。
+func TestJWTMissingUserReturnsUnauthorized(t *testing.T) {
+	user := &store.User{ID: "gone", Username: "u", Role: store.RoleUser, Enabled: true, TokenVersion: 0}
+	token, _, err := IssuePanelToken(testSecret, user, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := jwtTierFailStore{user: nil}
+	h := guardedHandler(testSecret, st)
+	req := httptest.NewRequest(http.MethodGet, "/panel/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing user must be 401, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "user not found") {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }

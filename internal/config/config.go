@@ -19,14 +19,15 @@ const (
 	defaultDBPath   = "./grok-mcp.db"
 	// defaultMCPIPRPM 在 API key 鉴权前按来源 IP 限制 /mcp 请求，保护认证存储免受暴力探测和 DoS。
 	defaultMCPIPRPM = 300
-	// defaultLimiterRPM 是内置内存限流器的兜底 RPM；限额实际取值始终来自 tier。
-	defaultLimiterRPM = 60
+	// defaultLimiterRPM 是 UserLimiter 构造参数。限额始终来自 tier；-1 表示不提供
+	// 内置正数兜底（middleware 在 rpm==0 时直接不限流，不会用到该值）。
+	defaultLimiterRPM = -1
 )
 
 // Config 保存进程启动所需的全部配置项。
 //
 // 用户限额（RPM / success limit）不再可配置，统一由 tier 决定；
-// DefaultUserRPM 仅作为内存限流器在 tier 解析异常时的兜底，不再用于新用户。
+// DefaultUserRPM 仅传给内存限流器构造函数，默认 -1（无正数兜底）。
 type Config struct {
 	CPABaseURL     string
 	CPAAPIKey      string
@@ -84,11 +85,12 @@ func Load() (*Config, error) {
 		cfg.Timeout = time.Duration(seconds) * time.Second
 	}
 
-	// GROK_DEFAULT_USER_RPM 仅用于内存限流器的兜底；用户实际 RPM 始终取自 tier。
+	// GROK_DEFAULT_USER_RPM 仅传给 UserLimiter；用户实际 RPM 始终取自 tier。
+	// 默认 -1（无正数兜底）。允许任意非零整数；0 无意义（与 tier「0=不限」混淆）故拒绝。
 	if raw := strings.TrimSpace(os.Getenv("GROK_DEFAULT_USER_RPM")); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n <= 0 {
-			return nil, fmt.Errorf("GROK_DEFAULT_USER_RPM must be a positive integer, got %q", raw)
+		if err != nil || n == 0 {
+			return nil, fmt.Errorf("GROK_DEFAULT_USER_RPM must be a non-zero integer, got %q", raw)
 		}
 		cfg.DefaultUserRPM = n
 	}

@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -138,6 +139,33 @@ func MaxBodyMiddleware(limit int64) func(http.Handler) http.Handler {
 	}
 }
 
+// loadUserTierForResponse 解析用户所属 tier；失败时打日志并返回 nil，
+// 由 toUserResponseWithTier 标记 limits_unavailable，避免把零值限额显示成不限。
+func (h *Handler) loadUserTierForResponse(ctx context.Context, user *store.User) *store.Tier {
+	if user == nil {
+		return nil
+	}
+	tierID := strings.TrimSpace(user.TierID)
+	if tierID == "" {
+		log.Printf("user %s has empty tier_id; limits unavailable", user.ID)
+		return nil
+	}
+	tier, err := h.Store.GetTierByID(ctx, tierID)
+	if err != nil {
+		if errors.Is(err, store.ErrTierNotFound) {
+			log.Printf("user %s tier_id %q not found; limits unavailable", user.ID, tierID)
+			return nil
+		}
+		log.Printf("user %s load tier %q failed: %v; limits unavailable", user.ID, tierID, err)
+		return nil
+	}
+	if tier == nil {
+		log.Printf("user %s tier_id %q returned nil; limits unavailable", user.ID, tierID)
+		return nil
+	}
+	return tier
+}
+
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if !decodeJSONBody(w, r, &req) {
@@ -171,11 +199,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "registration failed")
 		return
 	}
-	var tier *store.Tier
-	if user.TierID != "" {
-		tier, _ = h.Store.GetTierByID(r.Context(), user.TierID)
-	}
-	writeJSON(w, http.StatusCreated, toUserResponseWithTier(user, tier))
+	writeJSON(w, http.StatusCreated, toUserResponseWithTier(user, h.loadUserTierForResponse(r.Context(), user)))
 }
 
 // dummyBcryptHash 是用于拉平登录时序的固定 bcrypt 哈希。
@@ -237,12 +261,8 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "token issue failed")
 		return
 	}
-	var tier *store.Tier
-	if user.TierID != "" {
-		tier, _ = h.Store.GetTierByID(r.Context(), user.TierID)
-	}
 	writeJSON(w, http.StatusOK, LoginResponse{
-		Token: token, ExpiresAt: exp, User: toUserResponseWithTier(user, tier),
+		Token: token, ExpiresAt: exp, User: toUserResponseWithTier(user, h.loadUserTierForResponse(r.Context(), user)),
 	})
 }
 
@@ -258,11 +278,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load user")
 		return
 	}
-	var tier *store.Tier
-	if fresh.TierID != "" {
-		tier, _ = h.Store.GetTierByID(r.Context(), fresh.TierID)
-	}
-	writeJSON(w, http.StatusOK, toUserResponseWithTier(fresh, tier))
+	writeJSON(w, http.StatusOK, toUserResponseWithTier(fresh, h.loadUserTierForResponse(r.Context(), fresh)))
 }
 
 func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request) {
@@ -411,14 +427,25 @@ func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load users")
 		return
 	}
-	tiers, _ := h.Store.ListTiers(r.Context())
+	tiers, err := h.Store.ListTiers(r.Context())
+	if err != nil {
+		log.Printf("admin list tiers while listing users failed: %v", err)
+		// 继续返回用户列表，但 limits 将标记 unavailable。
+		tiers = nil
+	}
 	tierByID := make(map[string]*store.Tier, len(tiers))
 	for _, t := range tiers {
 		tierByID[t.ID] = t
 	}
 	out := make([]UserResponse, 0, len(users))
 	for _, u := range users {
-		out = append(out, toUserResponseWithTier(u, tierByID[u.TierID]))
+		tier := tierByID[u.TierID]
+		if tier == nil && strings.TrimSpace(u.TierID) != "" {
+			log.Printf("user %s tier_id %q missing from tier list; limits unavailable", u.ID, u.TierID)
+		} else if strings.TrimSpace(u.TierID) == "" {
+			log.Printf("user %s has empty tier_id; limits unavailable", u.ID)
+		}
+		out = append(out, toUserResponseWithTier(u, tier))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": out})
 }
@@ -430,11 +457,7 @@ func (h *Handler) adminGetUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
 	}
-	var tier *store.Tier
-	if u.TierID != "" {
-		tier, _ = h.Store.GetTierByID(r.Context(), u.TierID)
-	}
-	writeJSON(w, http.StatusOK, toUserResponseWithTier(u, tier))
+	writeJSON(w, http.StatusOK, toUserResponseWithTier(u, h.loadUserTierForResponse(r.Context(), u)))
 }
 
 func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -466,19 +489,15 @@ func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, store.ErrTierNotAssignable) {
-			writeError(w, http.StatusBadRequest, "tier_id must reference an existing tier0~tier6")
+			writeError(w, http.StatusBadRequest, "tier_id must reference an existing tier")
 			return
 		}
 		log.Printf("admin update user %s failed: %v", id, err)
 		writeError(w, http.StatusBadRequest, "failed to update user")
 		return
 	}
-	var tier *store.Tier
-	if u.TierID != "" {
-		tier, _ = h.Store.GetTierByID(r.Context(), u.TierID)
-	}
 	h.invalidateAuthCache()
-	writeJSON(w, http.StatusOK, toUserResponseWithTier(u, tier))
+	writeJSON(w, http.StatusOK, toUserResponseWithTier(u, h.loadUserTierForResponse(r.Context(), u)))
 }
 
 func (h *Handler) adminDeleteUser(w http.ResponseWriter, r *http.Request) {

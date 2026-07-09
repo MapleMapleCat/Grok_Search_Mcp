@@ -13,16 +13,6 @@ const userColumns = `id, username, password_hash, role, enabled, tier_id, succes
 const defaultTierName = "tier0"
 const successQuotaPeriodLayout = "2006-01"
 
-var assignableTierNames = map[string]struct{}{
-	"tier0": {},
-	"tier1": {},
-	"tier2": {},
-	"tier3": {},
-	"tier4": {},
-	"tier5": {},
-	"tier6": {},
-}
-
 type successQuotaNowContextKey struct{}
 
 // WithSuccessQuotaNow pins the quota clock for tests that need to cross month boundaries.
@@ -482,15 +472,7 @@ func validateAssignableTierID(ctx context.Context, executor queryRowContextExecu
 		}
 		return err
 	}
-	if !isAssignableTierName(tierName) {
-		return ErrTierNotAssignable
-	}
 	return nil
-}
-
-func isAssignableTierName(tierName string) bool {
-	_, ok := assignableTierNames[strings.ToLower(strings.TrimSpace(tierName))]
-	return ok
 }
 
 // nullableString 将空串转为 sql.NullString（NULL），非空串保留。

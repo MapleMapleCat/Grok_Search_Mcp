@@ -37,11 +37,13 @@ export function renderAccount() {
           <div class="quota-item">
             <div class="field-row">
               <span class="field-label">RPM</span>
-              <span class="mono">${rpmText(state.user.rpm)} req/min</span>
+              <span class="mono">${rpmText(state.user.rpm, { unavailable: Boolean(state.user.limits_unavailable) })} req/min</span>
             </div>
             <span class="hint">每分钟请求上限，所有 Key 共享</span>
           </div>
-          ${quotaProgress("Success Limit", state.user.success_calls, state.user.success_limit, "successful calls")}
+          ${state.user.limits_unavailable
+            ? `<div class="quota-item"><div class="field-row"><span class="field-label">Success Limit</span><span class="mono">N/A</span></div><span class="hint">Tier limits unavailable</span></div>`
+            : quotaProgress("Success Limit", state.user.success_calls, state.user.success_limit, "successful calls")}
         </div>
       </div>
     </section>`;

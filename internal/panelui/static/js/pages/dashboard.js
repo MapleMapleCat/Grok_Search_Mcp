@@ -4,20 +4,27 @@ import { buildDashboardAlert, countRecordsInWindow, escapeHTML, formatNumber, li
 
 export function renderDashboard() {
   const usage = state.usage;
-  const successPct = percentOf(state.user.success_calls, state.user.success_limit);
+  const limitsUnavailable = Boolean(state.user.limits_unavailable);
+  const limitOpts = { unavailable: limitsUnavailable };
+  const successPct = limitsUnavailable ? 0 : percentOf(state.user.success_calls, state.user.success_limit);
   const recentMinuteCalls = countRecordsInWindow(usage.records, 60 * 1000);
-  const rpmPct = percentOf(recentMinuteCalls, state.user.rpm);
-  const rpmProgress = state.user.rpm > 0 ? rpmPct : null;
+  const rpmPct = limitsUnavailable ? 0 : percentOf(recentMinuteCalls, state.user.rpm);
+  const rpmProgress = !limitsUnavailable && state.user.rpm > 0 ? rpmPct : null;
   const successRate = usage.total_calls > 0 ? Math.round((usage.success_calls / usage.total_calls) * 1000) / 10 : 100;
   const successRateTone = classifySuccessRateTone(successRate, usage.total_calls);
   const successRateValue = `<span class="success-rate-value ${successRateTone}">${successRate}%</span>`;
-  const successLimitResetText = state.user.success_limit > 0 ? nextNaturalMonthResetText() : "";
-  const dashboardAlert = buildDashboardAlert(usage.records);
+  const successLimitResetText = !limitsUnavailable && state.user.success_limit > 0 ? nextNaturalMonthResetText() : "";
+  const dashboardAlert = limitsUnavailable
+    ? { title: "Limits Unavailable", body: "User tier could not be resolved; RPM and success limits are not shown as unlimited." }
+    : buildDashboardAlert(usage.records);
+  const successNote = limitsUnavailable ? "Limits unavailable" : quotaNote(successPct);
+  const rpmTone = limitsUnavailable ? "bad" : (rpmPct >= 90 ? "bad" : "good");
+  const successTone = limitsUnavailable ? "bad" : (successPct >= 90 ? "bad" : "good");
   return `
     ${renderDashboardAlert(dashboardAlert)}
     <section class="grid metric-grid">
-      ${metricCard("Rate Per Minute (RPM)", `${formatNumber(recentMinuteCalls)} <span class="muted">/ ${rpmText(state.user.rpm)}</span>`, "speed", "User-level shared rate limit", rpmPct >= 90 ? "bad" : "good", rpmProgress)}
-      ${metricCard("Success Limit", `${formatNumber(state.user.success_calls)} <span class="muted">/ ${limitText(state.user.success_limit)}</span>`, "check_circle", quotaNote(successPct), successPct >= 90 ? "bad" : "good", successPct, { trailingNote: successLimitResetText })}
+      ${metricCard("Rate Per Minute (RPM)", `${formatNumber(recentMinuteCalls)} <span class="muted">/ ${rpmText(state.user.rpm, limitOpts)}</span>`, "speed", limitsUnavailable ? "Tier limits unavailable" : "User-level shared rate limit", rpmTone, rpmProgress)}
+      ${metricCard("Success Limit", `${formatNumber(state.user.success_calls)} <span class="muted">/ ${limitText(state.user.success_limit, limitOpts)}</span>`, "check_circle", successNote, successTone, limitsUnavailable ? null : successPct, { trailingNote: successLimitResetText })}
       ${metricCard("Success Rate", successRateValue, "check_circle", usage.total_calls ? "Based on completed calls" : "No traffic yet", "good", null, { reserveProgressSpace: true })}
       ${renderUserTierCard()}
     </section>

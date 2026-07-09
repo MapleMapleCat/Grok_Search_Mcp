@@ -25,8 +25,9 @@ var ErrTierNameTaken = errors.New("tier name already taken")
 // ErrTierInUse 表示等级仍被用户引用，不能删除。
 var ErrTierInUse = errors.New("tier in use")
 
-// ErrTierNotAssignable 表示用户只能被分配到仍存在的内置 tier0~tier6。
-var ErrTierNotAssignable = errors.New("tier must be one of existing tier0~tier6")
+// ErrTierNotAssignable 表示 tier_id 为空或不存在，不能分配给用户。
+// 任意已存在的 tier 均可分配（不再限制 name 必须为 tier0~tier6）。
+var ErrTierNotAssignable = errors.New("tier_id must reference an existing tier")
 
 // ErrQuotaSuccess 表示用户成功请求额度已耗尽。
 var ErrQuotaSuccess = errors.New("success request limit exceeded")
@@ -63,7 +64,7 @@ type User struct {
 	UpdatedAt    time.Time
 }
 
-// Tier 表示用户等级预设（tier0~tier6），是用户限额（rpm/success_limit）的唯一来源。
+// Tier 表示用户等级预设（预置 tier0~tier6，也可自定义），是用户限额（rpm/success_limit）的唯一来源。
 type Tier struct {
 	ID           string
 	Name         string

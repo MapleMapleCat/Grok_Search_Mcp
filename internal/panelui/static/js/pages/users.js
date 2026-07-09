@@ -66,8 +66,8 @@ export function renderUserRow(user) {
       <td><span class="badge ${user.role === "admin" ? "" : "off"}">${escapeHTML(user.role)}</span></td>
       <td>${tierBadge}</td>
       <td><span class="badge ${user.enabled ? "" : "error"}">${user.enabled ? "Enabled" : "Disabled"}</span></td>
-      <td class="mono">${rpmText(user.rpm)}</td>
-      <td>${formatNumber(user.success_calls)} <span class="muted">/ ${limitText(user.success_limit)}</span></td>
+      <td class="mono">${rpmText(user.rpm, { unavailable: Boolean(user.limits_unavailable) })}</td>
+      <td>${formatNumber(user.success_calls)} <span class="muted">/ ${limitText(user.success_limit, { unavailable: Boolean(user.limits_unavailable) })}</span></td>
       <td class="right">
         <span class="row-actions">
           <button class="mini-icon" data-action="user-usage" data-user-id="${escapeAttr(user.id)}" title="Usage" type="button"><span class="material-symbols-outlined">bar_chart</span></button>

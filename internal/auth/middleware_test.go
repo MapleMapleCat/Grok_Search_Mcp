@@ -274,3 +274,31 @@ func stringsForAuthTest(value string) string {
 	}
 	return builder.String()
 }
+
+
+func TestAPIKeyMiddlewareMissingTierReturnsInternalServerError(t *testing.T) {
+	raw := "grok_missing_tier"
+	hash := keyhash.HashAPIKey(raw)
+	st := &memStore{
+		byHash: map[string]*store.APIKey{
+			hash: {ID: "k1", UserID: "u1", Enabled: true},
+		},
+		users: map[string]*store.User{
+			"u1": {ID: "u1", Enabled: true, TierID: "missing-tier"},
+		},
+	}
+	// memStore GetTierByID defaults via TestStore to ErrTierNotFound
+	h := APIKeyMiddleware(NewStoreAPIKeyResolver(st))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler must not run when tier is missing")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "tier") {
+		t.Fatalf("expected tier error body, got %q", rec.Body.String())
+	}
+}

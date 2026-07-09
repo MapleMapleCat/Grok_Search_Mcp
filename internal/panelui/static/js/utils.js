@@ -1,7 +1,11 @@
 import { state } from "./state.js";
 
-export function rpmText(rpm) {
-  return limitText(rpm);
+export function rpmText(limit, options = {}) {
+  if (options.unavailable) {
+    return "N/A";
+  }
+  const n = Number(limit) || 0;
+  return n <= 0 ? "∞" : formatNumber(n);
 }
 
 export function emptyUsage() {
@@ -93,6 +97,9 @@ export function buildDashboardAlert(records) {
 }
 
 export function buildSuccessQuotaDashboardAlert() {
+  if (state.user.limits_unavailable) {
+    return null;
+  }
   const successLimit = Number(state.user.success_limit) || 0;
   if (successLimit <= 0) {
     return null;
@@ -108,6 +115,9 @@ export function buildSuccessQuotaDashboardAlert() {
 }
 
 export function buildRPMDashboardAlert(records) {
+  if (state.user.limits_unavailable) {
+    return null;
+  }
   const rpmLimit = Number(state.user.rpm) || 0;
   if (rpmLimit <= 0) {
     return null;
@@ -159,7 +169,10 @@ export function successPercent(usage) {
   return `${Math.round((usage.success_calls / usage.total_calls) * 1000) / 10}%`;
 }
 
-export function limitText(limit) {
+export function limitText(limit, options = {}) {
+  if (options.unavailable) {
+    return "N/A";
+  }
   const n = Number(limit) || 0;
   return n <= 0 ? "∞" : formatNumber(n);
 }

@@ -190,7 +190,7 @@ func TestLoadHTTPDefaults(t *testing.T) {
 	}
 	if cfg.HTTPAddr != ":8080" ||
 		cfg.DBPath != "./grok-mcp.db" ||
-		cfg.DefaultUserRPM != 60 ||
+		cfg.DefaultUserRPM != -1 ||
 		cfg.MCPIPRPM != 300 {
 		t.Fatalf("unexpected http defaults: %+v", cfg)
 	}

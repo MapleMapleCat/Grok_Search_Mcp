@@ -80,7 +80,8 @@ func JWTMiddleware(secret string, st store.Store, skip map[string]struct{}) func
 			}
 			user, err := LoadUserWithTierLimits(r.Context(), st, claims.UserID)
 			if err != nil {
-				http.Error(w, "user not found", http.StatusUnauthorized)
+				// 与 MCP APIKeyMiddleware 对齐：用户缺失 401，tier 缺失 500（不伪装成 user not found）。
+				writeAuthLoadError(w, err, "panel jwt")
 				return
 			}
 			if !user.Enabled {

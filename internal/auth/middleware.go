@@ -4,6 +4,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -54,6 +55,27 @@ func NewStoreAPIKeyResolver(st store.Store) APIKeyResolver {
 	return storeAPIKeyResolver{st: st}
 }
 
+// writeAuthLoadError 统一 JWT / MCP 鉴权在加载用户+tier 失败时的 HTTP 语义：
+// - 用户不存在 → 401 + "user not found"
+// - tier 缺失（含默认 tier0 / 已分配 tier）→ 500 + 错误信息（fail-closed，避免 0 限额被当成不限）
+// - 其它存储错误 → 500 + "authentication failed"
+func writeAuthLoadError(w http.ResponseWriter, err error, logPrefix string) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, store.ErrUserNotFound) {
+		http.Error(w, "user not found", http.StatusUnauthorized)
+		return
+	}
+	if errors.Is(err, store.ErrTierNotFound) {
+		log.Printf("%s: tier unavailable: %v", logPrefix, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("%s: authentication load failed: %v", logPrefix, err)
+	http.Error(w, "authentication failed", http.StatusInternalServerError)
+}
+
 // APIKeyMiddleware 校验 Bearer 是否为已启用密钥，成功后将 *store.APIKey 写入请求 context。
 func APIKeyMiddleware(resolver APIKeyResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -66,11 +88,7 @@ func APIKeyMiddleware(resolver APIKeyResolver) func(http.Handler) http.Handler {
 
 			key, user, err := resolver.Resolve(r.Context(), keyhash.HashAPIKey(token))
 			if err != nil {
-				if errors.Is(err, store.ErrTierNotFound) {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				http.Error(w, "authentication failed", http.StatusInternalServerError)
+				writeAuthLoadError(w, err, "mcp auth")
 				return
 			}
 			if key == nil {
