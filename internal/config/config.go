@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/grok-mcp/internal/store"
 )
 
 const (
@@ -41,22 +43,24 @@ type Config struct {
 	MCPIPRPM       int
 	// TrustedProxies 为可信反向代理 CIDR；仅当 RemoteAddr 命中时才解析 X-Forwarded-For / X-Real-IP。
 	// 空表示永不信任转发头（公网直连安全默认）。
-	TrustedProxies []*net.IPNet
-	ProxyURL       string
-	ProxyEnabled   bool
+	TrustedProxies   []*net.IPNet
+	ProxyURL         string
+	ProxyEnabled     bool
+	RegistrationMode store.RegistrationMode
 }
 
 // ServerSettings contains the runtime-tunable upstream settings exposed in the
 // admin panel. It intentionally excludes listener address, database path, and
 // JWT secret because changing those safely requires a process restart.
 type ServerSettings struct {
-	CPABaseURL     string
-	CPAAPIKey      string
-	Model          string
-	TimeoutSeconds int
-	ProxyURL       string
-	ProxyEnabled   bool
-	Debug          bool
+	CPABaseURL       string
+	CPAAPIKey        string
+	Model            string
+	TimeoutSeconds   int
+	ProxyURL         string
+	ProxyEnabled     bool
+	RegistrationMode store.RegistrationMode
+	Debug            bool
 }
 
 // Load 读取并校验配置。
@@ -147,13 +151,14 @@ func (c *Config) ServerSettings() ServerSettings {
 		timeoutSeconds = int(defaultTimeout / time.Second)
 	}
 	return ServerSettings{
-		CPABaseURL:     c.CPABaseURL,
-		CPAAPIKey:      c.CPAAPIKey,
-		Model:          c.Model,
-		TimeoutSeconds: timeoutSeconds,
-		ProxyURL:       c.ProxyURL,
-		ProxyEnabled:   c.ProxyEnabled,
-		Debug:          c.Debug,
+		CPABaseURL:       c.CPABaseURL,
+		CPAAPIKey:        c.CPAAPIKey,
+		Model:            c.Model,
+		TimeoutSeconds:   timeoutSeconds,
+		ProxyURL:         c.ProxyURL,
+		ProxyEnabled:     c.ProxyEnabled,
+		RegistrationMode: c.RegistrationMode,
+		Debug:            c.Debug,
 	}
 }
 
@@ -165,6 +170,7 @@ func (c *Config) ApplyServerSettings(settings ServerSettings) {
 	c.Timeout = time.Duration(settings.TimeoutSeconds) * time.Second
 	c.ProxyURL = settings.ProxyURL
 	c.ProxyEnabled = settings.ProxyEnabled
+	c.RegistrationMode = settings.RegistrationMode
 	c.Debug = settings.Debug
 }
 
@@ -175,6 +181,11 @@ func NormalizeServerSettings(settings ServerSettings) (ServerSettings, error) {
 	settings.CPAAPIKey = strings.TrimSpace(settings.CPAAPIKey)
 	settings.Model = strings.TrimSpace(settings.Model)
 	settings.ProxyURL = strings.TrimSpace(settings.ProxyURL)
+	registrationMode, err := store.NormalizeRegistrationMode(settings.RegistrationMode)
+	if err != nil {
+		return settings, err
+	}
+	settings.RegistrationMode = registrationMode
 
 	if settings.CPAAPIKey == "" {
 		return settings, fmt.Errorf("CPA_API_KEY is required")

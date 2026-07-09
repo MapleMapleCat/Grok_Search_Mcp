@@ -36,8 +36,9 @@ func panelTestServerWithAuthProtector(t *testing.T, authProtector *AuthProtector
 	h := &Handler{Store: st, Config: cfg, AuthProtector: authProtector}
 	mux := NewMux(h)
 	skip := map[string]struct{}{
-		"/panel/v1/auth/register": {},
-		"/panel/v1/auth/login":    {},
+		"/panel/v1/auth/register":              {},
+		"/panel/v1/auth/login":                 {},
+		"/panel/v1/auth/registration-settings": {},
 	}
 	var chain http.Handler = mux
 	chain = auth.JWTMiddleware(cfg.JWTSecret, st, skip)(chain)
@@ -58,8 +59,9 @@ func panelTestServerWithModelLister(t *testing.T, modelLister ModelLister) (*htt
 	h := &Handler{Store: st, Config: cfg, ModelLister: modelLister}
 	mux := NewMux(h)
 	skip := map[string]struct{}{
-		"/panel/v1/auth/register": {},
-		"/panel/v1/auth/login":    {},
+		"/panel/v1/auth/register":              {},
+		"/panel/v1/auth/login":                 {},
+		"/panel/v1/auth/registration-settings": {},
 	}
 	var chain http.Handler = mux
 	chain = auth.JWTMiddleware(cfg.JWTSecret, st, skip)(chain)

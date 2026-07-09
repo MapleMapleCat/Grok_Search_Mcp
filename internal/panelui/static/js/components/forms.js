@@ -2,6 +2,9 @@ import { state } from "../state.js";
 
 export function renderAuth() {
   const active = state.authMode;
+  const registrationMode = state.registrationSettings?.registration_mode || "free";
+  const registrationDisabled = registrationMode === "disabled";
+  const inviteRegistration = registrationMode === "invite";
   return `
     <main class="auth-screen">
       <section class="auth-card" aria-label="MCP Central 登录">
@@ -37,24 +40,41 @@ export function renderAuth() {
             </button>
           </form>
           <form id="register-form" class="form-stack ${active === "register" ? "" : "hidden"}">
-            <div class="field">
-              <label for="register-username">Desired Username</label>
-              <div class="input-shell">
-                <span class="material-symbols-outlined">badge</span>
-                <input id="register-username" name="username" class="input with-icon mono" autocomplete="username" placeholder="new_user" required>
+            ${registrationDisabled ? `
+              <div class="warning-box compact">
+                <span class="material-symbols-outlined">block</span>
+                <div>
+                  <strong>Registration is disabled.</strong>
+                  <p>管理员当前已关闭公开自助注册，请联系管理员创建账号。</p>
+                </div>
+              </div>` : `
+              <div class="field">
+                <label for="register-username">Desired Username</label>
+                <div class="input-shell">
+                  <span class="material-symbols-outlined">badge</span>
+                  <input id="register-username" name="username" class="input with-icon mono" autocomplete="username" placeholder="new_user" required>
+                </div>
               </div>
-            </div>
-            <div class="field">
-              <label for="register-password">Create Password</label>
-              <div class="input-shell">
-                <span class="material-symbols-outlined">key</span>
-                <input id="register-password" name="password" class="input with-icon mono" type="password" autocomplete="new-password" placeholder="至少 8 位" minlength="8" required>
+              <div class="field">
+                <label for="register-password">Create Password</label>
+                <div class="input-shell">
+                  <span class="material-symbols-outlined">key</span>
+                  <input id="register-password" name="password" class="input with-icon mono" type="password" autocomplete="new-password" placeholder="至少 8 位" minlength="8" required>
+                </div>
               </div>
-            </div>
-            <button class="button secondary" type="submit">
-              <span class="material-symbols-outlined">person_add</span>
-              <span>Create Account</span>
-            </button>
+              ${inviteRegistration ? `
+                <div class="field">
+                  <label for="register-invite-code">Invite Code</label>
+                  <div class="input-shell">
+                    <span class="material-symbols-outlined">confirmation_number</span>
+                    <input id="register-invite-code" name="invite_code" class="input with-icon mono" autocomplete="off" placeholder="Paste invite code" required>
+                  </div>
+                  <span class="hint">当前为邀请注册模式，必须提供有效且未耗尽的邀请码。</span>
+                </div>` : ""}
+              <button class="button secondary" type="submit">
+                <span class="material-symbols-outlined">person_add</span>
+                <span>Create Account</span>
+              </button>`}
           </form>
         </div>
       </section>

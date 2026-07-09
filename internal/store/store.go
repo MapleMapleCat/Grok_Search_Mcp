@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -32,8 +33,49 @@ var ErrTierNotAssignable = errors.New("tier_id must reference an existing tier")
 // ErrQuotaSuccess 表示用户成功请求额度已耗尽。
 var ErrQuotaSuccess = errors.New("success request limit exceeded")
 
+// ErrInviteCodeNotFound 表示按 ID 未找到邀请码。
+var ErrInviteCodeNotFound = errors.New("invite code not found")
+
+// ErrInviteCodeInvalid 表示注册时提供的邀请码不存在或格式无效。
+var ErrInviteCodeInvalid = errors.New("invalid invite code")
+
+// ErrInviteCodeDisabled 表示邀请码已被管理员禁用。
+var ErrInviteCodeDisabled = errors.New("invite code disabled")
+
+// ErrInviteCodeExhausted 表示邀请码已达到注册上限。
+var ErrInviteCodeExhausted = errors.New("invite code exhausted")
+
+// ErrInviteCodeLimitTooLow 表示新的注册上限低于当前已使用次数。
+var ErrInviteCodeLimitTooLow = errors.New("invite code registration limit is lower than current usage")
+
 // DefaultTierName 是新建用户与缺失 tier_id 时回退使用的默认等级名称。
 const DefaultTierName = "tier0"
+
+// RegistrationMode 控制公开注册入口如何放行新用户。
+type RegistrationMode string
+
+const (
+	// RegistrationModeFree 允许用户无需邀请码自助注册。
+	RegistrationModeFree RegistrationMode = "free"
+	// RegistrationModeInvite 要求用户提供有效且未耗尽的邀请码注册。
+	RegistrationModeInvite RegistrationMode = "invite"
+	// RegistrationModeDisabled 禁止公开自助注册。
+	RegistrationModeDisabled RegistrationMode = "disabled"
+)
+
+// NormalizeRegistrationMode canonicalizes the persisted/server setting value.
+func NormalizeRegistrationMode(mode RegistrationMode) (RegistrationMode, error) {
+	switch mode {
+	case "", RegistrationModeFree:
+		return RegistrationModeFree, nil
+	case RegistrationModeInvite:
+		return RegistrationModeInvite, nil
+	case RegistrationModeDisabled:
+		return RegistrationModeDisabled, nil
+	default:
+		return "", fmt.Errorf("registration_mode must be one of %q, %q, or %q", RegistrationModeFree, RegistrationModeInvite, RegistrationModeDisabled)
+	}
+}
 
 // UserRole 面板用户角色。
 type UserRole string
@@ -89,6 +131,19 @@ type APIKey struct {
 	TotalCalls int64
 }
 
+// InviteCode 表示一条注册邀请码。明文邀请码只在创建时返回一次，数据库仅保存哈希。
+type InviteCode struct {
+	ID                string
+	CodeHash          string
+	CodePrefix        string
+	RegistrationLimit int
+	RegistrationCount int
+	Enabled           bool
+	CreatedByUserID   string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
 // UsageRecord 为单次 MCP 工具调用的明细日志（工具名、耗时、是否成功等）。
 type UsageRecord struct {
 	ID         int64
@@ -116,16 +171,17 @@ type UsageStats struct {
 // the upstream gateway after a restart without exposing them back through the
 // panel API.
 type ServerSettings struct {
-	ID             string
-	CPABaseURL     string
-	CPAAPIKey      string
-	Model          string
-	TimeoutSeconds int
-	ProxyURL       string
-	ProxyEnabled   bool
-	Debug          bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string
+	CPABaseURL       string
+	CPAAPIKey        string
+	Model            string
+	TimeoutSeconds   int
+	ProxyURL         string
+	ProxyEnabled     bool
+	RegistrationMode RegistrationMode
+	Debug            bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // KeyUpdates 用于 PATCH 式更新密钥；指针字段为 nil 表示不修改该列。
@@ -153,6 +209,12 @@ type TierUpdates struct {
 	SuccessLimit *int
 }
 
+// InviteCodeUpdates 用于管理员 PATCH 邀请码；nil 表示不修改对应字段。
+type InviteCodeUpdates struct {
+	RegistrationLimit *int
+	Enabled           *bool
+}
+
 // Store 是用户、密钥 CRUD 与用量读写的接口，便于测试注入 mock。
 type Store interface {
 	Close() error
@@ -161,6 +223,8 @@ type Store interface {
 	CreateUser(ctx context.Context, username, passwordHash string, role UserRole) (*User, error)
 	// RegisterUser 自助注册：在同一事务内判断是否为首个用户并赋 admin，避免并发双管理员。
 	RegisterUser(ctx context.Context, username, passwordHash string) (*User, error)
+	// RegisterUserWithInviteCode 在同一事务中校验/消耗邀请码并创建普通用户。
+	RegisterUserWithInviteCode(ctx context.Context, username, passwordHash, rawInviteCode string) (*User, error)
 	GetUserByUsername(ctx context.Context, username string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
 	ListUsers(ctx context.Context) ([]*User, error)
@@ -193,6 +257,11 @@ type Store interface {
 	GetGlobalStats(ctx context.Context, since time.Time) (*UsageStats, error)
 	TouchKeyUsage(ctx context.Context, keyID string) error
 
+	ListInviteCodes(ctx context.Context) ([]*InviteCode, error)
+	CreateInviteCode(ctx context.Context, createdByUserID string, registrationLimit int) (*InviteCode, string, error)
+	UpdateInviteCode(ctx context.Context, id string, updates InviteCodeUpdates) (*InviteCode, error)
+	DeleteInviteCode(ctx context.Context, id string) error
+
 	GetServerSettings(ctx context.Context) (*ServerSettings, error)
 	UpsertServerSettings(ctx context.Context, settings ServerSettings) (*ServerSettings, error)
 }
@@ -200,13 +269,14 @@ type Store interface {
 // SettingsFields 是 ServerSettings 中可热更的上游连接字段（不含 ID/时间戳）。
 // 用于与 config.ServerSettings 等运行时类型做单向映射，避免字段逐个拷贝散落在调用方。
 type SettingsFields struct {
-	CPABaseURL     string
-	CPAAPIKey      string
-	Model          string
-	TimeoutSeconds int
-	ProxyURL       string
-	ProxyEnabled   bool
-	Debug          bool
+	CPABaseURL       string
+	CPAAPIKey        string
+	Model            string
+	TimeoutSeconds   int
+	ProxyURL         string
+	ProxyEnabled     bool
+	RegistrationMode RegistrationMode
+	Debug            bool
 }
 
 // SettingsFieldsFromStore 提取持久化设置中的可热更字段。
@@ -215,25 +285,27 @@ func SettingsFieldsFromStore(settings *ServerSettings) SettingsFields {
 		return SettingsFields{}
 	}
 	return SettingsFields{
-		CPABaseURL:     settings.CPABaseURL,
-		CPAAPIKey:      settings.CPAAPIKey,
-		Model:          settings.Model,
-		TimeoutSeconds: settings.TimeoutSeconds,
-		ProxyURL:       settings.ProxyURL,
-		ProxyEnabled:   settings.ProxyEnabled,
-		Debug:          settings.Debug,
+		CPABaseURL:       settings.CPABaseURL,
+		CPAAPIKey:        settings.CPAAPIKey,
+		Model:            settings.Model,
+		TimeoutSeconds:   settings.TimeoutSeconds,
+		ProxyURL:         settings.ProxyURL,
+		ProxyEnabled:     settings.ProxyEnabled,
+		RegistrationMode: settings.RegistrationMode,
+		Debug:            settings.Debug,
 	}
 }
 
 // ServerSettingsFromFields 将可热更字段组装为持久化结构（不含 ID/时间戳）。
 func ServerSettingsFromFields(fields SettingsFields) ServerSettings {
 	return ServerSettings{
-		CPABaseURL:     fields.CPABaseURL,
-		CPAAPIKey:      fields.CPAAPIKey,
-		Model:          fields.Model,
-		TimeoutSeconds: fields.TimeoutSeconds,
-		ProxyURL:       fields.ProxyURL,
-		ProxyEnabled:   fields.ProxyEnabled,
-		Debug:          fields.Debug,
+		CPABaseURL:       fields.CPABaseURL,
+		CPAAPIKey:        fields.CPAAPIKey,
+		Model:            fields.Model,
+		TimeoutSeconds:   fields.TimeoutSeconds,
+		ProxyURL:         fields.ProxyURL,
+		ProxyEnabled:     fields.ProxyEnabled,
+		RegistrationMode: fields.RegistrationMode,
+		Debug:            fields.Debug,
 	}
 }

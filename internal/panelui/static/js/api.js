@@ -69,6 +69,15 @@ export async function loadServerSettings() {
   state.serverSettings = await api("/admin/settings");
 }
 
+export async function loadRegistrationSettings() {
+  state.registrationSettings = await api("/auth/registration-settings", { auth: false });
+}
+
+export async function loadInviteCodes() {
+  const data = await api("/admin/invite-codes");
+  state.inviteCodes = Array.isArray(data.invite_codes) ? data.invite_codes : [];
+}
+
 export async function loadAggregatedUsage(mode) {
   const since = sinceQuery(mode);
   const data = await api(`/usage${since}`);

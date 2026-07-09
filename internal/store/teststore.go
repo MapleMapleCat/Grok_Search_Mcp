@@ -18,6 +18,9 @@ func (TestStore) CreateUser(context.Context, string, string, UserRole) (*User, e
 func (TestStore) RegisterUser(context.Context, string, string) (*User, error) {
 	return nil, nil
 }
+func (TestStore) RegisterUserWithInviteCode(context.Context, string, string, string) (*User, error) {
+	return nil, nil
+}
 func (TestStore) GetUserByUsername(context.Context, string) (*User, error) { return nil, nil }
 func (TestStore) GetUserByID(context.Context, string) (*User, error)       { return nil, ErrUserNotFound }
 func (TestStore) ListUsers(context.Context) ([]*User, error)               { return nil, nil }
@@ -77,3 +80,12 @@ func (TestStore) GetServerSettings(context.Context) (*ServerSettings, error) { r
 func (TestStore) UpsertServerSettings(context.Context, ServerSettings) (*ServerSettings, error) {
 	return nil, nil
 }
+
+func (TestStore) ListInviteCodes(context.Context) ([]*InviteCode, error) { return nil, nil }
+func (TestStore) CreateInviteCode(context.Context, string, int) (*InviteCode, string, error) {
+	return nil, "", nil
+}
+func (TestStore) UpdateInviteCode(context.Context, string, InviteCodeUpdates) (*InviteCode, error) {
+	return nil, nil
+}
+func (TestStore) DeleteInviteCode(context.Context, string) error { return nil }

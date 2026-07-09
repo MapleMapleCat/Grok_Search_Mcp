@@ -9,6 +9,8 @@ export function renderModal() {
   if (state.modal.type === "create-key") return renderCreateKeyModal();
   if (state.modal.type === "key-created") return renderKeyCreatedModal(state.modal);
   if (state.modal.type === "edit-key") return renderEditKeyModal(state.modal.key);
+  if (state.modal.type === "create-invite-code") return renderCreateInviteCodeModal();
+  if (state.modal.type === "edit-invite-code") return renderEditInviteCodeModal(state.modal.inviteCode);
   if (state.modal.type === "edit-user") return renderEditUserModal(state.modal.user);
   if (state.modal.type === "create-tier") return renderCreateTierModal();
   if (state.modal.type === "edit-tier") return renderEditTierModal(state.modal.tier);
@@ -360,6 +362,67 @@ export function renderEditKeyModal(key) {
             <div class="modal-actions">
               <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
               <button class="button" data-action="submit-edit-key" type="button"><span class="material-symbols-outlined">save</span><span>Save</span></button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderCreateInviteCodeModal() {
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="Create Invite Code" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>Create Invite Code</h3>
+          <p>Generate a one-time-visible registration invite code with a fixed registration limit.</p>
+          <form id="create-invite-code-form" class="form-stack" style="margin-top: 24px;">
+            <div class="field">
+              <label for="create-invite-code-limit">Registration Limit</label>
+              <input id="create-invite-code-limit" name="registration_limit" class="input mono" type="number" min="1" step="1" value="1" required>
+              <span class="hint">每个邀请码最多可成功注册的账号数量。邀请码注册模式未启用时，该邀请码不会影响普通注册。</span>
+            </div>
+            <div class="modal-actions">
+              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+              <button class="button" type="submit"><span class="material-symbols-outlined">add</span><span>Create</span></button>
+            </div>
+          </form>
+        </div>
+      </section>
+    </div>`;
+}
+
+export function renderEditInviteCodeModal(inviteCode) {
+  if (!inviteCode) return "";
+  const remainingRegistrations = Math.max(0, Number(inviteCode.registration_limit || 0) - Number(inviteCode.registration_count || 0));
+  return `
+    <div class="modal-backdrop" data-action="close-modal">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Invite Code" data-modal>
+        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
+        <div class="modal-body">
+          <h3>Edit Invite Code</h3>
+          <p>Manage invite code <span class="mono">${escapeHTML(inviteCode.code_prefix || inviteCode.id || "unknown")}</span>.</p>
+          <form id="edit-invite-code-form" class="form-stack" style="margin-top: 24px;">
+            <input type="hidden" name="id" value="${escapeAttr(inviteCode.id)}">
+            <div class="field">
+              <label for="edit-invite-code-limit">Registration Limit</label>
+              <input id="edit-invite-code-limit" name="registration_limit" class="input mono" type="number" min="${Number(inviteCode.registration_count) || 0}" step="1" value="${Number(inviteCode.registration_limit) || 1}" required>
+              <span class="hint">已使用 ${formatNumber(inviteCode.registration_count || 0)} 次，剩余 ${formatNumber(remainingRegistrations)} 次；上限不能低于已使用次数。</span>
+            </div>
+            <div class="field-row">
+              <span>
+                <strong>Enabled</strong>
+                <span class="hint" style="display: block;">Disabled invite codes cannot be used while invite-code registration mode is enabled.</span>
+              </span>
+              <label class="toggle">
+                <input type="checkbox" name="enabled" ${inviteCode.enabled ? "checked" : ""}>
+                <span></span>
+              </label>
+            </div>
+            <div class="modal-actions">
+              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
+              <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
             </div>
           </form>
         </div>

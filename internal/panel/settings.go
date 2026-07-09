@@ -126,6 +126,9 @@ func mergeServerSettingsRequest(currentSettings config.ServerSettings, req Updat
 	if req.ProxyEnabled != nil {
 		mergedSettings.ProxyEnabled = *req.ProxyEnabled
 	}
+	if req.RegistrationMode != nil {
+		mergedSettings.RegistrationMode = *req.RegistrationMode
+	}
 	if req.Debug != nil {
 		mergedSettings.Debug = *req.Debug
 	}

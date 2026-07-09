@@ -15,7 +15,10 @@ export const state = {
   keys: [],
   users: [],
   tiers: [],
+  inviteCodes: [],
   serverSettings: null,
+  registrationSettings: null,
+  createdInviteCode: null,
   usage: emptyUsage(),
   selectedKeyID: "all",
   sinceMode: "24h",
@@ -34,7 +37,9 @@ export function clearSession() {
   state.keys = [];
   state.users = [];
   state.tiers = [];
+  state.inviteCodes = [];
   state.serverSettings = null;
+  state.createdInviteCode = null;
   state.usage = emptyUsage();
   state.selectedKeyID = "all";
   state.usageActivityPage = 1;
@@ -57,6 +62,15 @@ export function filteredUsers() {
   const q = state.search.trim().toLowerCase();
   if (!q) return state.users;
   return state.users.filter((user) => [user.username, user.role, user.id].some((value) => String(value || "").toLowerCase().includes(q)));
+}
+
+export function filteredInviteCodes() {
+  const q = state.search.trim().toLowerCase();
+  if (!q) return state.inviteCodes;
+  return state.inviteCodes.filter((inviteCode) => {
+    const statusText = inviteCode.enabled ? "enabled" : "disabled";
+    return [inviteCode.id, inviteCode.code_prefix, statusText].some((value) => String(value || "").toLowerCase().includes(q));
+  });
 }
 
 export function filteredRecords(records) {

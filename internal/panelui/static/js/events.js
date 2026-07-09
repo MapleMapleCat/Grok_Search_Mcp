@@ -1,5 +1,5 @@
 import { loadRouteData, render } from "../app.js";
-import { api, loadKeys, loadServerSettings, loadTiers, loadUsers } from "./api.js";
+import { api, loadInviteCodes, loadKeys, loadRegistrationSettings, loadServerSettings, loadTiers, loadUsers } from "./api.js";
 import { notify } from "./components/toast.js";
 import { navigate } from "./router.js";
 import { clearSession, state, storage } from "./state.js";
@@ -27,6 +27,10 @@ export async function onSubmit(event) {
     await submitCreateTier(form);
   } else if (form.id === "edit-tier-form") {
     await submitEditTier(form);
+  } else if (form.id === "create-invite-code-form") {
+    await submitCreateInviteCode(form);
+  } else if (form.id === "edit-invite-code-form") {
+    await submitEditInviteCode(form);
   } else if (form.id === "server-settings-form") {
     await submitServerSettings(form);
   }
@@ -61,11 +65,15 @@ export async function submitRegister(form) {
   const data = new FormData(form);
   const username = String(data.get("username") || "").trim();
   const password = String(data.get("password") || "");
+  const body = { username, password };
+  if (state.registrationSettings?.registration_mode === "invite") {
+    body.invite_code = String(data.get("invite_code") || "").trim();
+  }
   try {
     await api("/auth/register", {
       method: "POST",
       auth: false,
-      body: { username, password }
+      body
     });
     notify("注册成功，正在登录。", "success");
     const loginForm = new FormData();
@@ -255,6 +263,7 @@ export async function submitServerSettings(form) {
     timeout_seconds: Number(data.get("timeout_seconds") || 0),
     proxy_url: String(data.get("proxy_url") || "").trim(),
     proxy_enabled: data.get("proxy_enabled") === "on",
+    registration_mode: String(data.get("registration_mode") || "free"),
     debug: data.get("debug") === "on"
   };
   if (cpaAPIKey !== "") {
@@ -265,7 +274,83 @@ export async function submitServerSettings(form) {
       method: "PATCH",
       body
     });
+    state.registrationSettings = { registration_mode: state.serverSettings.registration_mode || "free" };
     notify("服务器设置已保存。", "success");
+    render();
+  } catch (err) {
+    notify(errorText(err), "error");
+    render();
+  }
+}
+
+export async function submitCreateInviteCode(form) {
+  const data = new FormData(form);
+  try {
+    const response = await api("/admin/invite-codes", {
+      method: "POST",
+      body: { registration_limit: Number(data.get("registration_limit") || 0) }
+    });
+    state.modal = null;
+    state.createdInviteCode = response;
+    await loadInviteCodes();
+    notify("邀请码已创建。", "success");
+    render();
+    await copyCreatedInviteCode({ automatic: true });
+  } catch (err) {
+    notify(errorText(err), "error");
+    render();
+  }
+}
+
+export async function submitEditInviteCode(form) {
+  const data = new FormData(form);
+  const id = String(data.get("id") || "");
+  if (!id) {
+    notify("邀请码信息缺失，请刷新后重试。", "error");
+    render();
+    return;
+  }
+  try {
+    await api(`/admin/invite-codes/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: {
+        registration_limit: Number(data.get("registration_limit") || 0),
+        enabled: data.get("enabled") === "on"
+      }
+    });
+    state.modal = null;
+    await loadInviteCodes();
+    notify("邀请码已更新。", "success");
+    render();
+  } catch (err) {
+    notify(errorText(err), "error");
+    render();
+  }
+}
+
+export function openDeleteInviteCodeModal(id) {
+  const inviteCode = state.inviteCodes.find((item) => item.id === id);
+  if (!inviteCode) return;
+  state.modal = {
+    type: "delete-confirm",
+    title: "Delete invite code?",
+    message: `Delete invite code "${inviteCode.code_prefix || inviteCode.id}"?`,
+    detail: "Existing users created by this code are not affected. Deleted invite codes cannot be used again.",
+    confirmLabel: "Delete Invite Code",
+    confirmAction: "confirm-delete-invite-code",
+    targetId: inviteCode.id
+  };
+  render();
+}
+
+export async function deleteInviteCode(id) {
+  const inviteCode = state.inviteCodes.find((item) => item.id === id);
+  if (!inviteCode) return;
+  try {
+    await api(`/admin/invite-codes/${encodeURIComponent(id)}`, { method: "DELETE" });
+    state.modal = null;
+    await loadInviteCodes();
+    notify("邀请码已删除。", "success");
     render();
   } catch (err) {
     notify(errorText(err), "error");
@@ -382,6 +467,11 @@ export async function onClick(event) {
     }
   } else if (action === "copy-created-key") {
     await copyCreatedKey();
+  } else if (action === "copy-created-invite-code") {
+    await copyCreatedInviteCode();
+  } else if (action === "dismiss-created-invite-code") {
+    state.createdInviteCode = null;
+    render();
   } else if (action === "edit-key") {
     const key = state.keys.find((item) => item.id === actionEl.dataset.keyId);
     if (!key) return;
@@ -422,6 +512,18 @@ export async function onClick(event) {
     openDeleteUserModal(actionEl.dataset.userId);
   } else if (action === "confirm-delete-user") {
     await deleteUser(actionEl.dataset.targetId);
+  } else if (action === "open-create-invite-code") {
+    state.modal = { type: "create-invite-code" };
+    render();
+  } else if (action === "edit-invite-code") {
+    const inviteCode = state.inviteCodes.find((item) => item.id === actionEl.dataset.inviteCodeId);
+    if (!inviteCode) return;
+    state.modal = { type: "edit-invite-code", inviteCode };
+    render();
+  } else if (action === "delete-invite-code") {
+    openDeleteInviteCodeModal(actionEl.dataset.inviteCodeId);
+  } else if (action === "confirm-delete-invite-code") {
+    await deleteInviteCode(actionEl.dataset.targetId);
   } else if (action === "open-create-tier") {
     state.modal = { type: "create-tier" };
     render();
@@ -443,7 +545,12 @@ export async function onClick(event) {
     openDebugJSONModal(actionEl.dataset.recordId);
   } else if (action === "logout") {
     clearSession();
-    notify("已退出登录。", "success");
+    try {
+      await loadRegistrationSettings();
+      notify("已退出登录。", "success");
+    } catch (err) {
+      notify(`已退出登录，但注册设置刷新失败：${errorText(err)}`, "error");
+    }
     render();
   }
 }
@@ -455,6 +562,9 @@ export async function onChange(event) {
   if (target.matches("[data-key-toggle]")) {
     const checkbox = target;
     await updateKeyEnabled(checkbox.dataset.keyToggle, checkbox.checked);
+  } else if (target.matches("[data-invite-code-toggle]")) {
+    const checkbox = target;
+    await updateInviteCodeEnabled(checkbox.dataset.inviteCodeToggle, checkbox.checked);
   } else if (target.id === "usage-key-select") {
     if (state.selectedKeyID === target.value) {
       return;
@@ -516,6 +626,23 @@ export async function updateKeyEnabled(id, enabled) {
   } catch (err) {
     notify(errorText(err), "error");
     await loadKeys();
+    render();
+  }
+}
+
+export async function updateInviteCodeEnabled(id, enabled) {
+  try {
+    const response = await api(`/admin/invite-codes/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: { enabled }
+    });
+    const updatedInviteCode = response.invite_code || response;
+    state.inviteCodes = state.inviteCodes.map((inviteCode) => inviteCode.id === updatedInviteCode.id ? updatedInviteCode : inviteCode);
+    notify(enabled ? "邀请码已启用。" : "邀请码已禁用。", "success");
+    render();
+  } catch (err) {
+    notify(errorText(err), "error");
+    await loadInviteCodes();
     render();
   }
 }
@@ -613,6 +740,37 @@ export async function copyCreatedKey(options = {}) {
   return copied;
 }
 
+export async function copyCreatedInviteCode(options = {}) {
+  const input = document.getElementById("created-invite-code");
+  const value = input ? input.value : state.createdInviteCode && state.createdInviteCode.code;
+  if (!value) return;
+  let copied = copyTextWithSelection(value, input);
+  if (!copied) {
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        throw new Error("clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(value);
+      copied = true;
+    } catch {
+      copied = false;
+    }
+  }
+
+  if (copied) {
+    notify(options.automatic ? "邀请码已自动复制到剪贴板。" : "已复制到剪贴板。", "success");
+  } else {
+    window.clearTimeout(notify.timer);
+    state.toast = null;
+  }
+
+  render();
+  if (!copied) {
+    selectCreatedInviteCode();
+  }
+  return copied;
+}
+
 export function copyTextWithSelection(value, input) {
   const target = input || document.createElement("textarea");
   let appended = false;
@@ -643,6 +801,14 @@ export function copyTextWithSelection(value, input) {
 
 export function selectCreatedKey() {
   const input = document.getElementById("created-api-key");
+  if (!input) return;
+  input.focus({ preventScroll: true });
+  input.select();
+  input.setSelectionRange(0, input.value.length);
+}
+
+export function selectCreatedInviteCode() {
+  const input = document.getElementById("created-invite-code");
   if (!input) return;
   input.focus({ preventScroll: true });
   input.select();

@@ -41,6 +41,7 @@ type ServerSettingsApplier interface {
 func NewMux(h *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	authProtector := h.authProtector()
+	mux.HandleFunc("GET /panel/v1/auth/registration-settings", h.registrationSettings)
 	mux.Handle("POST /panel/v1/auth/register", authProtector.RateLimitAuthEndpoint(authEndpointRegister, http.HandlerFunc(h.register)))
 	mux.Handle("POST /panel/v1/auth/login", authProtector.RateLimitAuthEndpoint(authEndpointLogin, http.HandlerFunc(h.login)))
 	mux.HandleFunc("GET /panel/v1/me", h.me)
@@ -71,6 +72,10 @@ func (h *Handler) RegisterAdminRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("DELETE /panel/v1/admin/tiers/{id}", h.adminDeleteTier)
 	admin.HandleFunc("GET /panel/v1/admin/settings", h.adminGetServerSettings)
 	admin.HandleFunc("PATCH /panel/v1/admin/settings", h.adminUpdateServerSettings)
+	admin.HandleFunc("GET /panel/v1/admin/invite-codes", h.adminListInviteCodes)
+	admin.HandleFunc("POST /panel/v1/admin/invite-codes", h.adminCreateInviteCode)
+	admin.HandleFunc("PATCH /panel/v1/admin/invite-codes/{id}", h.adminUpdateInviteCode)
+	admin.HandleFunc("DELETE /panel/v1/admin/invite-codes/{id}", h.adminDeleteInviteCode)
 	admin.HandleFunc("GET /panel/v1/admin/models", h.adminListModels)
 	mux.Handle("/panel/v1/admin/", auth.RequireAdmin()(admin))
 }
@@ -171,6 +176,16 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
+	registrationMode, err := h.currentRegistrationMode(r)
+	if err != nil {
+		log.Printf("load registration mode before register failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "registration failed")
+		return
+	}
+	if registrationMode == store.RegistrationModeDisabled {
+		writeError(w, http.StatusForbidden, "registration is disabled")
+		return
+	}
 	username, err := validatePanelAuthCredentials(req.Username, req.Password)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -189,10 +204,27 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "password hash failed")
 		return
 	}
-	user, err := h.Store.RegisterUser(r.Context(), username, string(hash))
+	var user *store.User
+	if registrationMode == store.RegistrationModeInvite {
+		user, err = h.Store.RegisterUserWithInviteCode(r.Context(), username, string(hash), req.InviteCode)
+	} else {
+		user, err = h.Store.RegisterUser(r.Context(), username, string(hash))
+	}
 	if err != nil {
 		if errors.Is(err, store.ErrUsernameTaken) {
 			writeError(w, http.StatusConflict, "username already taken")
+			return
+		}
+		if errors.Is(err, store.ErrInviteCodeInvalid) {
+			writeError(w, http.StatusBadRequest, "valid invite code is required")
+			return
+		}
+		if errors.Is(err, store.ErrInviteCodeDisabled) {
+			writeError(w, http.StatusForbidden, "invite code is disabled")
+			return
+		}
+		if errors.Is(err, store.ErrInviteCodeExhausted) {
+			writeError(w, http.StatusForbidden, "invite code registration limit reached")
 			return
 		}
 		log.Printf("register user %q failed: %v", username, err)
@@ -200,6 +232,30 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, toUserResponseWithTier(user, h.loadUserTierForResponse(r.Context(), user)))
+}
+
+func (h *Handler) registrationSettings(w http.ResponseWriter, r *http.Request) {
+	registrationMode, err := h.currentRegistrationMode(r)
+	if err != nil {
+		log.Printf("load registration settings failed: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to load registration settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, RegistrationSettingsResponse{RegistrationMode: registrationMode})
+}
+
+func (h *Handler) currentRegistrationMode(r *http.Request) (store.RegistrationMode, error) {
+	storedSettings, err := h.Store.GetServerSettings(r.Context())
+	if err != nil {
+		return "", err
+	}
+	if storedSettings != nil {
+		return store.NormalizeRegistrationMode(storedSettings.RegistrationMode)
+	}
+	if h.Config == nil {
+		return store.RegistrationModeFree, nil
+	}
+	return store.NormalizeRegistrationMode(h.Config.RegistrationMode)
 }
 
 // dummyBcryptHash 是用于拉平登录时序的固定 bcrypt 哈希。

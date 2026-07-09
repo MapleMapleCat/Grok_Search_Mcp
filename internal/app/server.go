@@ -105,8 +105,9 @@ func Run(ctx context.Context, cfg *config.Config, server *mcp.Server, settingsAp
 	}
 	panelMux := panel.NewMux(panelHandler)
 	jwtSkip := map[string]struct{}{
-		"/panel/v1/auth/register": {},
-		"/panel/v1/auth/login":    {},
+		"/panel/v1/auth/register":              {},
+		"/panel/v1/auth/login":                 {},
+		"/panel/v1/auth/registration-settings": {},
 	}
 	var panelChain http.Handler = panelMux
 	panelChain = panel.MaxBodyMiddleware(panel.MaxPanelBodyBytes())(panelChain)

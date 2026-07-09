@@ -1,6 +1,7 @@
 import { loadRouteData, render } from "../app.js";
 import { renderAccount } from "./pages/account.js";
 import { renderDashboard } from "./pages/dashboard.js";
+import { renderInviteCodes } from "./pages/invite-codes.js";
 import { renderKeys } from "./pages/keys.js";
 import { renderTiers } from "./pages/tiers.js";
 import { renderServerSettings } from "./pages/settings.js";
@@ -9,7 +10,7 @@ import { renderUsage } from "./pages/usage.js";
 import { renderUsers } from "./pages/users.js";
 import { isAdmin, state } from "./state.js";
 
-export const routes = ["dashboard", "keys", "usage", "users", "tiers", "tutorial", "settings", "account"];
+export const routes = ["dashboard", "keys", "usage", "users", "tiers", "invites", "tutorial", "settings", "account"];
 
 export const routeMeta = {
   dashboard: { label: "Dashboard", icon: "dashboard" },
@@ -17,6 +18,7 @@ export const routeMeta = {
   usage: { label: "Usage Stats", icon: "bar_chart" },
   users: { label: "User Management", icon: "group", admin: true, hideWhenUnauthorized: true },
   tiers: { label: "Tier Management", icon: "workspace_premium", admin: true, hideWhenUnauthorized: true },
+  invites: { label: "Invitation Codes", icon: "confirmation_number", admin: true, hideWhenUnauthorized: true },
   tutorial: { label: "Configuration Tutorial", icon: "menu_book" },
   settings: { label: "Server Settings", icon: "settings_applications", bottom: true, admin: true, hideWhenUnauthorized: true },
   account: { label: "Account Settings", icon: "settings", bottom: true }
@@ -33,6 +35,7 @@ export function renderRoute() {
   if (state.route === "usage") return renderUsage();
   if (state.route === "users") return renderUsers();
   if (state.route === "tiers") return renderTiers();
+  if (state.route === "invites") return renderInviteCodes();
   if (state.route === "tutorial") return renderConfigurationTutorial();
   if (state.route === "settings") return renderServerSettings();
   if (state.route === "account") return renderAccount();

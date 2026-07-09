@@ -26,6 +26,8 @@ export function renderServerSettings() {
   const proxyURL = settings.proxy_url || "";
   const proxyEnabled = Boolean(settings.proxy_enabled);
   const debugEnabled = Boolean(settings.debug);
+  const registrationMode = settings.registration_mode || "free";
+  const registrationModeLabel = registrationModeLabelText(registrationMode);
   const apiKeyConfigured = Boolean(settings.cpa_api_key_set);
   const apiKeyPreview = settings.cpa_api_key_preview || "configured";
   const lastUpdated = settings.updated_at ? formatDateTime(settings.updated_at) : "Not saved yet";
@@ -72,6 +74,16 @@ export function renderServerSettings() {
               <label for="settings-timeout-seconds">Timeout Seconds</label>
               <input id="settings-timeout-seconds" name="timeout_seconds" class="input mono" type="number" min="1" step="1" value="${escapeAttr(timeoutSeconds)}" required>
             </span>
+          </div>
+
+          <div class="field">
+            <label for="settings-registration-mode">Registration Mode</label>
+            <select id="settings-registration-mode" name="registration_mode" class="select">
+              <option value="free" ${registrationMode === "free" ? "selected" : ""}>Free registration</option>
+              <option value="invite" ${registrationMode === "invite" ? "selected" : ""}>Invite-code registration</option>
+              <option value="disabled" ${registrationMode === "disabled" ? "selected" : ""}>Registration disabled</option>
+            </select>
+            <span class="hint">只有在邀请码注册模式下，注册表单才要求邀请码并消耗邀请码额度；自由注册和禁止注册模式不会消耗任何邀请码。</span>
           </div>
 
           <div class="field-row">
@@ -127,6 +139,7 @@ export function renderServerSettings() {
           ${renderSettingsSummaryItem("Base URL", cpaBaseURL || "Not configured")}
           ${renderSettingsSummaryItem("Responses Endpoint", cpaBaseURL ? `${cpaBaseURL}/v1/responses` : "Not configured")}
           ${renderSettingsSummaryItem("API Key", apiKeyConfigured ? apiKeyPreview : "Not configured")}
+          ${renderSettingsSummaryItem("Registration", registrationModeLabel)}
           ${renderSettingsSummaryItem("Proxy", proxyEnabled ? proxyURL || "Enabled, URL missing" : "Disabled")}
           ${renderSettingsSummaryItem("Last Updated", lastUpdated)}
         </div>
@@ -147,4 +160,10 @@ function renderSettingsSummaryItem(label, value) {
       <span class="summary-label">${escapeHTML(label)}</span>
       <span class="mono">${escapeHTML(value)}</span>
     </div>`;
+}
+
+function registrationModeLabelText(registrationMode) {
+  if (registrationMode === "invite") return "Invite-code registration";
+  if (registrationMode === "disabled") return "Registration disabled";
+  return "Free registration";
 }

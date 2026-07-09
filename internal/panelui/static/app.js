@@ -1,4 +1,4 @@
-import { api, loadAggregatedUsage, loadKeys, loadServerSettings, loadTiers, loadUsageForSelection, loadUsers } from "./js/api.js";
+import { api, loadAggregatedUsage, loadInviteCodes, loadKeys, loadRegistrationSettings, loadServerSettings, loadTiers, loadUsageForSelection, loadUsers } from "./js/api.js";
 import { renderAuth } from "./js/components/forms.js";
 import { renderShell } from "./js/components/layout.js";
 import { renderLoading } from "./js/components/loading.js";
@@ -29,9 +29,15 @@ bootstrap();
 
 export async function bootstrap() {
   if (!state.token) {
-    state.ready = true;
-    render();
-    return;
+    try {
+      await loadRegistrationSettings();
+    } catch (err) {
+      notify(errorText(err), "error");
+    } finally {
+      state.ready = true;
+      render();
+      return;
+    }
   }
   try {
     state.user = await api("/me");
@@ -68,6 +74,9 @@ export async function loadRouteData() {
       await loadTiers();
     } else if (state.route === "tiers" && isAdmin()) {
       await loadTiers();
+    } else if (state.route === "invites" && isAdmin()) {
+      await loadInviteCodes();
+      await loadServerSettings();
     } else if (state.route === "settings" && isAdmin()) {
       await loadServerSettings();
     }

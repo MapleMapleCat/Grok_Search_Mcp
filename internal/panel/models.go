@@ -10,8 +10,9 @@ import (
 )
 
 type RegisterRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	InviteCode string `json:"invite_code,omitempty"`
 }
 
 type LoginRequest struct {
@@ -103,15 +104,20 @@ type UpdateTierRequest struct {
 }
 
 type ServerSettingsResponse struct {
-	CPABaseURL       string     `json:"cpa_base_url"`
-	CPAAPIKeySet     bool       `json:"cpa_api_key_set"`
-	CPAAPIKeyPreview string     `json:"cpa_api_key_preview,omitempty"`
-	Model            string     `json:"model"`
-	TimeoutSeconds   int        `json:"timeout_seconds"`
-	ProxyURL         string     `json:"proxy_url"`
-	ProxyEnabled     bool       `json:"proxy_enabled"`
-	Debug            bool       `json:"debug"`
-	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+	CPABaseURL       string                 `json:"cpa_base_url"`
+	CPAAPIKeySet     bool                   `json:"cpa_api_key_set"`
+	CPAAPIKeyPreview string                 `json:"cpa_api_key_preview,omitempty"`
+	Model            string                 `json:"model"`
+	TimeoutSeconds   int                    `json:"timeout_seconds"`
+	ProxyURL         string                 `json:"proxy_url"`
+	ProxyEnabled     bool                   `json:"proxy_enabled"`
+	RegistrationMode store.RegistrationMode `json:"registration_mode"`
+	Debug            bool                   `json:"debug"`
+	UpdatedAt        *time.Time             `json:"updated_at,omitempty"`
+}
+
+type RegistrationSettingsResponse struct {
+	RegistrationMode store.RegistrationMode `json:"registration_mode"`
 }
 
 type ModelResponse struct {
@@ -123,13 +129,43 @@ type ModelsResponse struct {
 }
 
 type UpdateServerSettingsRequest struct {
-	CPABaseURL     *string `json:"cpa_base_url,omitempty"`
-	CPAAPIKey      *string `json:"cpa_api_key,omitempty"`
-	Model          *string `json:"model,omitempty"`
-	TimeoutSeconds *int    `json:"timeout_seconds,omitempty"`
-	ProxyURL       *string `json:"proxy_url,omitempty"`
-	ProxyEnabled   *bool   `json:"proxy_enabled,omitempty"`
-	Debug          *bool   `json:"debug,omitempty"`
+	CPABaseURL       *string                 `json:"cpa_base_url,omitempty"`
+	CPAAPIKey        *string                 `json:"cpa_api_key,omitempty"`
+	Model            *string                 `json:"model,omitempty"`
+	TimeoutSeconds   *int                    `json:"timeout_seconds,omitempty"`
+	ProxyURL         *string                 `json:"proxy_url,omitempty"`
+	ProxyEnabled     *bool                   `json:"proxy_enabled,omitempty"`
+	RegistrationMode *store.RegistrationMode `json:"registration_mode,omitempty"`
+	Debug            *bool                   `json:"debug,omitempty"`
+}
+
+type InviteCodeResponse struct {
+	ID                string    `json:"id"`
+	CodePrefix        string    `json:"code_prefix"`
+	RegistrationLimit int       `json:"registration_limit"`
+	RegistrationCount int       `json:"registration_count"`
+	Enabled           bool      `json:"enabled"`
+	CreatedByUserID   string    `json:"created_by_user_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type InviteCodesResponse struct {
+	InviteCodes []InviteCodeResponse `json:"invite_codes"`
+}
+
+type CreateInviteCodeRequest struct {
+	RegistrationLimit int `json:"registration_limit"`
+}
+
+type CreateInviteCodeResponse struct {
+	InviteCode InviteCodeResponse `json:"invite_code"`
+	Code       string             `json:"code"`
+}
+
+type UpdateInviteCodeRequest struct {
+	RegistrationLimit *int  `json:"registration_limit,omitempty"`
+	Enabled           *bool `json:"enabled,omitempty"`
 }
 
 type UsageStatsResponse struct {
@@ -202,8 +238,22 @@ func toServerSettingsResponse(settings config.ServerSettings, updatedAt *time.Ti
 		TimeoutSeconds:   settings.TimeoutSeconds,
 		ProxyURL:         settings.ProxyURL,
 		ProxyEnabled:     settings.ProxyEnabled,
+		RegistrationMode: settings.RegistrationMode,
 		Debug:            settings.Debug,
 		UpdatedAt:        updatedAt,
+	}
+}
+
+func toInviteCodeResponse(inviteCode *store.InviteCode) InviteCodeResponse {
+	return InviteCodeResponse{
+		ID:                inviteCode.ID,
+		CodePrefix:        inviteCode.CodePrefix,
+		RegistrationLimit: inviteCode.RegistrationLimit,
+		RegistrationCount: inviteCode.RegistrationCount,
+		Enabled:           inviteCode.Enabled,
+		CreatedByUserID:   inviteCode.CreatedByUserID,
+		CreatedAt:         inviteCode.CreatedAt,
+		UpdatedAt:         inviteCode.UpdatedAt,
 	}
 }
 

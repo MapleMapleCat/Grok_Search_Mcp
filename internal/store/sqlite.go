@@ -390,6 +390,7 @@ func scanServerSettings(row interface {
 }) (*ServerSettings, error) {
 	var settings ServerSettings
 	var proxyEnabled int
+	var registrationMode string
 	var debug int
 	var createdAt string
 	var updatedAt string
@@ -401,6 +402,7 @@ func scanServerSettings(row interface {
 		&settings.TimeoutSeconds,
 		&settings.ProxyURL,
 		&proxyEnabled,
+		&registrationMode,
 		&debug,
 		&createdAt,
 		&updatedAt,
@@ -409,6 +411,11 @@ func scanServerSettings(row interface {
 		return nil, err
 	}
 	settings.ProxyEnabled = proxyEnabled != 0
+	var normalizeErr error
+	settings.RegistrationMode, normalizeErr = NormalizeRegistrationMode(RegistrationMode(registrationMode))
+	if normalizeErr != nil {
+		return nil, normalizeErr
+	}
 	settings.Debug = debug != 0
 	var parseErr error
 	settings.CreatedAt, parseErr = parseTime(createdAt)
@@ -422,7 +429,7 @@ func scanServerSettings(row interface {
 	return &settings, nil
 }
 
-const serverSettingsColumns = `id, cpa_base_url, cpa_api_key, model, timeout_seconds, proxy_url, proxy_enabled, debug, created_at, updated_at`
+const serverSettingsColumns = `id, cpa_base_url, cpa_api_key, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at`
 
 func (s *SQLiteStore) GetServerSettings(ctx context.Context) (*ServerSettings, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+serverSettingsColumns+` FROM server_settings WHERE id = ?`, serverSettingsID)
@@ -450,6 +457,10 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 	if settings.TimeoutSeconds <= 0 {
 		return nil, fmt.Errorf("timeout_seconds must be positive")
 	}
+	registrationMode, err := NormalizeRegistrationMode(settings.RegistrationMode)
+	if err != nil {
+		return nil, err
+	}
 
 	proxyEnabled := 0
 	if settings.ProxyEnabled {
@@ -460,10 +471,10 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 		debug = 1
 	}
 	now := formatTime(time.Now().UTC())
-	_, err := s.db.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO server_settings (
-			id, cpa_base_url, cpa_api_key, model, timeout_seconds, proxy_url, proxy_enabled, debug, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			id, cpa_base_url, cpa_api_key, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			cpa_base_url = excluded.cpa_base_url,
 			cpa_api_key = excluded.cpa_api_key,
@@ -471,6 +482,7 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 			timeout_seconds = excluded.timeout_seconds,
 			proxy_url = excluded.proxy_url,
 			proxy_enabled = excluded.proxy_enabled,
+			registration_mode = excluded.registration_mode,
 			debug = excluded.debug,
 			updated_at = excluded.updated_at`,
 		serverSettingsID,
@@ -480,6 +492,7 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 		settings.TimeoutSeconds,
 		proxyURL,
 		proxyEnabled,
+		string(registrationMode),
 		debug,
 		now,
 		now,
