@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/grok-mcp/internal/auth"
+	"github.com/grok-mcp/internal/usage"
 	"golang.org/x/time/rate"
 )
 
@@ -92,10 +93,19 @@ func (l *UserLimiter) Close() {
 	l.closeOnce.Do(func() { close(l.stop) })
 }
 
-// UserMiddleware 对已鉴权 MCP 请求按用户 RPM 限流。rpm==0 表示不限；负数为非法配置。
+// UserMiddleware 对已鉴权的 tools/call 按用户 RPM 限流。
+// initialize / tools/list / ping 等握手请求不计入 RPM，与 quota/usage 口径一致。
+// 需挂在 ExtractToolNameMiddleware 之后，以便从 context 读取工具名；
+// 未提取到工具名时不限流（非 tools/call 或尚未解析）。
+// rpm==0 表示不限；负数为非法配置。
 func (l *UserLimiter) UserMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			toolName, hasToolName := usage.ToolNameFromContext(r.Context())
+			if !hasToolName || toolName == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
 			user, ok := auth.UserFromContext(r.Context())
 			if !ok {
 				next.ServeHTTP(w, r)

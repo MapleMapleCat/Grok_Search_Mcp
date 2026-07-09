@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,8 +16,11 @@ type ipEntry struct {
 }
 
 // IPLimiter 按来源 IP 共享令牌桶，适合放在鉴权之前保护认证存储。
+// 默认仅使用 RemoteAddr，避免公网直连时伪造 X-Forwarded-For。
+// 当配置了可信反代 CIDR 且 RemoteAddr 落在其中时，才解析 X-Real-IP / X-Forwarded-For。
 type IPLimiter struct {
 	requestsPerMinute int
+	trustedProxies    []*net.IPNet
 	mu                sync.Mutex
 	entries           map[string]*ipEntry
 	closeOnce         sync.Once
@@ -37,9 +41,35 @@ func NewIPLimiter(requestsPerMinute int) *IPLimiter {
 	return limiter
 }
 
-func (limiter *IPLimiter) allow(remoteAddress string) bool {
+// SetTrustedProxies 设置可信反向代理网段；nil/空表示永不信任转发头。
+func (limiter *IPLimiter) SetTrustedProxies(networks []*net.IPNet) {
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	if len(networks) == 0 {
+		limiter.trustedProxies = nil
+		return
+	}
+	copied := make([]*net.IPNet, 0, len(networks))
+	for _, network := range networks {
+		if network == nil {
+			continue
+		}
+		// Clone IPNet so callers cannot mutate the limiter after Set.
+		ipCopy := make(net.IP, len(network.IP))
+		copy(ipCopy, network.IP)
+		maskCopy := make(net.IPMask, len(network.Mask))
+		copy(maskCopy, network.Mask)
+		copied = append(copied, &net.IPNet{IP: ipCopy, Mask: maskCopy})
+	}
+	limiter.trustedProxies = copied
+}
+
+func (limiter *IPLimiter) allow(clientAddress string) bool {
 	now := time.Now()
-	clientAddress := clientAddressForLimit(remoteAddress)
+	clientAddress = strings.TrimSpace(clientAddress)
+	if clientAddress == "" {
+		clientAddress = "unknown"
+	}
 
 	limiter.mu.Lock()
 	defer limiter.mu.Unlock()
@@ -82,11 +112,12 @@ func (limiter *IPLimiter) Close() {
 	limiter.closeOnce.Do(func() { close(limiter.stop) })
 }
 
-// Middleware 对请求按来源 IP 限流。它不信任 X-Forwarded-For，避免公网直连时被伪造绕过。
+// Middleware 对请求按来源 IP 限流。
+// 未配置可信代理时只使用 RemoteAddr；配置后仅当直连对端在可信网段内才解析转发头。
 func (limiter *IPLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !limiter.allow(r.RemoteAddr) {
+			if !limiter.allow(limiter.clientIP(r)) {
 				w.Header().Set("Retry-After", "60")
 				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 				return
@@ -96,10 +127,77 @@ func (limiter *IPLimiter) Middleware() func(http.Handler) http.Handler {
 	}
 }
 
+func (limiter *IPLimiter) clientIP(r *http.Request) string {
+	remoteHost := clientAddressForLimit(r.RemoteAddr)
+	limiter.mu.Lock()
+	trusted := limiter.trustedProxies
+	limiter.mu.Unlock()
+
+	if len(trusted) == 0 || !ipHostInNetworks(remoteHost, trusted) {
+		return remoteHost
+	}
+
+	// Immediate peer is a trusted reverse proxy: resolve the original client.
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		if host := normalizeIPHost(realIP); host != "" {
+			return host
+		}
+	}
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		// Prefer the rightmost untrusted hop so intermediate trusted proxies are skipped.
+		parts := strings.Split(forwarded, ",")
+		for index := len(parts) - 1; index >= 0; index-- {
+			host := normalizeIPHost(parts[index])
+			if host == "" {
+				continue
+			}
+			if !ipHostInNetworks(host, trusted) {
+				return host
+			}
+		}
+		// All hops trusted: fall back to leftmost (original client).
+		for _, part := range parts {
+			if host := normalizeIPHost(part); host != "" {
+				return host
+			}
+		}
+	}
+	return remoteHost
+}
+
 func clientAddressForLimit(remoteAddress string) string {
 	host, _, err := net.SplitHostPort(remoteAddress)
 	if err != nil || host == "" {
 		return remoteAddress
 	}
 	return host
+}
+
+func normalizeIPHost(raw string) string {
+	host := strings.TrimSpace(raw)
+	if host == "" {
+		return ""
+	}
+	// X-Forwarded-For entries are usually bare IPs; tolerate host:port.
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(host, "[]")
+	if ip := net.ParseIP(host); ip == nil {
+		return ""
+	}
+	return host
+}
+
+func ipHostInNetworks(host string, networks []*net.IPNet) bool {
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		return false
+	}
+	for _, network := range networks {
+		if network != nil && network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }

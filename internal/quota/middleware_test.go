@@ -163,6 +163,26 @@ func TestReserveSuccessInternalError(t *testing.T) {
 	}
 }
 
+func TestReserveUserNotFoundReturnsForbidden(t *testing.T) {
+	st := &recordingStore{reserveSuccessErr: store.ErrUserNotFound}
+	called := false
+	h := MCPMiddleware(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+
+	req := newToolCallRequest("grok_web_search")
+	req = req.WithContext(auth.WithUser(req.Context(), &store.User{ID: "deleted-user"}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if called {
+		t.Fatal("handler must not be called when the authenticated user disappeared")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("want 403 for deleted user race, got %d", rec.Code)
+	}
+}
+
 // TestFallbackToPeekWhenNoContextName 验证未挂载 ExtractToolNameMiddleware 的旧链路：
 // quota.MCPMiddleware 会回退到 usage.PeekToolName 解析一次。
 func TestFallbackToPeekWhenNoContextName(t *testing.T) {

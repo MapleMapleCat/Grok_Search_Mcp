@@ -70,6 +70,26 @@ func TestFirstUserAdminAndSuccessQuotaReserve(t *testing.T) {
 	}
 }
 
+func TestTryIncrementUserSuccessCallsDistinguishesMissingUserFromQuota(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+
+	if err := s.TryIncrementUserSuccessCalls(ctx, "missing-user", 1); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("expected missing user error, got %v", err)
+	}
+
+	user, err := s.CreateUser(ctx, "quota-user", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TryIncrementUserSuccessCalls(ctx, user.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TryIncrementUserSuccessCalls(ctx, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+		t.Fatalf("expected quota error for existing exhausted user, got %v", err)
+	}
+}
+
 func TestReserveAndReleaseSuccessCall(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()

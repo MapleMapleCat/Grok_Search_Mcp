@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -183,7 +184,7 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 			defer func() {
 				if rcv := recover(); rcv != nil {
 					if hasUser {
-						_ = st.ReleaseSuccessCall(r.Context(), user.ID)
+						releaseReservedSuccessCall(st, r.Context(), user.ID)
 					}
 					panic(rcv)
 				}
@@ -202,7 +203,7 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 
 			if hasUser {
 				if !mcpOK {
-					_ = st.ReleaseSuccessCall(r.Context(), user.ID)
+					releaseReservedSuccessCall(st, r.Context(), user.ID)
 				}
 			}
 			if writer != nil {
@@ -221,21 +222,39 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 	}
 }
 
+const quotaReleaseTimeout = 2 * time.Second
+
+func releaseReservedSuccessCall(st store.Store, requestContext context.Context, userID string) {
+	if st == nil || strings.TrimSpace(userID) == "" {
+		return
+	}
+	releaseContext, cancel := context.WithTimeout(context.WithoutCancel(requestContext), quotaReleaseTimeout)
+	defer cancel()
+	if err := st.ReleaseSuccessCall(releaseContext, userID); err != nil {
+		log.Printf("release success quota failed user=%s: %v", userID, err)
+	}
+}
+
 func serverDebugEnabled(ctx context.Context, st store.Store) bool {
 	settings, err := st.GetServerSettings(ctx)
 	return err == nil && settings != nil && settings.Debug
 }
 
+const maxDebugRequestBody = 1 << 20 // 1 MiB
+
 func captureAndRestoreRequestBody(r *http.Request) ([]byte, bool) {
 	if r.Body == nil {
 		return nil, false
 	}
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxDebugRequestBody+1))
 	// Restore every byte already read plus the unread tail, so downstream MCP handling
 	// still receives the original request body.
 	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 	if err != nil {
 		return []byte("read request body failed: " + err.Error()), false
+	}
+	if len(body) > maxDebugRequestBody {
+		return body[:maxDebugRequestBody], true
 	}
 	return body, false
 }

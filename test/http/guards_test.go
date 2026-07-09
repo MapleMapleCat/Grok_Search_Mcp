@@ -59,12 +59,12 @@ func bootIntegrationEnv(t *testing.T, cpa *httptest.Server) *integrationEnv {
 		return server
 	}, &mcp.StreamableHTTPOptions{Stateless: true})
 	var mcpChain http.Handler = mcpHandler
-	mcpChain = panel.MaxBodyMiddleware(panel.MaxPanelBodyBytes())(mcpChain)
 	mcpChain = usage.MCPMiddleware(st, writer)(mcpChain)
 	mcpChain = quota.MCPMiddleware(st)(mcpChain)
-	mcpChain = usage.ExtractToolNameMiddleware()(mcpChain)
 	mcpChain = userLim.UserMiddleware()(mcpChain)
+	mcpChain = usage.ExtractToolNameMiddleware()(mcpChain)
 	mcpChain = auth.APIKeyMiddleware(authResolver)(mcpChain)
+	mcpChain = panel.MaxBodyMiddleware(panel.MaxPanelBodyBytes())(mcpChain)
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpChain)
 	ph := &panel.Handler{Store: st, Config: cfg, AuthCache: authResolver}

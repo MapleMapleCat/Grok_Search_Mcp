@@ -69,6 +69,7 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server, settin
 	userLim := ratelimit.NewUserLimiter(cfg.DefaultUserRPM)
 	defer userLim.Close()
 	mcpIPLimiter := ratelimit.NewIPLimiter(cfg.MCPIPRPM)
+	mcpIPLimiter.SetTrustedProxies(cfg.TrustedProxies)
 	defer mcpIPLimiter.Close()
 
 	authResolver := auth.NewCachedAPIKeyResolver(st, 30*time.Second)
@@ -77,14 +78,17 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server, settin
 		return server
 	}, &mcp.StreamableHTTPOptions{Stateless: true})
 
+	// MCP 中间件由内到外包装；请求实际顺序为：
+	// MaxBody → IP RPM → API Key → ExtractToolName → User RPM(tools/call) → Quota → Usage → MCP handler
+	// MaxBody 必须在 Extract/Usage 读 Body 之前生效，避免中间件路径绕过体积上限。
 	var mcpChain http.Handler = mcpHandler
-	mcpChain = panel.MaxBodyMiddleware(panel.MaxPanelBodyBytes())(mcpChain)
 	mcpChain = usage.MCPMiddleware(st, usageWriter)(mcpChain)
 	mcpChain = quota.MCPMiddleware(st)(mcpChain)
-	mcpChain = usage.ExtractToolNameMiddleware()(mcpChain)
 	mcpChain = userLim.UserMiddleware()(mcpChain)
+	mcpChain = usage.ExtractToolNameMiddleware()(mcpChain)
 	mcpChain = auth.APIKeyMiddleware(authResolver)(mcpChain)
 	mcpChain = mcpIPLimiter.Middleware()(mcpChain)
+	mcpChain = panel.MaxBodyMiddleware(panel.MaxPanelBodyBytes())(mcpChain)
 
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/mcp/", mcpChain)

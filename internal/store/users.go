@@ -407,6 +407,7 @@ func (s *SQLiteStore) ReleaseSuccessCall(ctx context.Context, userID string) err
 }
 
 // TryIncrementUserSuccessCalls 仅在未达当月 success_limit 时递增；success_limit 为 0 表示不限。
+// RowsAffected==0 时区分用户不存在（ErrUserNotFound）与额度耗尽（ErrQuotaSuccess）。
 func (s *SQLiteStore) TryIncrementUserSuccessCalls(ctx context.Context, userID string, successLimit int) error {
 	period := successQuotaPeriod(ctx)
 	res, err := s.db.ExecContext(ctx,
@@ -422,6 +423,14 @@ func (s *SQLiteStore) TryIncrementUserSuccessCalls(ctx context.Context, userID s
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		var exists int
+		lookupErr := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, userID).Scan(&exists)
+		if lookupErr == sql.ErrNoRows {
+			return ErrUserNotFound
+		}
+		if lookupErr != nil {
+			return lookupErr
+		}
 		return ErrQuotaSuccess
 	}
 	return nil

@@ -34,6 +34,11 @@ func MCPMiddleware(st store.Store) func(http.Handler) http.Handler {
 					http.Error(w, "success request limit exceeded", http.StatusTooManyRequests)
 					return
 				}
+				if errors.Is(err, store.ErrUserNotFound) {
+					// 鉴权后用户被删除等竞态：返回 403，避免误报 429 额度耗尽。
+					http.Error(w, "user not found", http.StatusForbidden)
+					return
+				}
 				http.Error(w, "quota check failed", http.StatusInternalServerError)
 				return
 			}

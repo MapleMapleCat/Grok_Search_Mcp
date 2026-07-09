@@ -192,6 +192,18 @@ func (r *releaseCountingStore) ReleaseSuccessCall(context.Context, string) error
 	return nil
 }
 
+type releaseContextRecordingStore struct {
+	store.TestStore
+	releaseSuccessCalls int
+	releaseContextErr   error
+}
+
+func (r *releaseContextRecordingStore) ReleaseSuccessCall(ctx context.Context, _ string) error {
+	r.releaseSuccessCalls++
+	r.releaseContextErr = ctx.Err()
+	return nil
+}
+
 type failureRecordingStore struct {
 	store.TestStore
 	releaseSuccessCalls int
@@ -266,6 +278,52 @@ func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testin
 				t.Fatalf("unexpected tool name in usage record: %+v", st.recordedUsage[0])
 			}
 		})
+	}
+}
+
+func TestMCPMiddlewareReleasesWithLiveContextAfterRequestCancel(t *testing.T) {
+	key := &store.APIKey{ID: "k1"}
+	user := &store.User{ID: "u1"}
+	st := &releaseContextRecordingStore{}
+	h := MCPMiddleware(st, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "upstream unavailable", http.StatusBadGateway)
+	}))
+
+	baseContext, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`)).WithContext(baseContext)
+	ctx := auth.WithAPIKey(req.Context(), key)
+	ctx = auth.WithUser(ctx, user)
+	ctx = WithToolName(ctx, "grok_web_search")
+	req = req.WithContext(ctx)
+
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if st.releaseSuccessCalls != 1 {
+		t.Fatalf("expected one quota release, got %d", st.releaseSuccessCalls)
+	}
+	if st.releaseContextErr != nil {
+		t.Fatalf("quota release must detach from canceled request context, got context err %v", st.releaseContextErr)
+	}
+}
+
+func TestCaptureAndRestoreRequestBodyCapsDebugCapture(t *testing.T) {
+	requestBody := strings.Repeat("a", maxDebugRequestBody+37)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(requestBody))
+
+	capturedBody, truncated := captureAndRestoreRequestBody(req)
+	if !truncated {
+		t.Fatal("expected debug request capture to be marked truncated")
+	}
+	if len(capturedBody) != maxDebugRequestBody {
+		t.Fatalf("captured debug body length = %d, want %d", len(capturedBody), maxDebugRequestBody)
+	}
+	restoredBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restoredBody) != requestBody {
+		t.Fatalf("request body must be restored for downstream handler, got length %d want %d", len(restoredBody), len(requestBody))
 	}
 }
 

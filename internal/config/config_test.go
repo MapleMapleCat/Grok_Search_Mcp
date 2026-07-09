@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -198,6 +199,7 @@ func TestLoadHTTPDefaults(t *testing.T) {
 func TestLoadCustomSecuritySettings(t *testing.T) {
 	panelEnv(t)
 	setEnv(t, "GROK_MCP_IP_RPM", "123")
+	setEnv(t, "GROK_TRUSTED_PROXIES", "203.0.113.10,2001:db8::1/128")
 
 	cfg, err := Load()
 	if err != nil {
@@ -205,6 +207,12 @@ func TestLoadCustomSecuritySettings(t *testing.T) {
 	}
 	if cfg.MCPIPRPM != 123 {
 		t.Fatalf("unexpected security settings: %+v", cfg)
+	}
+	if len(cfg.TrustedProxies) != 2 {
+		t.Fatalf("expected two trusted proxy networks, got %+v", cfg.TrustedProxies)
+	}
+	if !cfg.TrustedProxies[0].Contains(parseTestIP(t, "203.0.113.10")) {
+		t.Fatalf("single IPv4 trusted proxy should be parsed as a host CIDR")
 	}
 }
 
@@ -217,9 +225,28 @@ func TestLoadRejectsInvalidSecuritySettings(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidTrustedProxy(t *testing.T) {
+	panelEnv(t)
+	setEnv(t, "GROK_TRUSTED_PROXIES", "not-an-ip")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "GROK_TRUSTED_PROXIES") {
+		t.Fatalf("expected trusted proxy validation error, got %v", err)
+	}
+}
+
 func TestParseBoolEnvUnset(t *testing.T) {
 	_ = os.Unsetenv("GROK_MCP_DEBUG")
 	if parseBoolEnv("GROK_MCP_DEBUG") {
 		t.Fatalf("expected false for unset env")
 	}
+}
+
+func parseTestIP(t *testing.T, rawIP string) net.IP {
+	t.Helper()
+	ip := net.ParseIP(rawIP)
+	if ip == nil {
+		t.Fatalf("invalid test IP %q", rawIP)
+	}
+	return ip
 }

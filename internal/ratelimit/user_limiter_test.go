@@ -8,6 +8,7 @@ import (
 
 	"github.com/grok-mcp/internal/auth"
 	"github.com/grok-mcp/internal/store"
+	"github.com/grok-mcp/internal/usage"
 	"golang.org/x/time/rate"
 )
 
@@ -23,7 +24,9 @@ func TestUserMiddlewareRejectsNegativeRPM(t *testing.T) {
 
 	user := &store.User{ID: "u1", RPM: -1}
 	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
-	req = req.WithContext(auth.WithUser(req.Context(), user))
+	ctx := auth.WithUser(req.Context(), user)
+	ctx = usage.WithToolName(ctx, "grok_web_search")
+	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -32,6 +35,33 @@ func TestUserMiddlewareRejectsNegativeRPM(t *testing.T) {
 	}
 	if called {
 		t.Fatal("next handler must not run for negative RPM")
+	}
+}
+
+func TestUserMiddlewareSkipsNonToolCallTraffic(t *testing.T) {
+	l := NewUserLimiter(1)
+	defer l.Close()
+
+	var called int
+	h := l.UserMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called++
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	user := &store.User{ID: "u1", RPM: 1}
+	for requestIndex := 0; requestIndex < 3; requestIndex++ {
+		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+		ctx := auth.WithUser(req.Context(), user)
+		ctx = usage.WithToolName(ctx, "")
+		req = req.WithContext(ctx)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("non tools/call request %d status = %d, want %d", requestIndex, rec.Code, http.StatusOK)
+		}
+	}
+	if called != 3 {
+		t.Fatalf("non tools/call traffic should pass through without RPM limiting, called=%d", called)
 	}
 }
 
