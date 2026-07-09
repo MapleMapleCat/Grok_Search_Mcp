@@ -51,7 +51,7 @@ func (f *fakeStore) LastID() string {
 
 func TestMCPMiddlewareGatesUsageByToolCall(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
-	user := &store.User{ID: "u1", SuccessLimit: 0}
+	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}, SuccessLimit: 0}
 	st := &fakeStore{}
 	writer := store.NewAsyncUsageWriter(st, 8)
 	defer writer.Close()
@@ -248,7 +248,7 @@ func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testin
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			key := &store.APIKey{ID: "k1"}
-			user := &store.User{ID: "u1"}
+			user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
 			st := &failureRecordingStore{}
 			writer := store.NewAsyncUsageWriter(st, 8)
 			h := MCPMiddleware(st, writer)(testCase.handler)
@@ -283,7 +283,7 @@ func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testin
 
 func TestMCPMiddlewareReleasesWithLiveContextAfterRequestCancel(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
-	user := &store.User{ID: "u1"}
+	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
 	st := &releaseContextRecordingStore{}
 	h := MCPMiddleware(st, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
@@ -332,7 +332,7 @@ func TestCaptureAndRestoreRequestBodyCapsDebugCapture(t *testing.T) {
 // 避免 success_calls 虚高，然后重新 panic 让上层处理。
 func TestMCPMiddlewareReleasesOnPanic(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
-	user := &store.User{ID: "u1"}
+	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
 	st := &releaseCountingStore{}
 	h := MCPMiddleware(st, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("boom")
@@ -383,7 +383,7 @@ func (errReader) Read(p []byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
 func TestMCPMiddlewareUsesContextToolName(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
-	user := &store.User{ID: "u1"}
+	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
 	st := &fakeStore{}
 	writer := store.NewAsyncUsageWriter(st, 8)
 	defer writer.Close()

@@ -18,7 +18,7 @@ type entry struct {
 // UserLimiter 按用户 ID 共享 RPM 令牌桶（用户下所有 API Key 共用）。
 type UserLimiter struct {
 	// defaultPerMin 仅在 limitFor 收到非正 rpm 时作为兜底；正常路径由 middleware
-	// 保证仅在 user.RPM > 0 时调用 allow。配置默认 -1 表示不提供正数兜底。
+	// 保证仅在 AuthenticatedUser.RPM > 0 时调用 allow。配置默认 -1 表示不提供正数兜底。
 	defaultPerMin int
 	mu            sync.Mutex
 	entries       map[string]*entry
@@ -27,7 +27,7 @@ type UserLimiter struct {
 }
 
 // NewUserLimiter 创建用户级限流器。
-// defaultPerMin <= 0 表示不提供正数兜底（不再静默改成 60）；实际限流速率来自请求上的 user.RPM。
+// defaultPerMin <= 0 表示不提供正数兜底（不再静默改成 60）；实际限流速率来自请求上的 AuthenticatedUser.RPM。
 func NewUserLimiter(defaultPerMin int) *UserLimiter {
 	l := &UserLimiter{
 		defaultPerMin: defaultPerMin,

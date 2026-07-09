@@ -2,6 +2,7 @@
 package quota
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -10,8 +11,14 @@ import (
 	"github.com/grok-mcp/internal/usage"
 )
 
+// SuccessQuotaReserver is the minimal store surface needed by quota middleware.
+// Defined at the consumer side so quota does not require the full store.Store.
+type SuccessQuotaReserver interface {
+	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) error
+}
+
 // MCPMiddleware 仅对 tools/call 在 handler 前原子预留用户 success_calls。
-func MCPMiddleware(st store.Store) func(http.Handler) http.Handler {
+func MCPMiddleware(reserver SuccessQuotaReserver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// 优先复用链路前置 ExtractToolNameMiddleware 写入的工具名；
@@ -29,7 +36,7 @@ func MCPMiddleware(st store.Store) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if err := st.ReserveSuccessCall(r.Context(), user.ID, user.SuccessLimit); err != nil {
+			if err := reserver.ReserveSuccessCall(r.Context(), user.ID, user.SuccessLimit); err != nil {
 				if errors.Is(err, store.ErrQuotaSuccess) {
 					http.Error(w, "success request limit exceeded", http.StatusTooManyRequests)
 					return

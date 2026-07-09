@@ -1,4 +1,8 @@
-package main
+// Package app is the HTTP composition root for grok-mcp.
+//
+// It wires store, auth, rate limits, quota/usage middleware, panel API, and the
+// Streamable HTTP MCP endpoint. cmd/grok-mcp stays a thin entrypoint.
+package app
 
 import (
 	"context"
@@ -38,24 +42,25 @@ var contentSecurityPolicy = strings.Join([]string{
 	"form-action 'self'",
 }, "; ")
 
-type bootstrapAdminCredentials struct {
+// BootstrapAdminCredentials holds the one-time bootstrap admin password printed at startup.
+type BootstrapAdminCredentials struct {
 	Username string
 	Password string
 }
 
-// runHTTP 启动 HTTP 模式：/mcp 为 MCP 端点，/panel 为管理面板 API。
-func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server, settingsApplier panel.ServerSettingsApplier) error {
+// Run starts the HTTP server (MCP + panel) and blocks until ctx is cancelled or ListenAndServe fails.
+func Run(ctx context.Context, cfg *config.Config, server *mcp.Server, settingsApplier panel.ServerSettingsApplier) error {
 	st, err := store.OpenSQLite(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer st.Close()
 
-	if err := initializeServerSettings(ctx, st, cfg, settingsApplier); err != nil {
+	if err := InitializeServerSettings(ctx, st, cfg, settingsApplier); err != nil {
 		return fmt.Errorf("initialize server settings: %w", err)
 	}
 
-	bootstrapCredentials, err := ensureBootstrapAdmin(ctx, st)
+	bootstrapCredentials, err := EnsureBootstrapAdmin(ctx, st)
 	if err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
 	}
@@ -115,7 +120,7 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server, settin
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           securityHeadersMiddleware(rootMux),
+		Handler:           SecurityHeadersMiddleware(rootMux),
 		ReadHeaderTimeout: 10 * time.Second,
 		// MaxBytesReader only caps request size. ReadTimeout also bounds how long a
 		// client may take to send the body after headers, mitigating slow-body DoS.
@@ -148,7 +153,8 @@ func runHTTP(ctx context.Context, cfg *config.Config, server *mcp.Server, settin
 	}
 }
 
-func initializeServerSettings(ctx context.Context, st store.Store, cfg *config.Config, settingsApplier panel.ServerSettingsApplier) error {
+// InitializeServerSettings loads DB settings (or env defaults), normalizes, persists, and applies them.
+func InitializeServerSettings(ctx context.Context, st store.Store, cfg *config.Config, settingsApplier panel.ServerSettingsApplier) error {
 	storedSettings, err := st.GetServerSettings(ctx)
 	if err != nil {
 		return fmt.Errorf("load settings: %w", err)
@@ -156,30 +162,14 @@ func initializeServerSettings(ctx context.Context, st store.Store, cfg *config.C
 
 	settings := cfg.ServerSettings()
 	if storedSettings != nil {
-		settings = config.ServerSettings{
-			CPABaseURL:     storedSettings.CPABaseURL,
-			CPAAPIKey:      storedSettings.CPAAPIKey,
-			Model:          storedSettings.Model,
-			TimeoutSeconds: storedSettings.TimeoutSeconds,
-			ProxyURL:       storedSettings.ProxyURL,
-			ProxyEnabled:   storedSettings.ProxyEnabled,
-			Debug:          storedSettings.Debug,
-		}
+		settings = config.ServerSettingsFromStore(storedSettings)
 	}
 
 	normalizedSettings, err := config.NormalizeServerSettings(settings)
 	if err != nil {
 		return err
 	}
-	if _, err := st.UpsertServerSettings(ctx, store.ServerSettings{
-		CPABaseURL:     normalizedSettings.CPABaseURL,
-		CPAAPIKey:      normalizedSettings.CPAAPIKey,
-		Model:          normalizedSettings.Model,
-		TimeoutSeconds: normalizedSettings.TimeoutSeconds,
-		ProxyURL:       normalizedSettings.ProxyURL,
-		ProxyEnabled:   normalizedSettings.ProxyEnabled,
-		Debug:          normalizedSettings.Debug,
-	}); err != nil {
+	if _, err := st.UpsertServerSettings(ctx, config.StoreServerSettings(normalizedSettings)); err != nil {
 		return fmt.Errorf("persist settings: %w", err)
 	}
 
@@ -192,7 +182,8 @@ func initializeServerSettings(ctx context.Context, st store.Store, cfg *config.C
 	return nil
 }
 
-func ensureBootstrapAdmin(ctx context.Context, st store.Store) (*bootstrapAdminCredentials, error) {
+// EnsureBootstrapAdmin creates a default admin when no enabled admin exists.
+func EnsureBootstrapAdmin(ctx context.Context, st store.Store) (*BootstrapAdminCredentials, error) {
 	enabledAdminCount, err := st.CountEnabledAdmins(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("count enabled admins: %w", err)
@@ -217,12 +208,12 @@ func ensureBootstrapAdmin(ctx context.Context, st store.Store) (*bootstrapAdminC
 		return nil, fmt.Errorf("create admin user: %w", err)
 	}
 
-	return &bootstrapAdminCredentials{Username: bootstrapAdminUsername, Password: password}, nil
+	return &BootstrapAdminCredentials{Username: bootstrapAdminUsername, Password: password}, nil
 }
 
 // promoteExistingBootstrapAdmin 在 "admin" 用户名已被普通用户占用时，
 // 将其提升为启用状态的管理员并重置密码，返回新的凭证。
-func promoteExistingBootstrapAdmin(ctx context.Context, st store.Store, passwordHash, password string) (*bootstrapAdminCredentials, error) {
+func promoteExistingBootstrapAdmin(ctx context.Context, st store.Store, passwordHash, password string) (*BootstrapAdminCredentials, error) {
 	existingUser, err := st.GetUserByUsername(ctx, bootstrapAdminUsername)
 	if err != nil {
 		return nil, fmt.Errorf("lookup existing admin user: %w", err)
@@ -241,7 +232,7 @@ func promoteExistingBootstrapAdmin(ctx context.Context, st store.Store, password
 	}); err != nil {
 		return nil, fmt.Errorf("promote existing admin: %w", err)
 	}
-	return &bootstrapAdminCredentials{Username: bootstrapAdminUsername, Password: password}, nil
+	return &BootstrapAdminCredentials{Username: bootstrapAdminUsername, Password: password}, nil
 }
 
 func randomBootstrapPassword(length int) (string, error) {
@@ -262,7 +253,8 @@ func randomBootstrapPassword(length int) (string, error) {
 	return string(passwordBytes), nil
 }
 
-func securityHeadersMiddleware(next http.Handler) http.Handler {
+// SecurityHeadersMiddleware attaches baseline browser security headers.
+func SecurityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
@@ -289,4 +281,9 @@ func isWildcardHTTPAddr(httpAddr string) bool {
 		return false
 	}
 	return host == "" || host == "0.0.0.0" || host == "::" || host == "[::]"
+}
+
+// BootstrapAdminUsername is the reserved username created when no enabled admin exists.
+func BootstrapAdminUsername() string {
+	return bootstrapAdminUsername
 }

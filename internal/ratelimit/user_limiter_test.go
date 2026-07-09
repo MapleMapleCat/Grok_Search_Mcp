@@ -22,7 +22,7 @@ func TestUserMiddlewareRejectsNegativeRPM(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	user := &store.User{ID: "u1", RPM: -1}
+	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}, RPM: -1}
 	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 	ctx := auth.WithUser(req.Context(), user)
 	ctx = usage.WithToolName(ctx, "grok_web_search")
@@ -48,7 +48,7 @@ func TestUserMiddlewareSkipsNonToolCallTraffic(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	user := &store.User{ID: "u1", RPM: 1}
+	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}, RPM: 1}
 	for requestIndex := 0; requestIndex < 3; requestIndex++ {
 		req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 		ctx := auth.WithUser(req.Context(), user)

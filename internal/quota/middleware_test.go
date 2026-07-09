@@ -94,7 +94,7 @@ func TestReserveSuccessAndForward(t *testing.T) {
 	}))
 
 	req := newToolCallRequest("grok_web_search")
-	req = req.WithContext(auth.WithUser(req.Context(), &store.User{ID: "u1"}))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.AuthenticatedUser{User: store.User{ID: "u1"}}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -110,7 +110,7 @@ func TestReserveUsesAuthenticatedUserLimit(t *testing.T) {
 	st := &recordingStore{}
 	h := MCPMiddleware(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
-	user := &store.User{ID: "paid-user", SuccessLimit: 123}
+	user := &auth.AuthenticatedUser{User: store.User{ID: "paid-user"}, SuccessLimit: 123}
 	req := newToolCallRequest("grok_x_search")
 	req = req.WithContext(auth.WithUser(req.Context(), user))
 	rec := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestSuccessLimitExceeded(t *testing.T) {
 	}))
 
 	req := newToolCallRequest("grok_web_search")
-	req = req.WithContext(auth.WithUser(req.Context(), &store.User{ID: "u1"}))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.AuthenticatedUser{User: store.User{ID: "u1"}}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -154,7 +154,7 @@ func TestReserveSuccessInternalError(t *testing.T) {
 	h := MCPMiddleware(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 	req := newToolCallRequest("grok_web_search")
-	req = req.WithContext(auth.WithUser(req.Context(), &store.User{ID: "u1"}))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.AuthenticatedUser{User: store.User{ID: "u1"}}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -171,7 +171,7 @@ func TestReserveUserNotFoundReturnsForbidden(t *testing.T) {
 	}))
 
 	req := newToolCallRequest("grok_web_search")
-	req = req.WithContext(auth.WithUser(req.Context(), &store.User{ID: "deleted-user"}))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.AuthenticatedUser{User: store.User{ID: "deleted-user"}}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -200,7 +200,7 @@ func TestFallbackToPeekWhenNoContextName(t *testing.T) {
 	// 不写入 context 工具名，模拟旧链路
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
 		strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"grok_web_search"}}`))
-	req = req.WithContext(auth.WithUser(req.Context(), &store.User{ID: "u1"}))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.AuthenticatedUser{User: store.User{ID: "u1"}}))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 

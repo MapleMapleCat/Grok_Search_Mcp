@@ -32,6 +32,9 @@ var ErrTierNotAssignable = errors.New("tier_id must reference an existing tier")
 // ErrQuotaSuccess 表示用户成功请求额度已耗尽。
 var ErrQuotaSuccess = errors.New("success request limit exceeded")
 
+// DefaultTierName 是新建用户与缺失 tier_id 时回退使用的默认等级名称。
+const DefaultTierName = "tier0"
+
 // UserRole 面板用户角色。
 type UserRole string
 
@@ -40,7 +43,9 @@ const (
 	RoleUser  UserRole = "user"
 )
 
-// User 表示面板注册用户及其汇总额度与计数。
+// User 表示面板注册用户的持久化实体。
+// 限额（RPM / SuccessLimit）不在本结构中：它们属于运行时视图（auth.AuthenticatedUser），
+// 由所属 tier 在鉴权链路中合并，避免持久化实体混入派生字段。
 type User struct {
 	ID           string
 	Username     string
@@ -48,11 +53,6 @@ type User struct {
 	Role         UserRole
 	Enabled      bool
 	TierID       string
-	// RPM / SuccessLimit 不再持久化到 users 表，也不再作为限额来源。
-	// 它们是请求链路上由 auth.LoadUserWithTierLimits 就地写入的“生效限额”，
-	// 取值完全来自用户所属 tier（tier 缺失时回退 tier0），仅供限流/额度中间件读取。
-	RPM          int
-	SuccessLimit int
 	SuccessCalls int64
 	// SuccessPeriod 是 success_calls 所属的 UTC 月份（YYYY-MM）。success_calls 表示该月成功调用数，
 	// 进入新月份后会在读写用户或预留 quota 时重置为 0。
@@ -195,4 +195,45 @@ type Store interface {
 
 	GetServerSettings(ctx context.Context) (*ServerSettings, error)
 	UpsertServerSettings(ctx context.Context, settings ServerSettings) (*ServerSettings, error)
+}
+
+// SettingsFields 是 ServerSettings 中可热更的上游连接字段（不含 ID/时间戳）。
+// 用于与 config.ServerSettings 等运行时类型做单向映射，避免字段逐个拷贝散落在调用方。
+type SettingsFields struct {
+	CPABaseURL     string
+	CPAAPIKey      string
+	Model          string
+	TimeoutSeconds int
+	ProxyURL       string
+	ProxyEnabled   bool
+	Debug          bool
+}
+
+// SettingsFieldsFromStore 提取持久化设置中的可热更字段。
+func SettingsFieldsFromStore(settings *ServerSettings) SettingsFields {
+	if settings == nil {
+		return SettingsFields{}
+	}
+	return SettingsFields{
+		CPABaseURL:     settings.CPABaseURL,
+		CPAAPIKey:      settings.CPAAPIKey,
+		Model:          settings.Model,
+		TimeoutSeconds: settings.TimeoutSeconds,
+		ProxyURL:       settings.ProxyURL,
+		ProxyEnabled:   settings.ProxyEnabled,
+		Debug:          settings.Debug,
+	}
+}
+
+// ServerSettingsFromFields 将可热更字段组装为持久化结构（不含 ID/时间戳）。
+func ServerSettingsFromFields(fields SettingsFields) ServerSettings {
+	return ServerSettings{
+		CPABaseURL:     fields.CPABaseURL,
+		CPAAPIKey:      fields.CPAAPIKey,
+		Model:          fields.Model,
+		TimeoutSeconds: fields.TimeoutSeconds,
+		ProxyURL:       fields.ProxyURL,
+		ProxyEnabled:   fields.ProxyEnabled,
+		Debug:          fields.Debug,
+	}
 }

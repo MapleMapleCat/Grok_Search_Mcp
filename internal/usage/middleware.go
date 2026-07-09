@@ -15,6 +15,23 @@ import (
 	"github.com/grok-mcp/internal/store"
 )
 
+// SuccessQuotaReleaser rolls back a previously reserved success call.
+// Defined at the consumer side so usage does not require the full store.Store.
+type SuccessQuotaReleaser interface {
+	ReleaseSuccessCall(ctx context.Context, userID string) error
+}
+
+// DebugSettingsReader loads server settings for debug capture decisions.
+type DebugSettingsReader interface {
+	GetServerSettings(ctx context.Context) (*store.ServerSettings, error)
+}
+
+// UsageStore is the minimal store surface needed by MCP usage middleware.
+type UsageStore interface {
+	SuccessQuotaReleaser
+	DebugSettingsReader
+}
+
 // toolNameCtxKey 为 context 中存放 tools/call 工具名的私有键类型。
 type toolNameCtxKey struct{}
 
@@ -147,7 +164,7 @@ func (s *responseRecorder) Unwrap() http.ResponseWriter {
 // API Key 调用数与 usage_log 的 COUNT 口径一致，并避免握手请求（initialize/ping 等）刷新 last_used_at。
 // success_calls 在 quota 中间件中已原子预留；此处根据 MCP isError / HTTP 状态回滚失败调用。
 // 使用 defer + recover 保证即便下游 handler panic，release/usage 后处理也会执行，避免 success_calls 虚高。
-func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Handler) http.Handler {
+func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key, ok := auth.APIKeyFromContext(r.Context())
@@ -224,19 +241,22 @@ func MCPMiddleware(st store.Store, writer *store.AsyncUsageWriter) func(http.Han
 
 const quotaReleaseTimeout = 2 * time.Second
 
-func releaseReservedSuccessCall(st store.Store, requestContext context.Context, userID string) {
-	if st == nil || strings.TrimSpace(userID) == "" {
+func releaseReservedSuccessCall(releaser SuccessQuotaReleaser, requestContext context.Context, userID string) {
+	if releaser == nil || strings.TrimSpace(userID) == "" {
 		return
 	}
 	releaseContext, cancel := context.WithTimeout(context.WithoutCancel(requestContext), quotaReleaseTimeout)
 	defer cancel()
-	if err := st.ReleaseSuccessCall(releaseContext, userID); err != nil {
+	if err := releaser.ReleaseSuccessCall(releaseContext, userID); err != nil {
 		log.Printf("release success quota failed user=%s: %v", userID, err)
 	}
 }
 
-func serverDebugEnabled(ctx context.Context, st store.Store) bool {
-	settings, err := st.GetServerSettings(ctx)
+func serverDebugEnabled(ctx context.Context, reader DebugSettingsReader) bool {
+	if reader == nil {
+		return false
+	}
+	settings, err := reader.GetServerSettings(ctx)
 	return err == nil && settings != nil && settings.Debug
 }
 
@@ -259,7 +279,7 @@ func captureAndRestoreRequestBody(r *http.Request) ([]byte, bool) {
 	return body, false
 }
 
-func buildDebugJSON(r *http.Request, key *store.APIKey, user *store.User, hasUser bool, toolName string, startedAt time.Time, durationMs int64, success bool, rec *responseRecorder, requestBody []byte, requestBodyTruncated bool) string {
+func buildDebugJSON(r *http.Request, key *store.APIKey, user *auth.AuthenticatedUser, hasUser bool, toolName string, startedAt time.Time, durationMs int64, success bool, rec *responseRecorder, requestBody []byte, requestBodyTruncated bool) string {
 	debugPayload := map[string]any{
 		"version":     1,
 		"captured_at": time.Now().UTC().Format(time.RFC3339Nano),

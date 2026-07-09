@@ -10,7 +10,6 @@ import (
 
 const userColumns = `id, username, password_hash, role, enabled, tier_id, success_calls, success_period, token_version, created_at, updated_at`
 
-const defaultTierName = "tier0"
 const successQuotaPeriodLayout = "2006-01"
 
 type successQuotaNowContextKey struct{}
@@ -128,7 +127,7 @@ func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash s
 	period := successQuotaPeriod(ctx)
 	var tierID string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, defaultTierName,
+		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, DefaultTierName,
 	).Scan(&tierID); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrTierNotFound
@@ -434,7 +433,7 @@ func nowUTC() time.Time {
 func (s *SQLiteStore) defaultTierID(ctx context.Context) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, defaultTierName,
+		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, DefaultTierName,
 	).Scan(&id)
 	if err == sql.ErrNoRows {
 		return "", ErrTierNotFound

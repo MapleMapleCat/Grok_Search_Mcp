@@ -31,7 +31,7 @@ func (m *memStore) GetUserByID(_ context.Context, id string) (*store.User, error
 }
 
 func (m *memStore) GetTierByName(_ context.Context, name string) (*store.Tier, error) {
-	if strings.EqualFold(name, "tier0") {
+	if strings.EqualFold(name, store.DefaultTierName) {
 		return &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800}, nil
 	}
 	return nil, nil
@@ -147,7 +147,7 @@ func TestAPIKeyMiddlewareResolverErrorReturnsInternalServerError(t *testing.T) {
 
 type failingAPIKeyResolver struct{}
 
-func (failingAPIKeyResolver) Resolve(context.Context, string) (*store.APIKey, *store.User, error) {
+func (failingAPIKeyResolver) Resolve(context.Context, string) (*store.APIKey, *AuthenticatedUser, error) {
 	return nil, nil, errors.New("resolver unavailable")
 }
 
@@ -259,7 +259,7 @@ func (s *cacheResolverStore) GetTierByName(_ context.Context, tierName string) (
 		tierCopy := *s.tier
 		return &tierCopy, nil
 	}
-	if strings.EqualFold(tierName, "tier0") {
+	if strings.EqualFold(tierName, store.DefaultTierName) {
 		return &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800}, nil
 	}
 	return nil, nil

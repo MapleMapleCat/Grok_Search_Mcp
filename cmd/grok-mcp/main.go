@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/grok-mcp/internal/app"
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/grok"
 	mcpserver "github.com/grok-mcp/internal/mcp"
@@ -45,7 +46,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := runHTTP(ctx, cfg, server, client); err != nil {
+	if err := app.Run(ctx, cfg, server, client); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

@@ -54,8 +54,9 @@ func IssuePanelToken(secret string, user *store.User, ttl time.Duration) (string
 	return signed, exp, err
 }
 
-// JWTMiddleware 校验 Bearer JWT 并将用户摘要写入 context；对 skip 中的路径（注册/登录）不校验 JWT。
-func JWTMiddleware(secret string, st store.Store, skip map[string]struct{}) func(http.Handler) http.Handler {
+// JWTMiddleware 校验 Bearer JWT 并将 AuthenticatedUser 写入 context；对 skip 中的路径（注册/登录）不校验 JWT。
+// st 仅需满足 UserTierLoader（加载用户 + tier 限额），不必依赖完整 store.Store。
+func JWTMiddleware(secret string, st UserTierLoader, skip map[string]struct{}) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if _, ok := skip[r.URL.Path]; ok {

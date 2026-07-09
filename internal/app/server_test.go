@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -20,7 +20,7 @@ func TestEnsureBootstrapAdminCreatesAdminForEmptyStore(t *testing.T) {
 	}
 	defer sqliteStore.Close()
 
-	credentials, err := ensureBootstrapAdmin(context.Background(), sqliteStore)
+	credentials, err := EnsureBootstrapAdmin(context.Background(), sqliteStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestEnsureBootstrapAdminCreatesAdminForEmptyStore(t *testing.T) {
 		t.Fatalf("bootstrap password does not match stored hash: %v", err)
 	}
 
-	secondCredentials, err := ensureBootstrapAdmin(context.Background(), sqliteStore)
+	secondCredentials, err := EnsureBootstrapAdmin(context.Background(), sqliteStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestEnsureBootstrapAdminCreatesAdminWhenOnlyRegularUsersExist(t *testing.T)
 		t.Fatal(err)
 	}
 
-	credentials, err := ensureBootstrapAdmin(context.Background(), sqliteStore)
+	credentials, err := EnsureBootstrapAdmin(context.Background(), sqliteStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestEnsureBootstrapAdminCreatesAdminWhenOnlyRegularUsersExist(t *testing.T)
 }
 
 func TestSecurityHeadersAllowPanelExternalAssets(t *testing.T) {
-	handler := securityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := SecurityHeadersMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	recorder := httptest.NewRecorder()

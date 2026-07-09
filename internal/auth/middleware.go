@@ -12,6 +12,18 @@ import (
 	"github.com/grok-mcp/internal/store"
 )
 
+// KeyLookup loads an API key by its hash.
+// Defined at the consumer side so auth does not require the full store.Store surface.
+type KeyLookup interface {
+	GetKeyByHash(ctx context.Context, hash string) (*store.APIKey, error)
+}
+
+// APIKeyStore is the minimal store surface for uncached API key resolution.
+type APIKeyStore interface {
+	KeyLookup
+	UserTierLoader
+}
+
 // bearerToken 从 Authorization: Bearer <token> 头解析令牌。
 func bearerToken(r *http.Request) (string, bool) {
 	h := r.Header.Get("Authorization")
@@ -31,14 +43,14 @@ func bearerToken(r *http.Request) (string, bool) {
 
 // APIKeyResolver 解析 Bearer 令牌对应的 API Key 与所属用户（含 tier 限额）。
 type APIKeyResolver interface {
-	Resolve(ctx context.Context, keyHash string) (key *store.APIKey, user *store.User, err error)
+	Resolve(ctx context.Context, keyHash string) (key *store.APIKey, user *AuthenticatedUser, err error)
 }
 
 type storeAPIKeyResolver struct {
-	st store.Store
+	st APIKeyStore
 }
 
-func (s storeAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*store.APIKey, *store.User, error) {
+func (s storeAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*store.APIKey, *AuthenticatedUser, error) {
 	key, err := s.st.GetKeyByHash(ctx, keyHash)
 	if err != nil || key == nil {
 		return key, nil, err
@@ -51,7 +63,7 @@ func (s storeAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*stor
 }
 
 // NewStoreAPIKeyResolver 使用 Store 直接解析（无缓存）。
-func NewStoreAPIKeyResolver(st store.Store) APIKeyResolver {
+func NewStoreAPIKeyResolver(st APIKeyStore) APIKeyResolver {
 	return storeAPIKeyResolver{st: st}
 }
 
@@ -76,7 +88,7 @@ func writeAuthLoadError(w http.ResponseWriter, err error, logPrefix string) {
 	http.Error(w, "authentication failed", http.StatusInternalServerError)
 }
 
-// APIKeyMiddleware 校验 Bearer 是否为已启用密钥，成功后将 *store.APIKey 写入请求 context。
+// APIKeyMiddleware 校验 Bearer 是否为已启用密钥，成功后将 API Key 与 AuthenticatedUser 写入 context。
 func APIKeyMiddleware(resolver APIKeyResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -18,14 +18,14 @@ type cacheEntry struct {
 // CachedAPIKeyResolver 缓存 MCP 鉴权链上的 key，减少热路径 key hash 查询。
 // 用户与 tier 限额每次 Resolve 都重新加载，保证管理员更新 tier 后旧 API key 立即使用新限额。
 type CachedAPIKeyResolver struct {
-	st     store.Store
+	st     APIKeyStore
 	ttl    time.Duration
 	mu     sync.Mutex
 	byHash map[string]cacheEntry
 }
 
 // NewCachedAPIKeyResolver 创建鉴权解析缓存；ttl<=0 时使用默认 30s。
-func NewCachedAPIKeyResolver(st store.Store, ttl time.Duration) *CachedAPIKeyResolver {
+func NewCachedAPIKeyResolver(st APIKeyStore, ttl time.Duration) *CachedAPIKeyResolver {
 	if ttl <= 0 {
 		ttl = defaultAuthCacheTTL
 	}
@@ -37,17 +37,17 @@ func NewCachedAPIKeyResolver(st store.Store, ttl time.Duration) *CachedAPIKeyRes
 }
 
 // Resolve 按 API Key 哈希加载密钥与启用用户（含 tier 限额）。
-func (c *CachedAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*store.APIKey, *store.User, error) {
+func (c *CachedAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*store.APIKey, *AuthenticatedUser, error) {
 	now := time.Now()
 	c.mu.Lock()
-	if e, ok := c.byHash[keyHash]; ok && now.Before(e.until) {
-		key := cloneAPIKey(e.key)
+	if entry, ok := c.byHash[keyHash]; ok && now.Before(entry.until) {
+		key := cloneAPIKey(entry.key)
 		c.mu.Unlock()
 		user, err := LoadUserWithTierLimits(ctx, c.st, key.UserID)
 		if err != nil {
 			return nil, nil, err
 		}
-		return cloneAPIKey(key), cloneUser(user), nil
+		return cloneAPIKey(key), cloneAuthenticatedUser(user), nil
 	}
 	c.mu.Unlock()
 
@@ -69,7 +69,7 @@ func (c *CachedAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*st
 		until: now.Add(c.ttl),
 	}
 	c.mu.Unlock()
-	return cloneAPIKey(key), cloneUser(user), nil
+	return cloneAPIKey(key), cloneAuthenticatedUser(user), nil
 }
 
 // InvalidateAll 清空缓存（管理员变更 tier/用户/密钥后调用）。
@@ -79,18 +79,18 @@ func (c *CachedAPIKeyResolver) InvalidateAll() {
 	c.mu.Unlock()
 }
 
-func cloneAPIKey(k *store.APIKey) *store.APIKey {
-	if k == nil {
+func cloneAPIKey(key *store.APIKey) *store.APIKey {
+	if key == nil {
 		return nil
 	}
-	cp := *k
-	return &cp
+	keyCopy := *key
+	return &keyCopy
 }
 
-func cloneUser(u *store.User) *store.User {
-	if u == nil {
+func cloneAuthenticatedUser(user *AuthenticatedUser) *AuthenticatedUser {
+	if user == nil {
 		return nil
 	}
-	cp := *u
-	return &cp
+	userCopy := *user
+	return &userCopy
 }
