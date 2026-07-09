@@ -141,6 +141,7 @@ type UpdateServerSettingsRequest struct {
 
 type InviteCodeResponse struct {
 	ID                string    `json:"id"`
+	Code              string    `json:"code,omitempty"`
 	CodePrefix        string    `json:"code_prefix"`
 	RegistrationLimit int       `json:"registration_limit"`
 	RegistrationCount int       `json:"registration_count"`
@@ -247,6 +248,7 @@ func toServerSettingsResponse(settings config.ServerSettings, updatedAt *time.Ti
 func toInviteCodeResponse(inviteCode *store.InviteCode) InviteCodeResponse {
 	return InviteCodeResponse{
 		ID:                inviteCode.ID,
+		Code:              inviteCode.Code,
 		CodePrefix:        inviteCode.CodePrefix,
 		RegistrationLimit: inviteCode.RegistrationLimit,
 		RegistrationCount: inviteCode.RegistrationCount,

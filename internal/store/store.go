@@ -131,9 +131,10 @@ type APIKey struct {
 	TotalCalls int64
 }
 
-// InviteCode 表示一条注册邀请码。明文邀请码只在创建时返回一次，数据库仅保存哈希。
+// InviteCode 表示一条注册邀请码。管理员需要在创建后继续复制邀请码，因此数据库保存明文；哈希用于注册时查找。
 type InviteCode struct {
 	ID                string
+	Code              string
 	CodeHash          string
 	CodePrefix        string
 	RegistrationLimit int

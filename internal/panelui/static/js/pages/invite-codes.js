@@ -52,7 +52,7 @@ export function renderInviteCodes() {
         <table>
           <thead>
             <tr>
-              <th>Prefix</th>
+              <th>Invite Code</th>
               <th>Usage</th>
               <th>Status</th>
               <th>Created</th>
@@ -72,10 +72,10 @@ function renderCreatedInviteCodeNotice(createdInviteCode) {
   return `
     <section class="card settings-card" style="margin-bottom: 18px;">
       <div class="warning-box">
-        <span class="material-symbols-outlined">warning</span>
+        <span class="material-symbols-outlined">info</span>
         <div>
-          <strong>Save this invite code now.</strong>
-          <p>明文邀请码只显示一次。复制并妥善保存后再关闭本提示。</p>
+          <strong>Invite code created.</strong>
+          <p>邀请码已保存，之后也可以在列表中随时复制。</p>
         </div>
       </div>
       <div class="key-copy" style="margin-top: 16px;">
@@ -86,7 +86,7 @@ function renderCreatedInviteCodeNotice(createdInviteCode) {
         </div>
       </div>
       <div class="form-actions">
-        <button class="button secondary" data-action="dismiss-created-invite-code" type="button">I've Saved It</button>
+        <button class="button secondary" data-action="dismiss-created-invite-code" type="button">Dismiss</button>
         <button class="button" data-action="copy-created-invite-code" type="button"><span class="material-symbols-outlined">content_copy</span><span>Copy Invite Code</span></button>
       </div>
     </section>`;
@@ -95,9 +95,10 @@ function renderCreatedInviteCodeNotice(createdInviteCode) {
 function renderInviteCodeRow(inviteCode) {
   const registrationLimit = Number(inviteCode.registration_limit) || 0;
   const registrationCount = Number(inviteCode.registration_count) || 0;
+  const canCopyInviteCode = Boolean(inviteCode.code);
   return `
     <tr>
-      <td class="mono"><strong>${escapeHTML(inviteCode.code_prefix || "invite_...")}</strong></td>
+      <td class="mono"><strong>${escapeHTML(inviteCode.code || inviteCode.code_prefix || "Legacy code unavailable")}</strong></td>
       <td class="mono">${formatNumber(registrationCount)} / ${formatNumber(registrationLimit)}</td>
       <td>
         <label class="toggle" title="${inviteCode.enabled ? "Enabled" : "Disabled"}">
@@ -109,6 +110,7 @@ function renderInviteCodeRow(inviteCode) {
       <td class="mono muted">${escapeHTML(shortID(inviteCode.id))}</td>
       <td class="right">
         <span class="row-actions">
+          <button class="mini-icon" data-action="copy-invite-code" data-invite-code-id="${escapeAttr(inviteCode.id)}" title="${canCopyInviteCode ? "Copy Invite Code" : "Plaintext unavailable for this legacy invite code"}" type="button" ${canCopyInviteCode ? "" : "disabled"}><span class="material-symbols-outlined">content_copy</span></button>
           <button class="mini-icon" data-action="edit-invite-code" data-invite-code-id="${escapeAttr(inviteCode.id)}" title="Edit" type="button"><span class="material-symbols-outlined">edit</span></button>
           <button class="mini-icon danger" data-action="delete-invite-code" data-invite-code-id="${escapeAttr(inviteCode.id)}" title="Delete" type="button"><span class="material-symbols-outlined">delete</span></button>
         </span>

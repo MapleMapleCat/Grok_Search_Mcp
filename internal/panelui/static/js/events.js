@@ -291,7 +291,10 @@ export async function submitCreateInviteCode(form) {
       body: { registration_limit: Number(data.get("registration_limit") || 0) }
     });
     state.modal = null;
-    state.createdInviteCode = response;
+    state.createdInviteCode = response.invite_code || response;
+    if (response.code && !state.createdInviteCode.code) {
+      state.createdInviteCode = { ...state.createdInviteCode, code: response.code };
+    }
     await loadInviteCodes();
     notify("邀请码已创建。", "success");
     render();
@@ -515,6 +518,8 @@ export async function onClick(event) {
   } else if (action === "open-create-invite-code") {
     state.modal = { type: "create-invite-code" };
     render();
+  } else if (action === "copy-invite-code") {
+    await copyInviteCode(actionEl.dataset.inviteCodeId);
   } else if (action === "edit-invite-code") {
     const inviteCode = state.inviteCodes.find((item) => item.id === actionEl.dataset.inviteCodeId);
     if (!inviteCode) return;
@@ -742,7 +747,7 @@ export async function copyCreatedKey(options = {}) {
 
 export async function copyCreatedInviteCode(options = {}) {
   const input = document.getElementById("created-invite-code");
-  const value = input ? input.value : state.createdInviteCode && state.createdInviteCode.code;
+  const value = input ? input.value : state.createdInviteCode && (state.createdInviteCode.code || state.createdInviteCode.invite_code?.code);
   if (!value) return;
   let copied = copyTextWithSelection(value, input);
   if (!copied) {
@@ -768,6 +773,36 @@ export async function copyCreatedInviteCode(options = {}) {
   if (!copied) {
     selectCreatedInviteCode();
   }
+  return copied;
+}
+
+export async function copyInviteCode(id) {
+  const inviteCode = state.inviteCodes.find((item) => item.id === id);
+  if (!inviteCode || !inviteCode.code) {
+    notify("该邀请码没有可复制的明文，请重新生成邀请码。", "error");
+    render();
+    return false;
+  }
+
+  let copied = copyTextWithSelection(inviteCode.code);
+  if (!copied) {
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        throw new Error("clipboard unavailable");
+      }
+      await navigator.clipboard.writeText(inviteCode.code);
+      copied = true;
+    } catch {
+      copied = false;
+    }
+  }
+
+  if (copied) {
+    notify("邀请码已复制到剪贴板。", "success");
+  } else {
+    notify("浏览器拒绝复制，请手动选中邀请码复制。", "error");
+  }
+  render();
   return copied;
 }
 

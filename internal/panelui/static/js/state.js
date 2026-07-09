@@ -69,7 +69,7 @@ export function filteredInviteCodes() {
   if (!q) return state.inviteCodes;
   return state.inviteCodes.filter((inviteCode) => {
     const statusText = inviteCode.enabled ? "enabled" : "disabled";
-    return [inviteCode.id, inviteCode.code_prefix, statusText].some((value) => String(value || "").toLowerCase().includes(q));
+    return [inviteCode.id, inviteCode.code, inviteCode.code_prefix, statusText].some((value) => String(value || "").toLowerCase().includes(q));
   });
 }
 
