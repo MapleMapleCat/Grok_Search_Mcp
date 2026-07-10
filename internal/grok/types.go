@@ -37,7 +37,7 @@ type Source struct {
 	Title string `json:"title,omitempty"`
 }
 
-// SearchRound 表示流式响应中一轮 web_search_call 动作（查询或抓取 URL）。
+// SearchRound 表示流式响应中一轮 web_search_call 或 x_search_call 动作。
 type SearchRound struct {
 	Round int
 	Query string

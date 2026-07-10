@@ -723,10 +723,10 @@ func TestSearchStreamMalformedUsageReturnsDecodeError(t *testing.T) {
 	}
 }
 
-func TestSearchStreamOnlyReportsWebSearchCallRounds(t *testing.T) {
+func TestSearchStreamXSearchSSEReportsRound(t *testing.T) {
 	stream := sse(
-		`{"type":"response.output_item.done","item":{"type":"x_search_call","action":{"query":"ignored"}}}`,
-		`{"type":"response.output_item.done","item":{"type":"web_search_call","action":{"query":"reported"}}}`,
+		`{"type":"response.output_item.done","item":{"type":"x_search_call","action":{"query":"current X posts"}}}`,
+		`{"type":"response.output_item.done","item":{"type":"message","content":[]}}`,
 		completedEvent(`{"output":[{"role":"assistant","content":[{"type":"output_text","text":"round ok"}]}]}`),
 	)
 
@@ -737,15 +737,18 @@ func TestSearchStreamOnlyReportsWebSearchCallRounds(t *testing.T) {
 	client := newClientAt(t, server.URL)
 	_, err := client.SearchStream(context.Background(), grok.SearchRequest{
 		Query:    "test",
-		ToolType: grok.ToolTypeWebSearch,
+		ToolType: grok.ToolTypeXSearch,
 	}, func(round grok.SearchRound) {
 		rounds = append(rounds, round)
 	})
 	if err != nil {
 		t.Fatalf("SearchStream failed: %v", err)
 	}
-	if len(rounds) != 1 || rounds[0].Query != "reported" {
-		t.Fatalf("expected only web_search_call round to be reported, got %+v", rounds)
+	if len(rounds) != 1 {
+		t.Fatalf("expected one X search round to be reported, got %+v", rounds)
+	}
+	if rounds[0].Round != 1 || rounds[0].Query != "current X posts" {
+		t.Fatalf("unexpected X search round: %+v", rounds[0])
 	}
 }
 

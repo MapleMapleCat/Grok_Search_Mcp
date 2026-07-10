@@ -50,6 +50,49 @@ func TestDebugfEnabled(t *testing.T) {
 	}
 }
 
+func TestDebugStateControlsSharedLoggers(t *testing.T) {
+	var buffer bytes.Buffer
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	previousPrefix := log.Prefix()
+	log.SetOutput(&buffer)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+	})
+
+	debugState := NewDebugState(false)
+	mcpLogger := NewWithDebugState("mcp", debugState)
+	grokLogger := NewWithDebugState("grok", debugState)
+
+	mcpLogger.Debugf("disabled MCP message")
+	grokLogger.Debugf("disabled Grok message")
+	if buffer.Len() != 0 {
+		t.Fatalf("expected shared loggers to be disabled, got %q", buffer.String())
+	}
+
+	debugState.SetEnabled(true)
+	mcpLogger.Debugf("enabled MCP message")
+	grokLogger.Debugf("enabled Grok message")
+	loggedOutput := buffer.String()
+	for _, expectedText := range []string{"[mcp] enabled MCP message", "[grok] enabled Grok message"} {
+		if !strings.Contains(loggedOutput, expectedText) {
+			t.Fatalf("expected output to contain %q, got %q", expectedText, loggedOutput)
+		}
+	}
+
+	buffer.Reset()
+	debugState.SetEnabled(false)
+	mcpLogger.Debugf("disabled again")
+	grokLogger.Debugf("disabled again")
+	if buffer.Len() != 0 {
+		t.Fatalf("expected shared loggers to stop immediately, got %q", buffer.String())
+	}
+}
+
 func TestDebugfNilReceiver(t *testing.T) {
 	var buf bytes.Buffer
 	log.SetOutput(&buf)

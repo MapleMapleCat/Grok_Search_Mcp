@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/grok-mcp/internal/config"
+	"github.com/grok-mcp/internal/logx"
 )
 
 func TestNewHTTPClientWithProxyUsesExplicitProxy(t *testing.T) {
@@ -55,6 +58,46 @@ func TestNewHTTPClientWithProxyRejectsEnabledProxyWithoutURL(t *testing.T) {
 	_, err := newHTTPClientWithProxy(time.Second, " ", true)
 	if err == nil || !strings.Contains(err.Error(), "proxy URL is required when proxy is enabled") {
 		t.Fatalf("expected missing proxy URL error, got %v", err)
+	}
+}
+
+func TestApplyServerSettingsUpdatesSharedDebugState(t *testing.T) {
+	configuration := &config.Config{
+		CPABaseURL: "https://api.example.test",
+		CPAAPIKey:  "test-key",
+		Model:      "grok-4.3",
+		Timeout:    time.Second,
+		Debug:      false,
+	}
+	debugState := logx.NewDebugState(false)
+	client := NewClientWithDebugState(configuration, debugState)
+
+	settings := configuration.ServerSettings()
+	settings.Debug = true
+	if err := client.ApplyServerSettings(settings); err != nil {
+		t.Fatalf("enable debug: %v", err)
+	}
+	if !debugState.Enabled() {
+		t.Fatal("expected shared debug state to be enabled")
+	}
+
+	settings.Debug = false
+	if err := client.ApplyServerSettings(settings); err != nil {
+		t.Fatalf("disable debug: %v", err)
+	}
+	if debugState.Enabled() {
+		t.Fatal("expected shared debug state to be disabled")
+	}
+
+	invalidSettings := settings
+	invalidSettings.Debug = true
+	invalidSettings.ProxyEnabled = true
+	invalidSettings.ProxyURL = ""
+	if err := client.ApplyServerSettings(invalidSettings); err == nil {
+		t.Fatal("expected invalid proxy settings to fail")
+	}
+	if debugState.Enabled() {
+		t.Fatal("failed settings update must not change shared debug state")
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 	"github.com/grok-mcp/internal/logx"
 )
 
-// parseSearchStream 消费上游 SSE，在 web_search_call 完成时回调 onRound，
+// parseSearchStream 消费上游 SSE，在 web_search_call 或 x_search_call 完成时回调 onRound，
 // 并在收到 response.completed 后从该事件的 response 字段构建 SearchResult。
 func parseSearchStream(body io.Reader, onRound func(SearchRound), log *logx.Logger) (*SearchResult, error) {
 	round := 0
@@ -25,16 +25,16 @@ func parseSearchStream(body io.Reader, onRound func(SearchRound), log *logx.Logg
 		case "response.output_item.done":
 			// action（query/url）只在 output_item.done 时才完整。
 			// CPA 源码证据：output_item.added 的 item 只有 {id,type,status}，无 action。
-			if event.Item.Type == "web_search_call" {
+			if isSearchCallItem(event.Item.Type) {
 				round++
-				sr := SearchRound{
+				searchRound := SearchRound{
 					Round: round,
 					Query: strings.TrimSpace(event.Item.Action.Query),
 					URL:   strings.TrimSpace(event.Item.Action.URL),
 				}
-				logStreamRound(log, sr)
+				logStreamRound(log, event.Item.Type, searchRound)
 				if onRound != nil {
-					onRound(sr)
+					onRound(searchRound)
 				}
 			}
 		case "response.completed":
@@ -60,12 +60,16 @@ func parseSearchStream(body io.Reader, onRound func(SearchRound), log *logx.Logg
 	return buildSearchResult(completed.Response, completedBody)
 }
 
-func logStreamRound(log *logx.Logger, sr SearchRound) {
-	if sr.Query != "" {
-		log.Debugf("web_search_call round=%d query=%q", sr.Round, sr.Query)
-	} else if sr.URL != "" {
-		log.Debugf("web_search_call round=%d url=%s", sr.Round, sr.URL)
+func isSearchCallItem(itemType string) bool {
+	return itemType == "web_search_call" || itemType == "x_search_call"
+}
+
+func logStreamRound(log *logx.Logger, itemType string, searchRound SearchRound) {
+	if searchRound.Query != "" {
+		log.Debugf("%s round=%d query=%q", itemType, searchRound.Round, searchRound.Query)
+	} else if searchRound.URL != "" {
+		log.Debugf("%s round=%d url=%s", itemType, searchRound.Round, searchRound.URL)
 	} else {
-		log.Debugf("web_search_call round=%d", sr.Round)
+		log.Debugf("%s round=%d", itemType, searchRound.Round)
 	}
 }

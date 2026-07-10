@@ -22,6 +22,7 @@ type Client struct {
 	apiKey       string
 	defaultModel string
 	httpClient   *http.Client
+	debugState   *logx.DebugState
 	log          *logx.Logger
 }
 
@@ -35,9 +36,19 @@ type clientSnapshot struct {
 
 // NewClient 根据全局配置构造上游客户端。
 func NewClient(cfg *config.Config) *Client {
-	client := &Client{}
+	return NewClientWithDebugState(cfg, logx.NewDebugState(cfg.Debug))
+}
+
+// NewClientWithDebugState 使用可共享的运行时调试状态构造上游客户端。
+func NewClientWithDebugState(cfg *config.Config, debugState *logx.DebugState) *Client {
+	if debugState == nil {
+		debugState = logx.NewDebugState(cfg.Debug)
+	}
+	client := &Client{
+		debugState: debugState,
+		log:        logx.NewWithDebugState("grok", debugState),
+	}
 	if err := client.ApplyServerSettings(cfg.ServerSettings()); err != nil {
-		client.log = logx.New("grok", cfg.Debug)
 		client.log.Debugf("failed to apply initial server settings: %v", err)
 		client.baseURL = cfg.CPABaseURL
 		client.apiKey = cfg.CPAAPIKey
@@ -48,8 +59,8 @@ func NewClient(cfg *config.Config) *Client {
 }
 
 // ApplyServerSettings atomically swaps the upstream connection settings used by
-// subsequent search requests. In-flight searches continue with their existing
-// client snapshot.
+// subsequent search requests. In-flight searches keep their connection snapshot,
+// while the shared debug switch takes effect immediately for every logger.
 func (c *Client) ApplyServerSettings(settings config.ServerSettings) error {
 	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
 	httpClient, err := newHTTPClientWithProxy(timeout, settings.ProxyURL, settings.ProxyEnabled)
@@ -63,7 +74,7 @@ func (c *Client) ApplyServerSettings(settings config.ServerSettings) error {
 	c.apiKey = settings.CPAAPIKey
 	c.defaultModel = settings.Model
 	c.httpClient = httpClient
-	c.log = logx.New("grok", settings.Debug)
+	c.debugState.SetEnabled(settings.Debug)
 	return nil
 }
 
@@ -120,7 +131,7 @@ func defaultTimeoutFallback() time.Duration {
 	return 120 * time.Second
 }
 
-// SearchStream 发起流式搜索；每完成一轮 web_search_call 会调用 onRound（可为 nil），
+// SearchStream 发起流式搜索；每完成一轮 web_search_call 或 x_search_call 会调用 onRound（可为 nil），
 // 最终在 response.completed 事件到达后返回聚合后的 SearchResult。
 func (c *Client) SearchStream(ctx context.Context, req SearchRequest, onRound func(SearchRound)) (*SearchResult, error) {
 	snapshot := c.snapshot()

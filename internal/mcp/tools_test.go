@@ -1,9 +1,11 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -273,6 +275,78 @@ func TestRunSearchReturnsStructuredOutputFromUpstream(t *testing.T) {
 	}
 	if len(capturedRequest.Tools) != 1 || capturedRequest.Tools[0].Type != "web_search" || len(capturedRequest.Tools[0].AllowedDomains) != 1 {
 		t.Fatalf("unexpected upstream tools request: %+v", capturedRequest.Tools)
+	}
+}
+
+func TestRunSearchUsesRuntimeDebugState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		responseJSON := `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"runtime debug answer"}]}]}`
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: " + completedEventForMCPTest(responseJSON) + "\n\n"))
+	}))
+	defer server.Close()
+
+	configuration := &config.Config{
+		CPABaseURL: server.URL,
+		CPAAPIKey:  "test-cpa-key",
+		Model:      "grok-4.3",
+		Timeout:    5 * time.Second,
+		Debug:      false,
+	}
+	debugState := logx.NewDebugState(false)
+	client := grok.NewClientWithDebugState(configuration, debugState)
+	mcpLogger := logx.NewWithDebugState("mcp-test", debugState)
+
+	var logBuffer bytes.Buffer
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	previousPrefix := log.Prefix()
+	log.SetOutput(&logBuffer)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+	})
+
+	runSearchForDebugTest := func(query string) {
+		t.Helper()
+		toolResult, output, err := runSearch(context.Background(), nil, client, mcpLogger, grok.SearchRequest{
+			Query:    query,
+			ToolType: grok.ToolTypeWebSearch,
+		})
+		if err != nil {
+			t.Fatalf("runSearch returned Go error: %v", err)
+		}
+		if toolResult != nil || output.Answer != "runtime debug answer" {
+			t.Fatalf("unexpected runSearch result: toolResult=%+v output=%+v", toolResult, output)
+		}
+	}
+
+	runSearchForDebugTest("disabled query")
+	if logBuffer.Len() != 0 {
+		t.Fatalf("expected no debug logs before runtime enable, got %q", logBuffer.String())
+	}
+
+	settings := configuration.ServerSettings()
+	settings.Debug = true
+	if err := client.ApplyServerSettings(settings); err != nil {
+		t.Fatalf("enable runtime debug: %v", err)
+	}
+	runSearchForDebugTest("enabled query")
+	if !strings.Contains(logBuffer.String(), `[mcp-test] search start tool=web_search query="enabled query"`) {
+		t.Fatalf("expected retained MCP logger to observe runtime enable, got %q", logBuffer.String())
+	}
+
+	logBuffer.Reset()
+	settings.Debug = false
+	if err := client.ApplyServerSettings(settings); err != nil {
+		t.Fatalf("disable runtime debug: %v", err)
+	}
+	runSearchForDebugTest("disabled again")
+	if logBuffer.Len() != 0 {
+		t.Fatalf("expected retained MCP logger to observe runtime disable, got %q", logBuffer.String())
 	}
 }
 

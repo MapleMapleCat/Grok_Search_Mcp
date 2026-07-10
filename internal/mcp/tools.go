@@ -71,7 +71,11 @@ type ListModelsOutput struct {
 
 // RegisterTools 在 MCP Server 上注册模型列表、网页搜索与 X 搜索工具。
 func RegisterTools(server *mcp.Server, client *grok.Client, debug bool) {
-	log := logx.New("mcp", debug)
+	RegisterToolsWithLogger(server, client, logx.New("mcp", debug))
+}
+
+// RegisterToolsWithLogger 使用可动态配置的日志器注册 MCP 工具。
+func RegisterToolsWithLogger(server *mcp.Server, client *grok.Client, log *logx.Logger) {
 	registerListModelsTool(server, client, log)
 	registerWebSearchTool(server, client, log)
 	registerXSearchTool(server, client, log)

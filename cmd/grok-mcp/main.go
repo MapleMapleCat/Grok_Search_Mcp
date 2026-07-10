@@ -17,6 +17,7 @@ import (
 	"github.com/grok-mcp/internal/app"
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/grok"
+	"github.com/grok-mcp/internal/logx"
 	mcpserver "github.com/grok-mcp/internal/mcp"
 	"github.com/grok-mcp/internal/version"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -36,11 +37,12 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 
-	client := grok.NewClient(cfg)
+	debugState := logx.NewDebugState(cfg.Debug)
+	client := grok.NewClientWithDebugState(cfg, debugState)
 	server := mcp.NewServer(&mcp.Implementation{Name: "grok-mcp", Version: version.Version}, &mcp.ServerOptions{
 		Instructions: mcpserver.ServerInstructions,
 	})
-	mcpserver.RegisterTools(server, client, cfg.Debug)
+	mcpserver.RegisterToolsWithLogger(server, client, logx.NewWithDebugState("mcp", debugState))
 
 	// 优雅退出：SIGINT / SIGTERM 时取消 context，触发 HTTP Server Shutdown。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
