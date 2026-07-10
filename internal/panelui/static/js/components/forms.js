@@ -1,82 +1,102 @@
-import { state } from "../state.js";
+import { escapeHTML } from "../utils.js";
+import { renderIcon } from "./icons.js";
 
-export function renderAuth() {
-  const active = state.authMode;
-  const registrationMode = state.registrationSettings?.registration_mode || "free";
-  const registrationDisabled = registrationMode === "disabled";
-  const inviteRegistration = registrationMode === "invite";
+export function renderAuthView(state) {
+  const registrationAvailable = state.registrationMode !== "disabled";
+  const activeMode = registrationAvailable ? state.authMode : "login";
+  const registrationCopy = state.registrationMode === "invite"
+    ? "当前服务采用邀请注册，创建账户时需要有效邀请码。"
+    : "创建账户后即可生成独立 API 密钥，安全接入 MCP 服务。";
+
   return `
-    <main class="auth-screen">
-      <section class="auth-card" aria-label="MCP Central 登录">
-        <div class="auth-head">
-          <div class="auth-logo"><span class="material-symbols-outlined">hub</span></div>
-          <h1 class="auth-title">MCP Central</h1>
-          <p class="auth-subtitle">Protocol Management Platform</p>
+    <main class="auth-layout">
+      <section class="auth-panel">
+        <div class="auth-brand">
+          <span class="brand-symbol" aria-hidden="true"></span>
+          <span>Grok MCP Control</span>
         </div>
-        <div class="auth-body">
-          <div class="auth-tabs" data-active="${active}">
-            <span class="tab-indicator"></span>
-            <button class="tab-button ${active === "login" ? "active" : ""}" data-action="auth-tab" data-tab="login" type="button">Login</button>
-            <button class="tab-button ${active === "register" ? "active" : ""}" data-action="auth-tab" data-tab="register" type="button">Register</button>
-          </div>
-          <form id="login-form" class="form-stack ${active === "login" ? "" : "hidden"}">
-            <div class="field">
-              <label for="login-username">Username / ID</label>
-              <div class="input-shell">
-                <span class="material-symbols-outlined">person</span>
-                <input id="login-username" name="username" class="input with-icon mono" autocomplete="username" placeholder="admin" required>
-              </div>
+
+        <div class="auth-panel-inner">
+          <p class="eyebrow">Secure control plane</p>
+          <h1 class="auth-title">连接实时智能，<br>保持全局可控。</h1>
+          <p class="auth-copy">统一管理访问密钥、调用配额与 Grok 上游配置，让每一次搜索请求都清晰、稳定、可追踪。</p>
+
+          ${registrationAvailable ? `
+            <div class="auth-tabs" role="tablist" aria-label="账户操作">
+              <button class="auth-tab ${activeMode === "login" ? "is-active" : ""}" type="button" role="tab" aria-selected="${activeMode === "login"}" data-action="switch-auth" data-mode="login">登录</button>
+              <button class="auth-tab ${activeMode === "register" ? "is-active" : ""}" type="button" role="tab" aria-selected="${activeMode === "register"}" data-action="switch-auth" data-mode="register">注册</button>
             </div>
-            <div class="field">
-              <label for="login-password">Password</label>
-              <div class="input-shell">
-                <span class="material-symbols-outlined">lock</span>
-                <input id="login-password" name="password" class="input with-icon mono" type="password" autocomplete="current-password" placeholder="••••••••" required>
-              </div>
-            </div>
-            <button class="button" type="submit">
-              <span>Authenticate</span>
-              <span class="material-symbols-outlined">arrow_forward</span>
-            </button>
-          </form>
-          <form id="register-form" class="form-stack ${active === "register" ? "" : "hidden"}">
-            ${registrationDisabled ? `
-              <div class="warning-box compact">
-                <span class="material-symbols-outlined">block</span>
-                <div>
-                  <strong>Registration is disabled.</strong>
-                  <p>管理员当前已关闭公开自助注册，请联系管理员创建账号。</p>
-                </div>
-              </div>` : `
-              <div class="field">
-                <label for="register-username">Desired Username</label>
-                <div class="input-shell">
-                  <span class="material-symbols-outlined">badge</span>
-                  <input id="register-username" name="username" class="input with-icon mono" autocomplete="username" placeholder="new_user" required>
-                </div>
-              </div>
-              <div class="field">
-                <label for="register-password">Create Password</label>
-                <div class="input-shell">
-                  <span class="material-symbols-outlined">key</span>
-                  <input id="register-password" name="password" class="input with-icon mono" type="password" autocomplete="new-password" placeholder="至少 8 位" minlength="8" required>
-                </div>
-              </div>
-              ${inviteRegistration ? `
-                <div class="field">
-                  <label for="register-invite-code">Invite Code</label>
-                  <div class="input-shell">
-                    <span class="material-symbols-outlined">confirmation_number</span>
-                    <input id="register-invite-code" name="invite_code" class="input with-icon mono" autocomplete="off" placeholder="Paste invite code" required>
-                  </div>
-                  <span class="hint">当前为邀请注册模式，必须提供有效且未耗尽的邀请码。</span>
-                </div>` : ""}
-              <button class="button secondary" type="submit">
-                <span class="material-symbols-outlined">person_add</span>
-                <span>Create Account</span>
-              </button>`}
-          </form>
+          ` : ""}
+
+          ${activeMode === "register" ? renderRegisterForm(state, registrationCopy) : renderLoginForm(state)}
         </div>
+
+        <p class="auth-footnote">JWT 会话仅保存在当前浏览器标签页中 · 12 小时后自动失效</p>
       </section>
-    </main>`;
+
+      <aside class="auth-visual" aria-hidden="true">
+        <div class="auth-orbit"></div>
+        <div class="auth-visual-content">
+          <span class="visual-kicker">${renderIcon("spark")} Realtime intelligence</span>
+          <h2 class="visual-title">Search.<span>Observe.</span>Control.</h2>
+          <div class="visual-stats">
+            <div class="visual-stat"><strong>3</strong><span>MCP tools</span></div>
+            <div class="visual-stat"><strong>Live</strong><span>Usage telemetry</span></div>
+            <div class="visual-stat"><strong>JWT</strong><span>Secure session</span></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  `;
+}
+
+function renderLoginForm(state) {
+  return `
+    <form class="auth-form" data-form="login" novalidate>
+      ${state.authError ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(state.authError)}</span></div>` : ""}
+      <label class="field-group">
+        <span class="field-label">用户名</span>
+        <input class="text-input" name="username" type="text" autocomplete="username" maxlength="128" placeholder="输入用户名" required autofocus>
+      </label>
+      <label class="field-group">
+        <span class="field-label"><span>密码</span><span class="field-hint">8–72 字节</span></span>
+        <span class="password-wrap">
+          <input class="text-input" id="login-password" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="72" placeholder="输入密码" required>
+          <button class="input-icon-button" type="button" data-action="toggle-password" data-target="login-password" aria-label="显示或隐藏密码">${renderIcon("eye")}</button>
+        </span>
+      </label>
+      <button class="button button-primary button-wide auth-submit" type="submit" ${state.authBusy ? "disabled" : ""}>
+        ${state.authBusy ? `${renderIcon("refresh")} 正在登录` : `进入控制台 ${renderIcon("arrowRight")}`}
+      </button>
+    </form>
+  `;
+}
+
+function renderRegisterForm(state, registrationCopy) {
+  return `
+    <form class="auth-form" data-form="register" novalidate>
+      ${state.authError ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(state.authError)}</span></div>` : ""}
+      <label class="field-group">
+        <span class="field-label">用户名</span>
+        <input class="text-input" name="username" type="text" autocomplete="username" maxlength="128" placeholder="创建用户名" required autofocus>
+      </label>
+      <label class="field-group">
+        <span class="field-label"><span>密码</span><span class="field-hint">8–72 字节</span></span>
+        <span class="password-wrap">
+          <input class="text-input" id="register-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" placeholder="设置安全密码" required>
+          <button class="input-icon-button" type="button" data-action="toggle-password" data-target="register-password" aria-label="显示或隐藏密码">${renderIcon("eye")}</button>
+        </span>
+      </label>
+      ${state.registrationMode === "invite" ? `
+        <label class="field-group">
+          <span class="field-label">邀请码</span>
+          <input class="text-input mono-value" name="invite_code" type="text" autocomplete="off" placeholder="输入管理员提供的邀请码" required>
+        </label>
+      ` : ""}
+      <button class="button button-primary button-wide auth-submit" type="submit" ${state.authBusy ? "disabled" : ""}>
+        ${state.authBusy ? `${renderIcon("refresh")} 正在创建` : `创建账户 ${renderIcon("arrowRight")}`}
+      </button>
+      <p class="auth-footnote">${escapeHTML(registrationCopy)}</p>
+    </form>
+  `;
 }

@@ -1,64 +1,51 @@
-import { loadRouteData, render } from "../app.js";
-import { renderAccount } from "./pages/account.js";
-import { renderDashboard } from "./pages/dashboard.js";
-import { renderInviteCodes } from "./pages/invite-codes.js";
-import { renderKeys } from "./pages/keys.js";
-import { renderTiers } from "./pages/tiers.js";
-import { renderServerSettings } from "./pages/settings.js";
-import { renderConfigurationTutorial } from "./pages/tutorial.js";
-import { renderUsage } from "./pages/usage.js";
-import { renderUsers } from "./pages/users.js";
-import { isAdmin, state } from "./state.js";
+import { renderShell as renderLayoutShell } from "./components/layout.js";
+import { renderInvitesPage } from "./pages/invite-codes.js";
+import { renderKeysPage } from "./pages/keys.js";
+import { renderOverviewPage } from "./pages/overview.js";
+import { renderSettingsPage } from "./pages/settings.js";
+import { renderTiersPage } from "./pages/tiers.js";
+import { renderUsagePage } from "./pages/usage.js";
+import { renderUsersPage } from "./pages/users.js";
 
-export const routes = ["dashboard", "keys", "usage", "users", "tiers", "invites", "tutorial", "settings", "account"];
-
-export const routeMeta = {
-  dashboard: { label: "Dashboard", icon: "dashboard" },
-  keys: { label: "Keys", icon: "vpn_key" },
-  usage: { label: "Usage Stats", icon: "bar_chart" },
-  users: { label: "User Management", icon: "group", admin: true, hideWhenUnauthorized: true },
-  tiers: { label: "Tier Management", icon: "workspace_premium", admin: true, hideWhenUnauthorized: true },
-  invites: { label: "Invitation Codes", icon: "confirmation_number", admin: true, hideWhenUnauthorized: true },
-  tutorial: { label: "Configuration Tutorial", icon: "menu_book" },
-  settings: { label: "Server Settings", icon: "settings_applications", bottom: true, admin: true, hideWhenUnauthorized: true },
-  account: { label: "Account Settings", icon: "settings", bottom: true }
+export const pageMetadata = {
+  overview: { title: "总览", section: "工作台" },
+  keys: { title: "API 密钥", section: "访问控制" },
+  usage: { title: "调用分析", section: "可观测性" },
+  users: { title: "用户管理", section: "系统管理" },
+  tiers: { title: "配额方案", section: "系统管理" },
+  invites: { title: "邀请码", section: "系统管理" },
+  settings: { title: "服务设置", section: "系统管理" }
 };
 
-export function isRouteVisibleInNavigation(route) {
-  const meta = routeMeta[route];
-  return !(meta.hideWhenUnauthorized && !isAdmin());
+export const availablePages = new Set(Object.keys(pageMetadata));
+export const adminPages = new Set(["users", "tiers", "invites", "settings"]);
+
+export function readPageFromLocation(locationHash = window.location.hash) {
+  const locationPage = locationHash.replace(/^#\/?/, "").trim();
+  return availablePages.has(locationPage) ? locationPage : "overview";
 }
 
-export function renderRoute() {
-  if (state.route === "dashboard") return renderDashboard();
-  if (state.route === "keys") return renderKeys();
-  if (state.route === "usage") return renderUsage();
-  if (state.route === "users") return renderUsers();
-  if (state.route === "tiers") return renderTiers();
-  if (state.route === "invites") return renderInviteCodes();
-  if (state.route === "tutorial") return renderConfigurationTutorial();
-  if (state.route === "settings") return renderServerSettings();
-  if (state.route === "account") return renderAccount();
-  return renderDashboard();
-}
-
-export function readRoute() {
-  const raw = window.location.hash.replace(/^#\/?/, "");
-  return routes.includes(raw) ? raw : "dashboard";
-}
-
-export function navigate(route) {
-  const next = routes.includes(route) ? route : "dashboard";
-  if (routeMeta[next].admin && !isAdmin()) {
-    state.route = next;
-    window.location.hash = `#/${next}`;
-    render();
-    return;
+export function renderCurrentPage(state) {
+  switch (state.currentPage) {
+    case "keys":
+      return renderKeysPage(state);
+    case "usage":
+      return renderUsagePage(state);
+    case "users":
+      return renderUsersPage(state);
+    case "tiers":
+      return renderTiersPage(state);
+    case "invites":
+      return renderInvitesPage(state);
+    case "settings":
+      return renderSettingsPage(state);
+    case "overview":
+    default:
+      return renderOverviewPage(state);
   }
-  if (window.location.hash !== `#/${next}`) {
-    window.location.hash = `#/${next}`;
-  } else {
-    state.route = next;
-    loadRouteData().then(render);
-  }
+}
+
+export function renderShell(state) {
+  const currentMetadata = pageMetadata[state.currentPage] || pageMetadata.overview;
+  return renderLayoutShell(state, currentMetadata, renderCurrentPage(state));
 }

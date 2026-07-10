@@ -1,81 +1,129 @@
-import { emptyUsage, getStored, readJSON, removeStored } from "./utils.js";
-
-export const storage = {
-  token: "grok_mcp_panel_token",
-  user: "grok_mcp_panel_user"
-};
+import { readPageFromLocation } from "./router.js";
 
 export const state = {
-  ready: false,
-  loading: false,
+  authenticated: false,
+  user: null,
+  registrationMode: "free",
   authMode: "login",
-  route: "dashboard",
-  token: getStored(storage.token),
-  user: readJSON(storage.user),
-  keys: [],
-  users: [],
-  tiers: [],
-  inviteCodes: [],
-  serverSettings: null,
-  registrationSettings: null,
-  createdInviteCode: null,
-  usage: emptyUsage(),
-  selectedKeyID: "all",
-  sinceMode: "24h",
-  usageActivityCompact: true,
-  usageActivityPage: 1,
-  usageActivityPageSize: 10,
-  expandUsageActivityOnNextUsageNavigation: false,
-  search: "",
+  authBusy: false,
+  authError: "",
+  currentPage: readPageFromLocation(),
+  pageLoading: false,
+  refreshing: false,
+  formBusy: false,
+  sidebarOpen: false,
   modal: null,
-  toast: null
+  filters: {
+    usagePeriod: "24h",
+    userSearch: ""
+  },
+  data: {
+    keys: null,
+    overviewUsage: null,
+    usage: null,
+    users: null,
+    tiers: null,
+    invites: null,
+    settings: null,
+    models: null
+  }
 };
 
-export function clearSession() {
-  state.token = "";
+export function clearCachedData() {
+  for (const dataKey of Object.keys(state.data)) {
+    state.data[dataKey] = null;
+  }
+}
+
+export function clearAuthenticatedState() {
+  state.authenticated = false;
   state.user = null;
-  state.keys = [];
-  state.users = [];
-  state.tiers = [];
-  state.inviteCodes = [];
-  state.serverSettings = null;
-  state.createdInviteCode = null;
-  state.usage = emptyUsage();
-  state.selectedKeyID = "all";
-  state.usageActivityPage = 1;
-  state.usageActivityPageSize = 10;
-  removeStored(storage.token);
-  removeStored(storage.user);
+  state.authBusy = false;
+  state.formBusy = false;
+  state.pageLoading = false;
+  state.refreshing = false;
+  state.sidebarOpen = false;
+  state.modal = null;
+  state.authMode = "login";
+  clearCachedData();
 }
 
-export function isAdmin() {
-  return state.user && state.user.role === "admin";
+export function pageHasExistingData(page) {
+  switch (page) {
+    case "overview":
+      return Boolean(state.data.overviewUsage && state.data.keys);
+    case "usage":
+      return Boolean(state.data.usage);
+    case "keys":
+      return Boolean(state.data.keys);
+    case "users":
+      return Boolean(state.data.users && state.data.tiers);
+    case "tiers":
+      return Boolean(state.data.tiers);
+    case "invites":
+      return Boolean(state.data.invites);
+    case "settings":
+      return Boolean(state.data.settings);
+    default:
+      return false;
+  }
 }
 
-export function filteredKeys() {
-  const q = state.search.trim().toLowerCase();
-  if (!q) return state.keys;
-  return state.keys.filter((key) => [key.name, key.key_prefix, key.id].some((value) => String(value || "").toLowerCase().includes(q)));
+export function commitPageData(page, pageResult) {
+  switch (page) {
+    case "overview":
+      state.user = pageResult.user;
+      state.data.keys = pageResult.keys;
+      state.data.overviewUsage = pageResult.overviewUsage;
+      break;
+    case "keys":
+      state.data.keys = pageResult.keys;
+      break;
+    case "usage":
+      state.data.usage = pageResult.usage;
+      break;
+    case "users":
+      state.data.users = pageResult.users;
+      state.data.tiers = pageResult.tiers;
+      break;
+    case "tiers":
+      state.data.tiers = pageResult.tiers;
+      break;
+    case "invites":
+      state.data.invites = pageResult.invites;
+      break;
+    case "settings":
+      state.data.settings = pageResult.settings;
+      break;
+    default:
+      break;
+  }
 }
 
-export function filteredUsers() {
-  const q = state.search.trim().toLowerCase();
-  if (!q) return state.users;
-  return state.users.filter((user) => [user.username, user.role, user.id].some((value) => String(value || "").toLowerCase().includes(q)));
+export function normalizeUsage(usage) {
+  return {
+    total_calls: Number(usage?.total_calls || 0),
+    success_calls: Number(usage?.success_calls || 0),
+    current_rpm: Number(usage?.current_rpm || 0),
+    by_tool: usage?.by_tool || {},
+    traffic_buckets: usage?.traffic_buckets || [],
+    records: usage?.records || []
+  };
 }
 
-export function filteredInviteCodes() {
-  const q = state.search.trim().toLowerCase();
-  if (!q) return state.inviteCodes;
-  return state.inviteCodes.filter((inviteCode) => {
-    const statusText = inviteCode.enabled ? "enabled" : "disabled";
-    return [inviteCode.id, inviteCode.code, inviteCode.code_prefix, statusText].some((value) => String(value || "").toLowerCase().includes(q));
-  });
+export function replaceItemByIdentifier(items, updatedItem) {
+  if (!Array.isArray(items) || !updatedItem?.id) {
+    return Array.isArray(items) ? [...items] : [];
+  }
+
+  return items.map((item) => item.id === updatedItem.id ? updatedItem : item);
 }
 
-export function filteredRecords(records) {
-  const q = state.search.trim().toLowerCase();
-  const sorted = [...(records || [])].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  if (!q) return sorted;
-  return sorted.filter((record) => [record.tool_name, record.key_id, record.id, record.success ? "success" : "failed"].some((value) => String(value || "").toLowerCase().includes(q)));
+export function removeItemByIdentifier(items, identifier) {
+  return Array.isArray(items) ? items.filter((item) => item.id !== identifier) : [];
+}
+
+export function compareTiers(firstTier, secondTier) {
+  return Number(firstTier.level || 0) - Number(secondTier.level || 0)
+    || String(firstTier.name || "").localeCompare(String(secondTier.name || ""), "zh-CN");
 }

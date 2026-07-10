@@ -1,81 +1,48 @@
-import { renderEmptyRow } from "../components/metric-card.js";
-import { filteredUsers, isAdmin, state } from "../state.js";
-import { escapeAttr, escapeHTML, formatDateMinute, formatNumber, limitText, rpmText, shortID } from "../utils.js";
+import { escapeHTML, formatDateTime, formatLimit, formatNumber, getInitials } from "../utils.js";
+import { renderIcon } from "../components/icons.js";
+import { renderEmptyState, renderLoadingTable, renderPageHeading, renderStatusBadge } from "../components/loading.js";
 
-export function renderUsers() {
-  if (!isAdmin()) {
-    return `
-      <div class="page-head">
-        <div>
-          <h2>User Management</h2>
-          <p>Admin role is required to view and edit users.</p>
-        </div>
-      </div>
-      <section class="card empty">
-        <div>
-          <span class="material-symbols-outlined">lock</span>
-          <h3>Admin required</h3>
-          <p>当前账号没有管理员权限。</p>
-        </div>
-      </section>`;
-  }
-  const users = filteredUsers();
-  return `
-    <div class="page-head">
-      <div>
-        <h2>User Management</h2>
-        <p>Adjust user status, roles, tier-derived RPM and success limit.</p>
-      </div>
-      <button class="button secondary" data-action="refresh" type="button"><span class="material-symbols-outlined">refresh</span><span>Refresh</span></button>
+export function renderUsersPage(state) {
+  const users = state.data.users || [];
+  const normalizedSearch = String(state.filters.userSearch || "").trim().toLowerCase();
+  const filteredUsers = normalizedSearch
+    ? users.filter((user) => user.username.toLowerCase().includes(normalizedSearch) || user.id.toLowerCase().includes(normalizedSearch))
+    : users;
+  const toolbar = `
+    <div class="toolbar">
+      <label class="search-field">${renderIcon("search")}<span class="sr-only">搜索用户</span><input class="text-input" type="search" value="${escapeHTML(state.filters.userSearch)}" placeholder="搜索用户名或 ID" data-filter="user-search"></label>
+      <span class="muted" style="font-size:11px">共 ${formatNumber(users.length)} 位用户</span>
     </div>
-    <section class="card table-card">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th>Role</th>
-              <th>Tier</th>
-              <th>Registered</th>
-              <th>Status</th>
-              <th>RPM</th>
-              <th>Success Limit</th>
-      <th class="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${users.length ? users.map(renderUserRow).join("") : renderEmptyRow("group", "No users", "Registered users will appear here.")}
-          </tbody>
-        </table>
-      </div>
-    </section>`;
-}
+  `;
 
-export function renderUserRow(user) {
-  const tierBadge = user.tier_name
-    ? `<span class="badge off">${escapeHTML(user.tier_name)}</span>`
-    : `<span class="muted">—</span>`;
-  const deleteButton = state.user && state.user.id === user.id
-    ? ""
-    : `<button class="mini-icon danger" data-action="delete-user" data-user-id="${escapeAttr(user.id)}" title="Delete" type="button"><span class="material-symbols-outlined">delete</span></button>`;
+  if (state.pageLoading && !state.data.users) {
+    return `${renderPageHeading("用户管理", "管理账户角色、启用状态、配额方案与现有会话。")}${renderLoadingTable(7, 6)}`;
+  }
+
   return `
-    <tr>
-      <td>
-        <strong>${escapeHTML(user.username)}</strong>
-        <div class="hint mono">${escapeHTML(shortID(user.id))}</div>
-      </td>
-      <td><span class="badge ${user.role === "admin" ? "" : "off"}">${escapeHTML(user.role)}</span></td>
-      <td>${tierBadge}</td>
-      <td class="mono">${escapeHTML(formatDateMinute(user.created_at))}</td>
-      <td><span class="badge ${user.enabled ? "" : "error"}">${user.enabled ? "Enabled" : "Disabled"}</span></td>
-      <td class="mono">${rpmText(user.rpm, { unavailable: Boolean(user.limits_unavailable) })}</td>
-      <td>${formatNumber(user.success_calls)} <span class="muted">/ ${limitText(user.success_limit, { unavailable: Boolean(user.limits_unavailable) })}</span></td>
-      <td class="right">
-        <span class="row-actions">
-          <button class="mini-icon" data-action="user-usage" data-user-id="${escapeAttr(user.id)}" title="Usage" type="button"><span class="material-symbols-outlined">bar_chart</span></button>
-          <button class="mini-icon" data-action="edit-user" data-user-id="${escapeAttr(user.id)}" title="Edit" type="button"><span class="material-symbols-outlined">edit</span></button>
-          ${deleteButton}
-        </span>
-      </td>
-    </tr>`;
+    ${renderPageHeading("用户管理", "管理账户角色、启用状态、配额方案与现有会话。")}
+    ${toolbar}
+    <div class="data-card">
+      ${filteredUsers.length === 0 ? renderEmptyState("users", "没有匹配的用户", "调整搜索条件后再试。", "") : `
+        <div class="data-table-wrap"><table class="data-table">
+          <thead><tr><th>用户</th><th>角色</th><th>配额方案</th><th>状态</th><th>本月成功调用</th><th>创建时间</th><th aria-label="操作"></th></tr></thead>
+          <tbody>${filteredUsers.map((user) => `
+            <tr>
+              <td><div class="primary-cell"><span class="cell-icon">${escapeHTML(getInitials(user.username))}</span><span class="cell-copy"><strong>${escapeHTML(user.username)}</strong><span>${escapeHTML(user.id)}</span></span></div></td>
+              <td><span class="role-badge ${user.role === "admin" ? "is-admin" : "is-user"}">${user.role === "admin" ? "管理员" : "用户"}</span></td>
+              <td><span class="tier-badge">${escapeHTML(user.tier_name || "未分配")}</span></td>
+              <td>${renderStatusBadge(Boolean(user.enabled), "正常", "已禁用")}</td>
+              <td>${user.limits_unavailable ? '<span class="text-danger">限额不可用</span>' : `${escapeHTML(formatNumber(user.success_calls))} / ${escapeHTML(formatLimit(user.success_limit))}`}</td>
+              <td>${escapeHTML(formatDateTime(user.created_at))}</td>
+              <td><div class="table-actions">
+                <button class="table-action" type="button" data-action="open-user-usage" data-id="${escapeHTML(user.id)}" aria-label="查看用户用量">${renderIcon("chart")}</button>
+                <button class="table-action" type="button" data-action="open-edit-user" data-id="${escapeHTML(user.id)}" aria-label="编辑用户">${renderIcon("edit")}</button>
+                <button class="table-action is-danger" type="button" data-action="confirm-delete-user" data-id="${escapeHTML(user.id)}" aria-label="删除用户" ${user.id === state.user?.id ? "disabled" : ""}>${renderIcon("trash")}</button>
+              </div></td>
+            </tr>
+          `).join("")}</tbody>
+        </table></div>
+      `}
+    </div>
+  `;
 }

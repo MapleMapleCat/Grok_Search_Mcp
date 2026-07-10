@@ -1,128 +1,56 @@
-import { metricCard, renderBars, renderRecentActivity, renderToolUsage } from "../components/metric-card.js";
-import { state } from "../state.js";
-import { escapeAttr, escapeHTML, formatNumber, rangeLabel, successPercent } from "../utils.js";
+import { escapeHTML, formatNumber, formatPercent, getSuccessRate } from "../utils.js";
+import { renderPageHeading } from "../components/loading.js";
+import { renderMetricCard } from "../components/metric-card.js";
+import { renderToolBreakdown } from "../components/tool-breakdown.js";
+import { renderChart } from "../components/usage-chart.js";
+import { renderUsageRecords } from "../components/usage-records.js";
 
-const USAGE_RANGE_OPTIONS = [
-  { value: "24h", shortLabel: "24H", label: "Last 24 Hours" },
-  { value: "7d", shortLabel: "7D", label: "Last 7 Days" },
-  { value: "all", shortLabel: "All", label: "All Time" }
-];
-
-export function renderUsage() {
-  const usage = state.usage;
-  return `
-    <div class="page-head usage-page-head">
-      <div>
-        <h2>Usage Stats</h2>
-        <p>Review MCP tool calls, latency and success counters.</p>
-      </div>
-      ${renderUsageFilters()}
+export function renderUsagePage(state) {
+  const period = state.filters.usagePeriod;
+  const periodFilters = `
+    <div class="filter-pills" aria-label="时间范围">
+      ${[["24h", "24 小时"], ["7d", "7 天"], ["30d", "30 天"], ["all", "全部"]].map(([value, label]) => `
+        <button class="filter-pill ${period === value ? "is-active" : ""}" type="button" data-action="set-usage-period" data-period="${value}">${label}</button>
+      `).join("")}
     </div>
-    <section class="grid metric-grid">
-      ${metricCard("Total Calls", formatNumber(usage.total_calls), "data_usage", "Selected range", "good", null)}
-      ${metricCard("Success Calls", formatNumber(usage.success_calls), "check_circle", `${successPercent(usage)} success`, "good", null)}
-      ${metricCard("Failed Calls", formatNumber(Math.max(0, usage.total_calls - usage.success_calls)), "error", "Not counted as success quota", usage.total_calls === usage.success_calls ? "good" : "bad", null)}
-      ${metricCard("Active Keys", formatNumber(state.keys.filter((key) => key.enabled).length), "vpn_key", `${state.keys.length} total keys`, "good", null)}
-    </section>
-    <section class="grid viz-grid">
-      <div class="card panel">
-        <div class="panel-head">
-          <h3>Traffic Volume</h3>
-          <span class="mono muted">${escapeHTML(rangeLabel(state.sinceMode))}</span>
-        </div>
-        ${renderBars(usage.traffic_buckets, state.sinceMode)}
-      </div>
-      ${renderToolUsage(usage)}
-    </section>
-    ${renderRecentActivity(usage.records, state.usageActivityCompact, {
-      viewAllAction: "expand-usage-activity",
-      viewAllRoute: "",
-      showPagination: true,
-      page: state.usageActivityPage,
-      pageSize: state.usageActivityPageSize
-    })}`;
-}
+  `;
 
-function renderUsageFilters() {
-  return `
-      <div class="usage-filters" aria-label="Usage filters">
-        ${renderUsageKeyPicker()}
-        ${renderUsageRangeTabs()}
-        <div class="usage-filter-actions">
-          <button class="usage-refresh-button" data-action="refresh" type="button" aria-label="Refresh usage stats" title="Refresh usage stats">
-            <span class="material-symbols-outlined">refresh</span>
-            <span>Refresh</span>
-          </button>
-        </div>
-      </div>`;
-}
-
-function renderUsageKeyPicker() {
-  const selectedUsageKey = findSelectedUsageKey();
-  const selectedUsageKeySummary = selectedUsageKey ? usageKeyDisplayName(selectedUsageKey) : "All Keys";
-
-  return `
-        <div class="usage-filter-card usage-key-card">
-          <div class="usage-filter-head">
-            <span class="usage-filter-label">API Key</span>
-            <span class="usage-filter-summary" title="${escapeAttr(selectedUsageKeySummary)}">${escapeHTML(selectedUsageKeySummary)}</span>
-          </div>
-          <select class="select usage-key-select" id="usage-key-select" aria-label="Choose API key for usage stats">
-            ${renderUsageKeyOptions()}
-          </select>
-        </div>`;
-}
-
-function renderUsageKeyOptions() {
-  const totalKeysCount = state.keys.length;
-  const allKeysSelected = state.selectedKeyID === "all";
-  const keyOptions = state.keys.map((key) => {
-    const keySelected = state.selectedKeyID === key.id;
-    return `<option value="${escapeAttr(key.id)}" ${keySelected ? "selected" : ""}>${escapeHTML(usageKeyOptionLabel(key))}</option>`;
-  });
-
-  return [
-    `<option value="all" ${allKeysSelected ? "selected" : ""}>All Keys (${formatNumber(totalKeysCount)})</option>`,
-    ...keyOptions
-  ].join("");
-}
-
-function renderUsageRangeTabs() {
-  return `
-        <div class="usage-filter-card usage-range-card">
-          <div class="usage-filter-head">
-            <span class="usage-filter-label">Time Range</span>
-            <span class="usage-filter-summary">${escapeHTML(rangeLabel(state.sinceMode))}</span>
-          </div>
-          <div class="usage-range-tabs" role="group" aria-label="Choose usage time range">
-            ${USAGE_RANGE_OPTIONS.map(renderUsageRangeOption).join("")}
-          </div>
-        </div>`;
-}
-
-function renderUsageRangeOption(rangeOption) {
-  const rangeSelected = state.sinceMode === rangeOption.value;
-  return `
-            <button class="usage-range-option ${rangeSelected ? "active" : ""}" data-action="usage-range" data-range="${escapeAttr(rangeOption.value)}" type="button" aria-pressed="${rangeSelected ? "true" : "false"}">
-              <span>${escapeHTML(rangeOption.shortLabel)}</span>
-              <small>${escapeHTML(rangeOption.label)}</small>
-            </button>`;
-}
-
-function findSelectedUsageKey() {
-  if (state.selectedKeyID === "all") {
-    return null;
+  if (state.pageLoading && !state.data.usage) {
+    return `${renderPageHeading("调用分析", "按时间范围查看请求趋势、工具分布和最近调用记录。", periodFilters)}${renderUsageLoading()}`;
   }
-  return state.keys.find((key) => key.id === state.selectedKeyID) || null;
+
+  const usage = state.data.usage || createEmptyUsage();
+  const successRate = getSuccessRate(usage);
+  return `
+    ${renderPageHeading("调用分析", "按时间范围查看请求趋势、工具分布和最近调用记录。", periodFilters)}
+    <section class="metric-grid">
+      ${renderMetricCard("总调用", formatNumber(usage.total_calls), getPeriodLabel(period), "activity", "#eeeaff", "#7667f4", false, "trend", usage.total_calls)}
+      ${renderMetricCard("成功调用", formatNumber(usage.success_calls), formatPercent(successRate), "shield", "#e8f8ef", "#238a54", successRate >= 95, "ring", successRate)}
+      ${renderMetricCard("当前 RPM", formatNumber(usage.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6", false, "pulse", usage.current_rpm)}
+      ${renderMetricCard("工具种类", formatNumber(Object.keys(usage.by_tool || {}).length), "已调用工具", "model", "#fff6e5", "#d58a19", false, "nodes", Object.keys(usage.by_tool || {}).length)}
+    </section>
+
+    <section class="dashboard-grid" style="margin-bottom:18px">
+      <article class="content-card"><header class="card-header"><div><h2>调用趋势</h2><p>${escapeHTML(getPeriodLabel(period))}</p></div></header><div class="card-body chart-wrap">${renderChart(usage.traffic_buckets)}</div></article>
+      <article class="content-card"><header class="card-header"><div><h2>工具分布</h2><p>调用量占比</p></div></header><div class="card-body">${renderToolBreakdown(usage.by_tool)}</div></article>
+    </section>
+
+    <article class="data-card">
+      <header class="card-header"><div><h2>最近调用</h2><p>请求结果与耗时明细</p></div></header>
+      ${renderUsageRecords(usage.records)}
+    </article>
+  `;
 }
 
-function usageKeyOptionLabel(key) {
-  const displayName = usageKeyDisplayName(key);
-  const keyPrefix = key.key_prefix && key.key_prefix !== displayName ? ` - ${key.key_prefix}` : "";
-  const disabledSuffix = key.enabled ? "" : " - Disabled";
-  return `${displayName}${keyPrefix}${disabledSuffix}`;
+function renderUsageLoading() {
+  return `<section class="metric-grid">${Array.from({ length: 4 }, () => '<div class="skeleton" style="height:142px;border-radius:16px"></div>').join("")}</section><div class="skeleton" style="height:360px;border-radius:16px"></div>`;
 }
 
-function usageKeyDisplayName(key) {
-  return String(key.name || key.key_prefix || key.id || "Unnamed Key").trim();
+function createEmptyUsage() {
+  return { total_calls: 0, success_calls: 0, current_rpm: 0, by_tool: {}, traffic_buckets: [], records: [] };
+}
+
+function getPeriodLabel(period) {
+  const labels = { "24h": "最近 24 小时", "7d": "最近 7 天", "30d": "最近 30 天", all: "全部时间" };
+  return labels[period] || labels["24h"];
 }

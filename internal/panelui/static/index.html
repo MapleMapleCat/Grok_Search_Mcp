@@ -3,15 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MCP Central</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Material+Symbols+Outlined:wght@300;400;500;600&display=swap" rel="stylesheet">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232563eb'/%3E%3Cpath d='M18 20h12v12H18zM34 20h12v12H34zM18 36h12v8H18zM34 36h12v8H34z' fill='white'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/panel/styles.css">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#101814">
+  <meta name="description" content="Grok MCP 服务与访问控制面板">
+  <title>Grok MCP Control</title>
+  <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <div id="app" aria-live="polite"></div>
-  <script type="module" src="/panel/app.js"></script>
+  <div id="app" class="app-root" aria-live="polite">
+    <main class="boot-screen">
+      <div class="boot-mark" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <p>正在连接 Grok MCP</p>
+    </main>
+  </div>
+
+  <div id="toast-region" class="toast-region" aria-live="assertive" aria-atomic="true"></div>
+  <div id="modal-region"></div>
+
+  <noscript>
+    <div class="noscript-message">此管理面板需要启用 JavaScript。</div>
+  </noscript>
+
+  <script src="./app.js" type="module"></script>
 </body>
 </html>

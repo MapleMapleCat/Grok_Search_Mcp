@@ -1,635 +1,319 @@
-import { api } from "../api.js";
-import { metricCard, renderRecentActivity } from "./metric-card.js";
-import { tierOptions } from "../pages/tiers.js";
-import { state } from "../state.js";
-import { escapeAttr, escapeHTML, formatNumber, relativeTime, successPercent } from "../utils.js";
+import { escapeHTML, formatDateTime, formatNumber, formatPercent, getSuccessRate } from "../utils.js";
+import { renderIcon } from "./icons.js";
+import { renderMetricCard } from "./metric-card.js";
+import { renderChart } from "./usage-chart.js";
+import { renderUsageRecords } from "./usage-records.js";
 
-export function renderModal() {
-  if (!state.modal) return "";
-  if (state.modal.type === "create-key") return renderCreateKeyModal();
-  if (state.modal.type === "key-created") return renderKeyCreatedModal(state.modal);
-  if (state.modal.type === "edit-key") return renderEditKeyModal(state.modal.key);
-  if (state.modal.type === "create-invite-code") return renderCreateInviteCodeModal();
-  if (state.modal.type === "edit-invite-code") return renderEditInviteCodeModal(state.modal.inviteCode);
-  if (state.modal.type === "edit-user") return renderEditUserModal(state.modal.user);
-  if (state.modal.type === "create-tier") return renderCreateTierModal();
-  if (state.modal.type === "edit-tier") return renderEditTierModal(state.modal.tier);
-  if (state.modal.type === "user-usage") return renderUserUsageModal(state.modal.user, state.modal.usage);
-  if (state.modal.type === "user-usage-logs") return renderUserUsageLogsModal(state.modal.user, state.modal.usage);
-  if (state.modal.type === "debug-json") return renderDebugJSONModal(state.modal.record);
-  if (state.modal.type === "delete-confirm") return renderDeleteConfirmModal(state.modal);
-  return "";
+export function renderModal(state) {
+  const modal = state.modal;
+  if (!modal) {
+    return "";
+  }
+
+  switch (modal.type) {
+    case "createKey":
+      return renderCreateKeyModal(modal);
+    case "editKey":
+      return renderEditKeyModal(modal);
+    case "secret":
+      return renderSecretModal(modal);
+    case "keyUsage":
+      return renderKeyUsageModal(modal);
+    case "editUser":
+      return renderEditUserModal(modal, state.data.tiers || [], state.user);
+    case "userUsage":
+      return renderUserUsageModal(modal);
+    case "createTier":
+      return renderTierModal(modal, false);
+    case "editTier":
+      return renderTierModal(modal, true);
+    case "createInvite":
+      return renderCreateInviteModal(modal);
+    case "debugJSON":
+      return renderDebugJSONModal(modal);
+    case "confirm":
+      return renderConfirmModal(modal);
+    default:
+      return "";
+  }
 }
 
-export function renderDebugJSONModal(record) {
-  if (!record) return "";
-  const requestID = `req_${String(record.id || "").padStart(8, "0").slice(-8)}`;
-  const rawDebugJSON = String(record.debug_json || "{}");
+function renderModalFrame({ title, description, body, footer, wide = false, closeDisabled = false, modalClass = "" }) {
+  return `
+    <div class="modal-backdrop" data-action="modal-backdrop">
+      <section class="modal-card ${wide ? "is-wide" : ""} ${escapeHTML(modalClass)}" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <header class="modal-header"><div><h2 id="modal-title">${escapeHTML(title)}</h2>${description ? `<p>${escapeHTML(description)}</p>` : ""}</div><button class="modal-close" type="button" data-action="close-modal" aria-label="关闭" ${closeDisabled ? "disabled" : ""}>${renderIcon("close")}</button></header>
+        <div class="modal-body">${body}</div>
+        ${footer ? `<footer class="modal-footer">${footer}</footer>` : ""}
+      </section>
+    </div>
+  `;
+}
+
+function renderDebugJSONModal(modal) {
+  const record = modal.record || {};
+  const rawDebugJSON = String(record.debug_json || "");
   let parsedDebugJSON = null;
-  let formattedDebugJSON = rawDebugJSON;
   let parseError = "";
+
   try {
     parsedDebugJSON = JSON.parse(rawDebugJSON);
-    formattedDebugJSON = JSON.stringify(parsedDebugJSON, null, 2);
   } catch (error) {
-    parseError = error instanceof Error ? error.message : "Invalid JSON payload";
+    parseError = error instanceof Error ? error.message : "无法解析调试数据";
   }
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal debug-json-modal" role="dialog" aria-modal="true" aria-label="Debug JSON" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>Debug JSON</h3>
-          <p>${escapeHTML(requestID)} full captured request and response payload.</p>
-          <div class="debug-json-summary">
-            ${renderDebugJSONSummaryItem("Tool", record.tool_name || "unknown")}
-            ${renderDebugJSONSummaryItem("Status", record.success ? "Success" : "Failed", record.success ? "good" : "bad")}
-            ${renderDebugJSONSummaryItem("Latency", record.duration_ms ? `${formatNumber(record.duration_ms)}ms` : "--")}
-            ${renderDebugJSONSummaryItem("Time", relativeTime(record.timestamp))}
-          </div>
-          ${parseError ? `
-            <div class="warning-box debug-json-warning">
-              <span class="material-symbols-outlined">warning</span>
-              <div>
-                <strong>Unable to parse as JSON.</strong>
-                <p>${escapeHTML(parseError)}</p>
-              </div>
-            </div>` : ""}
-          <div class="debug-json-viewer">
-            <div class="debug-json-panel">
-              <div class="debug-json-panel-head">
-                <span>Visual Tree</span>
-                <span class="mono muted">${parsedDebugJSON === null ? "Raw fallback" : `${formatNumber(countDebugJSONNodes(parsedDebugJSON))} nodes`}</span>
-              </div>
-              <div class="debug-json-tree" role="tree">
-                ${parsedDebugJSON === null ? `<pre class="debug-json-block"><code>${escapeHTML(formattedDebugJSON)}</code></pre>` : renderDebugJSONTree(parsedDebugJSON)}
-              </div>
-            </div>
-            <details class="debug-json-panel debug-json-raw-panel">
-              <summary class="debug-json-panel-head">
-                <span>Formatted Raw JSON</span>
-                <span class="mono muted">click to expand</span>
-              </summary>
-              <pre class="debug-json-block"><code>${escapeHTML(formattedDebugJSON)}</code></pre>
-            </details>
-          </div>
-        </div>
-      </section>
-    </div>`;
+
+  const body = `
+    <section class="debug-summary-grid" aria-label="调用摘要">
+      ${renderDebugSummaryItem("工具", record.tool_name || "unknown", "code")}
+      ${renderDebugSummaryItem("结果", record.success ? "成功" : "失败", record.success ? "success" : "danger")}
+      ${renderDebugSummaryItem("耗时", `${formatNumber(record.duration_ms)} ms`, "latency")}
+      ${renderDebugSummaryItem("发生时间", formatDateTime(record.timestamp), "time")}
+    </section>
+
+    ${parseError ? `
+      <div class="inline-alert debug-parse-alert">
+        ${renderIcon("alert")}
+        <span><strong>调试数据不是有效 JSON</strong><small>${escapeHTML(parseError)}，已回退为原始内容展示。</small></span>
+      </div>
+      <div class="debug-json-stack">
+        ${renderDebugJSONSection("原始调试内容", "保留后端返回的原始文本", rawDebugJSON, true)}
+      </div>
+    ` : renderParsedDebugJSON(parsedDebugJSON)}
+
+    <div class="warning-callout debug-privacy-note">
+      ${renderIcon("warning")}
+      <span>调试记录可能包含请求参数和响应内容。请仅在可信环境中查看或复制，并在排查完成后关闭调试模式。</span>
+    </div>
+  `;
+  const footer = `
+    <button class="button button-secondary" type="button" data-action="close-modal">关闭</button>
+    <button class="button button-primary" type="button" data-action="copy-debug-json">${renderIcon("copy")} 复制完整 JSON</button>
+  `;
+
+  return renderModalFrame({
+    title: "调试详情",
+    description: `调用 #${record.id ?? "--"} 的请求、响应与执行上下文。`,
+    body,
+    footer,
+    wide: true,
+    modalClass: "debug-json-modal"
+  });
 }
 
-function renderDebugJSONSummaryItem(label, value, tone = "") {
+function renderDebugSummaryItem(label, value, tone) {
   return `
-    <div class="debug-json-summary-item ${escapeAttr(tone)}">
+    <div class="debug-summary-item is-${escapeHTML(tone)}">
       <span>${escapeHTML(label)}</span>
       <strong>${escapeHTML(value)}</strong>
-    </div>`;
+    </div>
+  `;
 }
 
-function renderDebugJSONTree(value, key = "root", depth = 0) {
-  if (Array.isArray(value)) {
-    return renderDebugJSONArray(value, key, depth);
+function renderParsedDebugJSON(parsedDebugJSON) {
+  if (!isDebugJSONObject(parsedDebugJSON)) {
+    return `<div class="debug-json-stack">${renderDebugJSONSection("完整调试数据", "后端返回的 JSON 内容", parsedDebugJSON, true)}</div>`;
   }
-  if (value && typeof value === "object") {
-    return renderDebugJSONObject(value, key, depth);
-  }
-  return renderDebugJSONPrimitive(key, value, depth);
-}
 
-function renderDebugJSONObject(value, key, depth) {
-  const entries = Object.entries(value);
-  const shouldOpen = depth < 2;
+  const requestPayload = parsedDebugJSON.request;
+  const responsePayload = parsedDebugJSON.response;
+  const contextPayload = Object.fromEntries(
+    Object.entries(parsedDebugJSON).filter(([fieldName]) => fieldName !== "request" && fieldName !== "response")
+  );
+
   return `
-    <details class="debug-json-node" ${shouldOpen ? "open" : ""}>
+    <div class="debug-json-stack">
+      ${requestPayload !== undefined ? renderDebugHTTPSection("请求", requestPayload, true) : ""}
+      ${responsePayload !== undefined ? renderDebugHTTPSection("响应", responsePayload, false) : ""}
+      ${Object.keys(contextPayload).length > 0 ? renderDebugJSONSection("执行上下文", "认证、MCP 调用与采集元数据", contextPayload, false) : ""}
+      ${requestPayload === undefined && responsePayload === undefined && Object.keys(contextPayload).length === 0
+        ? renderDebugJSONSection("完整调试数据", "后端返回的 JSON 内容", parsedDebugJSON, true)
+        : ""}
+    </div>
+  `;
+}
+
+function renderDebugHTTPSection(title, payload, expanded) {
+  if (!isDebugJSONObject(payload)) {
+    return renderDebugJSONSection(title, "后端返回的捕获内容", payload, expanded);
+  }
+
+  const hasBody = Object.prototype.hasOwnProperty.call(payload, "body");
+  const bodyPayload = payload.body;
+  const metadataPayload = Object.fromEntries(
+    Object.entries(payload).filter(([fieldName]) => fieldName !== "body")
+  );
+  const sectionDescription = title === "请求"
+    ? [payload.method, payload.path].filter(Boolean).join(" ") || "请求元数据与请求体"
+    : payload.status !== undefined
+      ? `HTTP ${payload.status}`
+      : "响应元数据与响应体";
+
+  return `
+    <details class="debug-json-section" ${expanded ? "open" : ""}>
       <summary>
-        <span class="debug-json-key">${escapeHTML(key)}</span>
-        <span class="debug-json-type">object</span>
-        <span class="debug-json-count">${formatNumber(entries.length)} ${entries.length === 1 ? "field" : "fields"}</span>
+        <span class="debug-json-section-icon">${renderIcon(title === "请求" ? "arrowRight" : "activity")}</span>
+        <span class="debug-json-section-copy"><strong>${escapeHTML(title)}</strong><small>${escapeHTML(sectionDescription)}</small></span>
+        ${renderIcon("chevronDown", "debug-json-chevron")}
       </summary>
-      <div class="debug-json-children">
-        ${entries.length ? entries.map(([entryKey, entryValue]) => renderDebugJSONTree(entryValue, entryKey, depth + 1)).join("") : `<span class="debug-json-empty">empty object</span>`}
+      <div class="debug-json-section-body">
+        ${Object.keys(metadataPayload).length > 0 ? renderDebugJSONCodeBlock("元数据", metadataPayload) : ""}
+        ${hasBody ? renderDebugJSONCodeBlock(`${title}体`, bodyPayload) : '<p class="debug-json-no-body">未捕获正文内容</p>'}
       </div>
-    </details>`;
+    </details>
+  `;
 }
 
-function renderDebugJSONArray(value, key, depth) {
-  const shouldOpen = depth < 2;
+function renderDebugJSONSection(title, description, value, expanded) {
   return `
-    <details class="debug-json-node" ${shouldOpen ? "open" : ""}>
+    <details class="debug-json-section" ${expanded ? "open" : ""}>
       <summary>
-        <span class="debug-json-key">${escapeHTML(key)}</span>
-        <span class="debug-json-type">array</span>
-        <span class="debug-json-count">${formatNumber(value.length)} ${value.length === 1 ? "item" : "items"}</span>
+        <span class="debug-json-section-icon">${renderIcon("code")}</span>
+        <span class="debug-json-section-copy"><strong>${escapeHTML(title)}</strong><small>${escapeHTML(description)}</small></span>
+        ${renderIcon("chevronDown", "debug-json-chevron")}
       </summary>
-      <div class="debug-json-children">
-        ${value.length ? value.map((entryValue, entryIndex) => renderDebugJSONTree(entryValue, `[${entryIndex}]`, depth + 1)).join("") : `<span class="debug-json-empty">empty array</span>`}
-      </div>
-    </details>`;
+      <div class="debug-json-section-body">${renderDebugJSONCodeBlock("内容", value)}</div>
+    </details>
+  `;
 }
 
-function renderDebugJSONPrimitive(key, value, depth) {
-  const valueType = value === null ? "null" : typeof value;
-  if (valueType === "string") {
-    const parsedStringPayload = parseDebugJSONString(value);
-    if (parsedStringPayload) {
-      return renderDebugJSONParsedString(key, value, parsedStringPayload, depth);
-    }
-  }
-  const displayValue = valueType === "string" ? `"${value}"` : String(value);
+function renderDebugJSONCodeBlock(label, value) {
+  const displayValue = createDebugJSONDisplayValue(value);
   return `
-    <div class="debug-json-leaf">
-      <span class="debug-json-key">${escapeHTML(key)}</span>
-      <span class="debug-json-type">${escapeHTML(valueType)}</span>
-      <span class="debug-json-value ${escapeAttr(`is-${valueType}`)}">${escapeHTML(displayValue)}</span>
-    </div>`;
+    <div class="debug-json-code-group">
+      <div class="debug-json-code-label"><span>${escapeHTML(label)}</span><small>${escapeHTML(displayValue.description)}</small></div>
+      <pre class="debug-json-code"><code>${escapeHTML(displayValue.text)}</code></pre>
+    </div>
+  `;
 }
 
-function renderDebugJSONParsedString(key, originalValue, parsedStringPayload, depth) {
-  const shouldOpen = depth < 3;
-  return `
-    <details class="debug-json-node debug-json-string-node" ${shouldOpen ? "open" : ""}>
-      <summary>
-        <span class="debug-json-key">${escapeHTML(key)}</span>
-        <span class="debug-json-type">string</span>
-        <span class="debug-json-count">${escapeHTML(parsedStringPayload.label)}</span>
-      </summary>
-      <div class="debug-json-string-preview">${escapeHTML(createDebugJSONStringPreview(originalValue))}</div>
-      <div class="debug-json-children">
-        ${renderDebugJSONTree(parsedStringPayload.value, parsedStringPayload.key, depth + 1)}
-      </div>
-    </details>`;
-}
-
-function parseDebugJSONString(value) {
-  const trimmedValue = value.trim();
-  if (!trimmedValue) return null;
-
-  const parsedServerSentEvents = parseDebugJSONServerSentEvents(trimmedValue);
-  if (parsedServerSentEvents) return parsedServerSentEvents;
-
-  const parsedJSONValue = parseDebugJSONText(trimmedValue);
-  if (!parsedJSONValue) return null;
-
-  return {
-    key: "parsed",
-    label: Array.isArray(parsedJSONValue) ? "parsed JSON array" : "parsed JSON object",
-    value: parsedJSONValue
-  };
-}
-
-function parseDebugJSONText(value) {
-  const trimmedValue = value.trim();
-  const looksLikeJSONContainer = trimmedValue.startsWith("{") || trimmedValue.startsWith("[");
-  if (!looksLikeJSONContainer) return null;
-
-  try {
-    const parsedValue = JSON.parse(trimmedValue);
-    return parsedValue && typeof parsedValue === "object" ? parsedValue : null;
-  } catch {
-    return null;
-  }
-}
-
-function parseDebugJSONServerSentEvents(value) {
-  const normalizedValue = value.replace(/\r\n/g, "\n");
-  const lines = normalizedValue.split("\n");
-  const hasServerSentEventField = lines.some((line) => /^(event|data|id|retry):/.test(line));
-  if (!hasServerSentEventField) return null;
-
-  const parsedEvents = [];
-  let currentEvent = createEmptyDebugJSONServerSentEvent();
-  for (const line of lines) {
-    if (line === "") {
-      appendDebugJSONServerSentEvent(parsedEvents, currentEvent);
-      currentEvent = createEmptyDebugJSONServerSentEvent();
-      continue;
-    }
-    if (line.startsWith(":")) continue;
-
-    const separatorIndex = line.indexOf(":");
-    const fieldName = separatorIndex === -1 ? line : line.slice(0, separatorIndex);
-    const rawFieldValue = separatorIndex === -1 ? "" : line.slice(separatorIndex + 1);
-    const fieldValue = rawFieldValue.startsWith(" ") ? rawFieldValue.slice(1) : rawFieldValue;
-
-    if (fieldName === "event") {
-      currentEvent.event = fieldValue;
-    } else if (fieldName === "data") {
-      currentEvent.dataLines.push(fieldValue);
-    } else if (fieldName === "id") {
-      currentEvent.id = fieldValue;
-    } else if (fieldName === "retry") {
-      currentEvent.retry = fieldValue;
-    }
-  }
-  appendDebugJSONServerSentEvent(parsedEvents, currentEvent);
-
-  if (!parsedEvents.length) return null;
-  return {
-    key: parsedEvents.length === 1 ? "sse" : "events",
-    label: `${formatNumber(parsedEvents.length)} ${parsedEvents.length === 1 ? "SSE event" : "SSE events"}`,
-    value: parsedEvents.length === 1 ? parsedEvents[0] : parsedEvents
-  };
-}
-
-function createEmptyDebugJSONServerSentEvent() {
-  return {
-    event: "",
-    id: "",
-    retry: "",
-    dataLines: []
-  };
-}
-
-function appendDebugJSONServerSentEvent(parsedEvents, currentEvent) {
-  const hasEventData = currentEvent.dataLines.length > 0;
-  const hasEventMetadata = Boolean(currentEvent.event || currentEvent.id || currentEvent.retry);
-  if (!hasEventData && !hasEventMetadata) return;
-
-  const parsedEvent = {};
-  if (currentEvent.event) parsedEvent.event = currentEvent.event;
-  if (currentEvent.id) parsedEvent.id = currentEvent.id;
-  if (currentEvent.retry) parsedEvent.retry = currentEvent.retry;
-  if (hasEventData) {
-    const dataValue = currentEvent.dataLines.join("\n");
-    parsedEvent.data = parseDebugJSONText(dataValue) || dataValue;
-  }
-  parsedEvents.push(parsedEvent);
-}
-
-function createDebugJSONStringPreview(value) {
-  const singleLineValue = value.replace(/\s+/g, " ").trim();
-  if (singleLineValue.length <= 160) return singleLineValue;
-  return `${singleLineValue.slice(0, 157)}...`;
-}
-
-function countDebugJSONNodes(value) {
+function createDebugJSONDisplayValue(value) {
   if (typeof value === "string") {
-    const parsedStringPayload = parseDebugJSONString(value);
-    return parsedStringPayload ? 1 + countDebugJSONNodes(parsedStringPayload.value) : 1;
+    const trimmedValue = value.trim();
+    if (trimmedValue.startsWith("{") || trimmedValue.startsWith("[")) {
+      try {
+        const parsedValue = JSON.parse(trimmedValue);
+        return {
+          text: JSON.stringify(parsedValue, null, 2),
+          description: "嵌套 JSON"
+        };
+      } catch {
+        // Keep malformed or truncated nested payloads readable as their original text.
+      }
+    }
+    return {
+      text: value || "(空字符串)",
+      description: `${formatNumber(value.length)} 个字符`
+    };
   }
-  if (!value || typeof value !== "object") return 1;
-  const childValues = Array.isArray(value) ? value : Object.values(value);
-  return 1 + childValues.reduce((nodeCount, childValue) => nodeCount + countDebugJSONNodes(childValue), 0);
+
+  const formattedValue = JSON.stringify(value, null, 2);
+  if (Array.isArray(value)) {
+    return { text: formattedValue, description: `${formatNumber(value.length)} 项` };
+  }
+  if (isDebugJSONObject(value)) {
+    return { text: formattedValue, description: `${formatNumber(Object.keys(value).length)} 个字段` };
+  }
+  return { text: formattedValue ?? String(value), description: value === null ? "null" : typeof value };
 }
 
-export function renderCreateKeyModal() {
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="Create New Key" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>Create New Key</h3>
-          <p>Create a client key for the current user. The raw key will be shown once.</p>
-          <form id="create-key-form" class="form-stack" style="margin-top: 24px;">
-            <div class="field">
-              <label for="key-name">Key Name</label>
-              <input id="key-name" name="name" class="input" placeholder="Production Backend" required>
-            </div>
-            <div class="modal-actions">
-              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-              <button class="button" type="submit"><span class="material-symbols-outlined">add</span><span>Create</span></button>
-            </div>
-          </form>
-        </div>
-      </section>
-    </div>`;
+function isDebugJSONObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-export function renderKeyCreatedModal(modal) {
-  const copyFailed = Boolean(modal.copyFailed);
-  const copySucceeded = Boolean(modal.copySucceeded);
-  const copyNote = copyFailed
-    ? "浏览器拒绝自动复制。密钥已选中，请按 Ctrl+C 手动复制。"
-    : copySucceeded
-      ? "密钥已复制到剪贴板。此密钥只显示一次，请立即保存。"
-      : "此密钥只显示一次，可以点击复制按钮或直接选中文本复制。";
-  return `
-    <div class="modal-backdrop">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="New API Key Created" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>New API Key Created</h3>
-          <p>Your new key '${escapeHTML(modal.key.name)}' is ready to use.</p>
-          <div class="warning-box">
-            <span class="material-symbols-outlined">warning</span>
-            <div>
-              <strong>Save this key now.</strong>
-              <p>For your security, it will only be shown once. If you lose it, you will need to generate a new key.</p>
-            </div>
-          </div>
-          <div class="key-copy">
-            <label class="field-label" for="created-api-key">Secret Key</label>
-            <div class="copy-shell ${copyFailed ? "manual" : ""}">
-              <input id="created-api-key" class="input mono subtle" value="${escapeAttr(modal.apiKey)}" readonly>
-              <button class="mini-icon" data-action="copy-created-key" title="Copy" type="button"><span class="material-symbols-outlined">content_copy</span></button>
-            </div>
-            <p class="hint ${copyFailed ? "manual-copy-note" : copySucceeded ? "auto-copy-note" : ""}">${copyNote}</p>
-          </div>
-          <div class="modal-actions">
-            <button class="button secondary" data-action="close-modal" type="button">I've Saved It</button>
-            <button class="button" data-action="copy-created-key" type="button"><span class="material-symbols-outlined">content_copy</span><span>Copy Key</span></button>
-          </div>
-        </div>
-      </section>
-    </div>`;
+function renderCreateKeyModal(modal) {
+  const body = `<form class="stack-form" id="create-key-form" data-form="create-key"><label class="field-group"><span class="field-label">密钥名称</span><input class="text-input" name="name" type="text" maxlength="120" placeholder="例如：Claude Desktop" required autofocus></label>${modal.error ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(modal.error)}</span></div>` : ""}</form>`;
+  const footer = `<button class="button button-secondary" type="button" data-action="close-modal">取消</button><button class="button button-primary" type="submit" form="create-key-form" ${modal.busy ? "disabled" : ""}>${modal.busy ? "正在创建" : `${renderIcon("plus")} 创建密钥`}</button>`;
+  return renderModalFrame({ title: "创建 API 密钥", description: "明文密钥只会在创建成功后显示一次。", body, footer });
 }
 
-export function renderEditKeyModal(key) {
-  if (!key) return "";
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Key" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>Edit API Key</h3>
-          <p>Update the key label or disable access immediately.</p>
-          <form id="edit-key-form" class="form-stack" style="margin-top: 24px;">
-            <input type="hidden" name="id" value="${escapeAttr(key.id)}">
-            <div class="field">
-              <label for="edit-key-name">Name</label>
-              <input id="edit-key-name" name="name" class="input" value="${escapeAttr(key.name || "")}">
-            </div>
-            <div class="field-row">
-              <span>
-                <strong>Enabled</strong>
-                <span class="hint" style="display: block;">Disabled keys cannot call /mcp.</span>
-              </span>
-              <label class="toggle">
-                <input type="checkbox" name="enabled" ${key.enabled ? "checked" : ""}>
-                <span></span>
-              </label>
-            </div>
-            <div class="modal-actions">
-              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-              <button class="button" data-action="submit-edit-key" type="button"><span class="material-symbols-outlined">save</span><span>Save</span></button>
-            </div>
-          </form>
-        </div>
-      </section>
-    </div>`;
+function renderEditKeyModal(modal) {
+  const apiKey = modal.data || {};
+  const body = `<form class="stack-form" id="edit-key-form" data-form="edit-key" data-id="${escapeHTML(apiKey.id)}"><label class="field-group"><span class="field-label">密钥名称</span><input class="text-input" name="name" type="text" maxlength="120" value="${escapeHTML(apiKey.name)}" required autofocus></label><label class="switch-row"><span class="switch-copy"><strong>启用密钥</strong><span>停用后 MCP 请求会立即失去授权</span></span><span class="switch"><input name="enabled" type="checkbox" ${apiKey.enabled ? "checked" : ""}><span class="switch-track"></span></span></label>${modal.error ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(modal.error)}</span></div>` : ""}</form>`;
+  const footer = `<button class="button button-secondary" type="button" data-action="close-modal">取消</button><button class="button button-primary" type="submit" form="edit-key-form" ${modal.busy ? "disabled" : ""}>保存更改</button>`;
+  return renderModalFrame({ title: "编辑 API 密钥", description: apiKey.key_prefix ? `前缀 ${apiKey.key_prefix}` : "", body, footer });
 }
 
-export function renderCreateInviteCodeModal() {
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="Create Invite Code" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>Create Invite Code</h3>
-          <p>Generate a one-time-visible registration invite code with a fixed registration limit.</p>
-          <form id="create-invite-code-form" class="form-stack" style="margin-top: 24px;">
-            <div class="field">
-              <label for="create-invite-code-limit">Registration Limit</label>
-              <input id="create-invite-code-limit" name="registration_limit" class="input mono" type="number" min="1" step="1" value="1" required>
-              <span class="hint">每个邀请码最多可成功注册的账号数量。邀请码注册模式未启用时，该邀请码不会影响普通注册。</span>
-            </div>
-            <div class="modal-actions">
-              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-              <button class="button" type="submit"><span class="material-symbols-outlined">add</span><span>Create</span></button>
-            </div>
-          </form>
-        </div>
-      </section>
-    </div>`;
+function renderSecretModal(modal) {
+  const secretType = modal.secretType === "invite" ? "邀请码" : "API 密钥";
+  const body = `
+    <div class="secret-display"><span class="secret-label">${escapeHTML(secretType)}</span><code class="secret-value">${escapeHTML(modal.secret)}</code></div>
+    <div class="warning-callout">${renderIcon("warning")}<span>${modal.secretType === "invite" ? "请将邀请码安全发送给目标用户。" : "请立即复制并安全保存。关闭窗口后，API 密钥明文将无法再次获取。"}</span></div>
+  `;
+  const footer = `<button class="button button-secondary" type="button" data-action="close-modal">完成</button><button class="button button-accent" type="button" data-action="copy-value" data-value="${escapeHTML(modal.secret)}">${renderIcon("copy")} 复制${escapeHTML(secretType)}</button>`;
+  return renderModalFrame({ title: modal.title || `${secretType}已创建`, description: modal.subtitle || "创建成功", body, footer });
 }
 
-export function renderEditInviteCodeModal(inviteCode) {
-  if (!inviteCode) return "";
-  const remainingRegistrations = Math.max(0, Number(inviteCode.registration_limit || 0) - Number(inviteCode.registration_count || 0));
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Invite Code" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>Edit Invite Code</h3>
-          <p>Manage invite code <span class="mono">${escapeHTML(inviteCode.code_prefix || inviteCode.id || "unknown")}</span>.</p>
-          <form id="edit-invite-code-form" class="form-stack" style="margin-top: 24px;">
-            <input type="hidden" name="id" value="${escapeAttr(inviteCode.id)}">
-            <div class="field">
-              <label for="edit-invite-code-limit">Registration Limit</label>
-              <input id="edit-invite-code-limit" name="registration_limit" class="input mono" type="number" min="${Number(inviteCode.registration_count) || 0}" step="1" value="${Number(inviteCode.registration_limit) || 1}" required>
-              <span class="hint">已使用 ${formatNumber(inviteCode.registration_count || 0)} 次，剩余 ${formatNumber(remainingRegistrations)} 次；上限不能低于已使用次数。</span>
-            </div>
-            <div class="field-row">
-              <span>
-                <strong>Enabled</strong>
-                <span class="hint" style="display: block;">Disabled invite codes cannot be used while invite-code registration mode is enabled.</span>
-              </span>
-              <label class="toggle">
-                <input type="checkbox" name="enabled" ${inviteCode.enabled ? "checked" : ""}>
-                <span></span>
-              </label>
-            </div>
-            <div class="modal-actions">
-              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-              <button class="button" data-action="submit-edit-invite-code" type="button"><span class="material-symbols-outlined">save</span><span>Save</span></button>
-            </div>
-          </form>
-        </div>
-      </section>
-    </div>`;
+function renderKeyUsageModal(modal) {
+  const usage = modal.usage;
+  const body = modal.loading ? '<div class="skeleton" style="height:300px"></div>' : `
+    <section class="metric-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      ${renderMetricCard("总调用", formatNumber(usage?.total_calls), "全部时间", "activity", "#eeeaff", "#7667f4")}
+      ${renderMetricCard("成功调用", formatNumber(usage?.success_calls), formatPercent(getSuccessRate(usage)), "shield", "#e8f8ef", "#238a54")}
+      ${renderMetricCard("当前 RPM", formatNumber(usage?.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6")}
+    </section>
+    <div class="chart-wrap">${renderChart(usage?.traffic_buckets || [])}</div>
+  `;
+  return renderModalFrame({ title: modal.title || "密钥调用分析", description: "该密钥的调用量与成功率。", body, footer: '<button class="button button-secondary" type="button" data-action="close-modal">关闭</button>', wide: true });
 }
 
-export function renderEditUserModal(user) {
-  if (!user) return "";
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="Edit User" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>Edit User</h3>
-          <p>${escapeHTML(user.username)} access and tier assignment.</p>
-          <form id="edit-user-form" class="form-stack" style="margin-top: 24px;">
-            <input type="hidden" name="id" value="${escapeAttr(user.id)}">
-            <div class="field-row">
-              <span>
-                <strong>Enabled</strong>
-                <span class="hint" style="display: block;">Disabled users cannot log in or use keys.</span>
-              </span>
-              <label class="toggle"><input type="checkbox" name="enabled" ${user.enabled ? "checked" : ""}><span></span></label>
-            </div>
-            <div class="field">
-              <label for="edit-user-role">Role</label>
-              <select id="edit-user-role" name="role" class="select">
-                <option value="user" ${user.role === "user" ? "selected" : ""}>user</option>
-                <option value="admin" ${user.role === "admin" ? "selected" : ""}>admin</option>
-              </select>
-            </div>
-            <div class="field-row">
-              <span>
-                <strong>Revoke Tokens</strong>
-                <span class="hint" style="display: block;">强制该用户所有已签发的登录令牌立即失效（强制下线）。</span>
-              </span>
-              <label class="toggle"><input type="checkbox" name="revoke_tokens"><span></span></label>
-            </div>
-            <div class="field">
-              <label for="edit-user-tier">Tier</label>
-              <select id="edit-user-tier" name="tier_id" class="select">
-                ${tierOptions(user.tier_id || "")}
-              </select>
-              <span class="hint">必须选择 tier；限额（RPM / success limit）完全由 tier 决定，用户不再保留独立限额。调整 tier 预设请到 Tier Management 页。</span>
-            </div>
-            <div class="modal-actions">
-              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-              <button class="button" data-action="submit-edit-user" type="button"><span class="material-symbols-outlined">save</span><span>Save</span></button>
-            </div>
-          </form>
-        </div>
-      </section>
-    </div>`;
+function renderEditUserModal(modal, tiers, currentUser) {
+  const user = modal.data || {};
+  const isCurrentUser = user.id === currentUser?.id;
+  const body = `
+    <form class="stack-form" id="edit-user-form" data-form="edit-user" data-id="${escapeHTML(user.id)}">
+      <div class="form-grid">
+        <label class="field-group"><span class="field-label">角色</span><select class="select-input" name="role" ${isCurrentUser ? "disabled" : ""}><option value="user" ${user.role === "user" ? "selected" : ""}>用户</option><option value="admin" ${user.role === "admin" ? "selected" : ""}>管理员</option></select></label>
+        <label class="field-group"><span class="field-label">配额方案</span><select class="select-input" name="tier_id" required>${tiers.map((tier) => `<option value="${escapeHTML(tier.id)}" ${tier.id === user.tier_id ? "selected" : ""}>${escapeHTML(tier.name)}</option>`).join("")}</select></label>
+      </div>
+      <label class="switch-row"><span class="switch-copy"><strong>启用账户</strong><span>禁用后用户的面板与 MCP 访问都会失效</span></span><span class="switch"><input name="enabled" type="checkbox" ${user.enabled ? "checked" : ""} ${isCurrentUser ? "disabled" : ""}><span class="switch-track"></span></span></label>
+      <label class="switch-row"><span class="switch-copy"><strong>吊销全部会话</strong><span>保存后立即使该用户的所有现有 JWT 失效</span></span><span class="switch"><input name="revoke_tokens" type="checkbox"><span class="switch-track"></span></span></label>
+      ${modal.error ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(modal.error)}</span></div>` : ""}
+    </form>
+  `;
+  const footer = `<button class="button button-secondary" type="button" data-action="close-modal">取消</button><button class="button button-primary" type="submit" form="edit-user-form" ${modal.busy ? "disabled" : ""}>保存用户</button>`;
+  return renderModalFrame({ title: `编辑 ${user.username || "用户"}`, description: "角色或启用状态变化会自动吊销旧会话。", body, footer });
 }
 
-export function renderUserUsageModal(user, usage) {
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="User Usage" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>User Usage</h3>
-          <p>${escapeHTML(user.username)} aggregate usage.</p>
-          <div class="grid metric-grid" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 24px 0;">
-            ${metricCard("Total Calls", formatNumber(usage.total_calls), "data_usage", "All user keys", "good", null)}
-            ${metricCard("Success Calls", formatNumber(usage.success_calls), "check_circle", `${successPercent(usage)} success`, "good", null)}
-          </div>
-          ${renderRecentActivity(usage.records || [], true, {
-            viewAllAction: "view-user-usage-logs",
-            viewAllRoute: "",
-            viewAllDataset: { userId: user.id },
-            showRequestIdColumn: false,
-            showLatencyColumn: false,
-            compactTable: true
-          })}
-        </div>
-      </section>
-    </div>`;
+function renderUserUsageModal(modal) {
+  const usage = modal.usage;
+  const body = modal.loading ? '<div class="skeleton" style="height:380px"></div>' : `
+    <section class="metric-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      ${renderMetricCard("总调用", formatNumber(usage?.total_calls), "全部密钥", "activity", "#eeeaff", "#7667f4")}
+      ${renderMetricCard("成功调用", formatNumber(usage?.success_calls), formatPercent(getSuccessRate(usage)), "shield", "#e8f8ef", "#238a54")}
+      ${renderMetricCard("当前 RPM", formatNumber(usage?.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6")}
+    </section>
+    <div class="chart-wrap">${renderChart(usage?.traffic_buckets || [])}</div>
+    ${renderUsageRecords((usage?.records || []).slice(0, 8))}
+  `;
+  return renderModalFrame({ title: `${modal.username || "用户"} 的调用分析`, description: "聚合该用户全部 API 密钥的调用数据。", body, footer: '<button class="button button-secondary" type="button" data-action="close-modal">关闭</button>', wide: true });
 }
 
-export function renderUserUsageLogsModal(user, usage) {
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal usage-logs-modal" role="dialog" aria-modal="true" aria-label="User Usage Logs" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>User Usage Logs</h3>
-          <p>${escapeHTML(user.username)} complete usage log view.</p>
-          <div class="grid metric-grid" style="grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 24px 0;">
-            ${metricCard("Total Calls", formatNumber(usage.total_calls), "data_usage", "All user keys", "good", null)}
-            ${metricCard("Success Calls", formatNumber(usage.success_calls), "check_circle", `${successPercent(usage)} success`, "good", null)}
-            ${metricCard("Failed Calls", formatNumber(Math.max(0, usage.total_calls - usage.success_calls)), "error", "Not counted as success quota", usage.total_calls === usage.success_calls ? "good" : "bad", null)}
-          </div>
-          ${renderRecentActivity(usage.records || [], false, {
-            showViewAllButton: false,
-            showPagination: true,
-            page: state.usageActivityPage,
-            pageSize: state.usageActivityPageSize,
-            pageSizeOptions: [10, 20, 50, 100]
-          })}
-        </div>
-      </section>
-    </div>`;
+function renderTierModal(modal, isEdit) {
+  const tier = modal.data || { name: "", level: 0, rpm: 0, success_limit: 0 };
+  const formName = isEdit ? "edit-tier" : "create-tier";
+  const body = `
+    <form class="stack-form" id="tier-form" data-form="${formName}" ${isEdit ? `data-id="${escapeHTML(tier.id)}"` : ""}>
+      <label class="field-group"><span class="field-label">方案名称</span><input class="text-input" name="name" type="text" value="${escapeHTML(tier.name)}" placeholder="例如：Pro" required autofocus></label>
+      <div class="form-grid">
+        <label class="field-group"><span class="field-label"><span>展示顺序</span><span class="field-hint">越小越靠前</span></span><input class="text-input" name="level" type="number" min="0" step="1" value="${escapeHTML(tier.level)}" required></label>
+        <label class="field-group"><span class="field-label"><span>RPM</span><span class="field-hint">0 = 不限</span></span><input class="text-input" name="rpm" type="number" min="0" step="1" value="${escapeHTML(tier.rpm)}" required></label>
+        <label class="field-group is-full"><span class="field-label"><span>月度成功调用额度</span><span class="field-hint">0 = 不限</span></span><input class="text-input" name="success_limit" type="number" min="0" step="1" value="${escapeHTML(tier.success_limit)}" required></label>
+      </div>
+      ${modal.error ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(modal.error)}</span></div>` : ""}
+    </form>
+  `;
+  const footer = `<button class="button button-secondary" type="button" data-action="close-modal">取消</button><button class="button button-primary" type="submit" form="tier-form" ${modal.busy ? "disabled" : ""}>${isEdit ? "保存方案" : `${renderIcon("plus")} 创建方案`}</button>`;
+  return renderModalFrame({ title: isEdit ? "编辑配额方案" : "创建配额方案", description: "方案控制用户限额；展示顺序只影响列表排列，不代表权限或套餐高低。", body, footer });
 }
 
-export function renderDeleteConfirmModal(modal) {
-  const title = modal.title || "Confirm Delete";
-  const message = modal.message || "Are you sure you want to delete this item?";
-  const detail = modal.detail || "This action cannot be undone.";
-  const confirmLabel = modal.confirmLabel || "Delete";
-  const confirmAction = modal.confirmAction || "close-modal";
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal confirm-modal" role="alertdialog" aria-modal="true" aria-label="${escapeAttr(title)}" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <div class="confirm-icon danger"><span class="material-symbols-outlined">delete</span></div>
-          <h3>${escapeHTML(title)}</h3>
-          <p>${escapeHTML(message)}</p>
-          <div class="warning-box compact">
-            <span class="material-symbols-outlined">warning</span>
-            <div>
-              <strong>Dangerous action</strong>
-              <p>${escapeHTML(detail)}</p>
-            </div>
-          </div>
-          <div class="modal-actions">
-            <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-            <button class="button danger" data-action="${escapeAttr(confirmAction)}" data-target-id="${escapeAttr(modal.targetId || "")}" type="button"><span class="material-symbols-outlined">delete</span><span>${escapeHTML(confirmLabel)}</span></button>
-          </div>
-        </div>
-      </section>
-    </div>`;
+function renderCreateInviteModal(modal) {
+  const body = `<form class="stack-form" id="create-invite-form" data-form="create-invite"><label class="field-group"><span class="field-label">最多注册人数</span><input class="text-input" name="registration_limit" type="number" min="1" step="1" value="1" required autofocus></label><div class="warning-callout">${renderIcon("warning")}<span>邀请码创建后可被重复使用，直到达到注册人数上限或被管理员停用。</span></div>${modal.error ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(modal.error)}</span></div>` : ""}</form>`;
+  const footer = `<button class="button button-secondary" type="button" data-action="close-modal">取消</button><button class="button button-primary" type="submit" form="create-invite-form" ${modal.busy ? "disabled" : ""}>${renderIcon("plus")} 创建邀请码</button>`;
+  return renderModalFrame({ title: "创建邀请码", description: "为邀请注册模式生成新的注册凭证。", body, footer });
 }
 
-export function renderCreateTierModal() {
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="Create Tier" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>Create Tier</h3>
-          <p>新建一个等级预设。</p>
-          <form id="create-tier-form" class="form-stack" style="margin-top: 24px;">
-            <div class="field">
-              <label for="create-tier-name">Name</label>
-              <input id="create-tier-name" name="name" class="input" placeholder="tier7" required>
-            </div>
-            <div class="field">
-              <label for="create-tier-level">Level</label>
-              <input id="create-tier-level" name="level" class="input mono" type="number" min="0" value="0">
-            </div>
-            <div class="field">
-              <label for="create-tier-rpm">RPM</label>
-              <input id="create-tier-rpm" name="rpm" class="input mono" type="number" min="0" value="0">
-              <span class="hint">0 means unlimited RPM.</span>
-            </div>
-            <div class="field">
-              <label for="create-tier-success">Success Limit</label>
-              <input id="create-tier-success" name="success_limit" class="input mono" type="number" min="0" value="0">
-              <span class="hint">0 means unlimited.</span>
-            </div>
-            <div class="modal-actions">
-              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-              <button class="button" type="submit"><span class="material-symbols-outlined">add</span><span>Create</span></button>
-            </div>
-          </form>
-        </div>
-      </section>
-    </div>`;
-}
-
-export function renderEditTierModal(tier) {
-  if (!tier) return "";
-  return `
-    <div class="modal-backdrop" data-action="close-modal">
-      <section class="modal" role="dialog" aria-modal="true" aria-label="Edit Tier" data-modal>
-        <button class="icon-button modal-close" data-action="close-modal" type="button"><span class="material-symbols-outlined">close</span></button>
-        <div class="modal-body">
-          <h3>Edit Tier</h3>
-          <p>${escapeHTML(tier.name)} preset values.</p>
-          <form id="edit-tier-form" class="form-stack" style="margin-top: 24px;">
-            <input type="hidden" name="id" value="${escapeAttr(tier.id)}">
-            <div class="field">
-              <label for="edit-tier-name">Name</label>
-              <input id="edit-tier-name" name="name" class="input" value="${escapeAttr(tier.name || "")}" required>
-            </div>
-            <div class="field">
-              <label for="edit-tier-level">Level</label>
-              <input id="edit-tier-level" name="level" class="input mono" type="number" min="0" value="${Number(tier.level) || 0}">
-            </div>
-            <div class="field">
-              <label for="edit-tier-rpm">RPM</label>
-              <input id="edit-tier-rpm" name="rpm" class="input mono" type="number" min="0" value="${Number(tier.rpm) || 0}">
-            </div>
-            <div class="field">
-              <label for="edit-tier-success">Success Limit</label>
-              <input id="edit-tier-success" name="success_limit" class="input mono" type="number" min="0" value="${Number(tier.success_limit) || 0}">
-              <span class="hint">0 means unlimited.</span>
-            </div>
-            <div class="modal-actions">
-              <button class="button secondary" data-action="close-modal" type="button">Cancel</button>
-              <button class="button" type="submit"><span class="material-symbols-outlined">save</span><span>Save</span></button>
-            </div>
-          </form>
-        </div>
-      </section>
-    </div>`;
+function renderConfirmModal(modal) {
+  const body = `<div class="confirm-visual">${renderIcon("trash")}</div><p class="confirm-copy">${escapeHTML(modal.message || "此操作无法撤销，是否继续？")}</p>${modal.error ? `<div class="inline-alert" style="margin-top:14px">${renderIcon("alert")}<span>${escapeHTML(modal.error)}</span></div>` : ""}`;
+  const footer = `<button class="button button-secondary" type="button" data-action="close-modal">取消</button><button class="button button-danger" type="button" data-action="execute-confirm" ${modal.busy ? "disabled" : ""}>${modal.busy ? "正在处理" : escapeHTML(modal.confirmLabel || "确认删除")}</button>`;
+  return renderModalFrame({ title: modal.title || "确认操作", description: modal.description || "请确认你的操作", body, footer, closeDisabled: modal.busy });
 }

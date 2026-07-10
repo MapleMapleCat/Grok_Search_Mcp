@@ -1,99 +1,38 @@
-import { renderEmptyRow } from "../components/metric-card.js";
-import { filteredInviteCodes, isAdmin, state } from "../state.js";
-import { escapeAttr, escapeHTML, formatDate, formatNumber, shortID } from "../utils.js";
+import { calculatePercent, escapeHTML, formatNumber, formatShortDate } from "../utils.js";
+import { renderIcon } from "../components/icons.js";
+import { renderEmptyState, renderPageHeading, renderStatusBadge } from "../components/loading.js";
 
-export function renderInviteCodes() {
-  if (!isAdmin()) {
-    return `
-      <div class="page-head">
-        <div>
-          <h2>Invitation Codes</h2>
-          <p>Admin role is required to manage invitation codes.</p>
-        </div>
-      </div>
-      <section class="card empty">
-        <div>
-          <span class="material-symbols-outlined">lock</span>
-          <h3>Admin required</h3>
-          <p>当前账号没有管理员权限。</p>
-        </div>
-      </section>`;
+export function renderInvitesPage(state) {
+  const createButton = `<button class="button button-primary" type="button" data-action="open-create-invite">${renderIcon("plus")} 创建邀请码</button>`;
+  if (state.pageLoading && !state.data.invites) {
+    return `${renderPageHeading("邀请码", "为邀请注册模式创建、停用和追踪一次性注册凭证。", createButton)}<div class="skeleton" style="height:310px;border-radius:16px"></div>`;
   }
 
-  const inviteCodes = filteredInviteCodes();
-  const registrationMode = state.serverSettings?.registration_mode || "free";
-  const inviteModeEnabled = registrationMode === "invite";
+  const invites = state.data.invites || [];
   return `
-    <div class="page-head">
-      <div>
-        <h2>Invitation Codes</h2>
-        <p>生成和管理注册邀请码。邀请码仅在 Server Settings 启用邀请注册模式时生效。</p>
-      </div>
-      <span class="row-actions">
-        <button class="button secondary" data-action="refresh" type="button"><span class="material-symbols-outlined">refresh</span><span>Refresh</span></button>
-        <button class="button" data-action="open-create-invite-code" type="button"><span class="material-symbols-outlined">add</span><span>New Invite Code</span></button>
-      </span>
-    </div>
-
-    <section class="card settings-card" style="margin-bottom: 18px;">
-      <div class="tutorial-card-head">
-        <span class="material-symbols-outlined">${inviteModeEnabled ? "mark_email_read" : "info"}</span>
-        <div>
-          <h3>Registration Mode: ${escapeHTML(registrationModeLabel(registrationMode))}</h3>
-          <p>${inviteModeEnabled ? "当前启用邀请注册，注册时必须提供有效邀请码。" : "当前没有启用邀请注册，因此这些邀请码不会影响注册。"}</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="card table-card">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Invite Code</th>
-              <th>Usage</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>ID</th>
-              <th class="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${inviteCodes.length ? inviteCodes.map(renderInviteCodeRow).join("") : renderEmptyRow("confirmation_number", "No invite codes", "Create an invite code when invite-only registration is needed.")}
-          </tbody>
-        </table>
-      </div>
-    </section>`;
-}
-
-function renderInviteCodeRow(inviteCode) {
-  const registrationLimit = Number(inviteCode.registration_limit) || 0;
-  const registrationCount = Number(inviteCode.registration_count) || 0;
-  const canCopyInviteCode = Boolean(inviteCode.code);
-  return `
-    <tr>
-      <td class="mono"><strong>${escapeHTML(inviteCode.code || inviteCode.code_prefix || "Legacy code unavailable")}</strong></td>
-      <td class="mono">${formatNumber(registrationCount)} / ${formatNumber(registrationLimit)}</td>
-      <td>
-        <label class="toggle" title="${inviteCode.enabled ? "Enabled" : "Disabled"}">
-          <input type="checkbox" data-invite-code-toggle="${escapeAttr(inviteCode.id)}" ${inviteCode.enabled ? "checked" : ""}>
-          <span></span>
-        </label>
-      </td>
-      <td>${formatDate(inviteCode.created_at)}</td>
-      <td class="mono muted">${escapeHTML(shortID(inviteCode.id))}</td>
-      <td class="right">
-        <span class="row-actions">
-          <button class="mini-icon" data-action="copy-invite-code" data-invite-code-id="${escapeAttr(inviteCode.id)}" title="${canCopyInviteCode ? "Copy Invite Code" : "Plaintext unavailable for this legacy invite code"}" type="button" ${canCopyInviteCode ? "" : "disabled"}><span class="material-symbols-outlined">content_copy</span></button>
-          <button class="mini-icon" data-action="edit-invite-code" data-invite-code-id="${escapeAttr(inviteCode.id)}" title="Edit" type="button"><span class="material-symbols-outlined">edit</span></button>
-          <button class="mini-icon danger" data-action="delete-invite-code" data-invite-code-id="${escapeAttr(inviteCode.id)}" title="Delete" type="button"><span class="material-symbols-outlined">delete</span></button>
-        </span>
-      </td>
-    </tr>`;
-}
-
-function registrationModeLabel(mode) {
-  if (mode === "invite") return "Invite Code Registration";
-  if (mode === "disabled") return "Registration Disabled";
-  return "Free Registration";
+    ${renderPageHeading("邀请码", "为邀请注册模式创建、停用和追踪注册凭证。", createButton)}
+    ${invites.length === 0 ? `<div class="data-card">${renderEmptyState("ticket", "还没有邀请码", "创建邀请码后，用户可在邀请注册模式下完成账户创建。", createButton)}</div>` : `
+      <div class="invite-list">${invites.map((inviteCode) => {
+        const usagePercent = calculatePercent(inviteCode.registration_count, inviteCode.registration_limit);
+        const visibleCode = inviteCode.code || `${inviteCode.code_prefix || "invite"}••••••••`;
+        return `
+          <article class="invite-card">
+            <div class="invite-code">
+              <span class="invite-code-mark">${renderIcon("ticket")}</span>
+              <span class="invite-code-copy"><strong>${escapeHTML(visibleCode)}</strong><span>${renderStatusBadge(Boolean(inviteCode.enabled), "可用", "已停用")} · ${escapeHTML(formatShortDate(inviteCode.created_at))}</span></span>
+            </div>
+            <div class="usage-progress">
+              <div class="usage-progress-copy"><span>注册用量</span><strong>${escapeHTML(formatNumber(inviteCode.registration_count))} / ${escapeHTML(formatNumber(inviteCode.registration_limit))}</strong></div>
+              <div class="progress-track"><span style="width:${usagePercent}%"></span></div>
+            </div>
+            <div class="table-actions">
+              ${inviteCode.code ? `<button class="table-action" type="button" data-action="copy-value" data-value="${escapeHTML(inviteCode.code)}" aria-label="复制邀请码">${renderIcon("copy")}</button>` : ""}
+              <button class="table-action" type="button" data-action="toggle-invite" data-id="${escapeHTML(inviteCode.id)}" aria-label="${inviteCode.enabled ? "停用" : "启用"}邀请码">${inviteCode.enabled ? renderIcon("close") : renderIcon("check")}</button>
+              <button class="table-action is-danger" type="button" data-action="confirm-delete-invite" data-id="${escapeHTML(inviteCode.id)}" aria-label="删除邀请码">${renderIcon("trash")}</button>
+            </div>
+          </article>
+        `;
+      }).join("")}</div>
+    `}
+  `;
 }

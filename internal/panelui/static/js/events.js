@@ -1,853 +1,778 @@
-import { loadRouteData, render } from "../app.js";
-import { api, loadInviteCodes, loadKeys, loadRegistrationSettings, loadServerSettings, loadTiers, loadUsers } from "./api.js";
-import { notify } from "./components/toast.js";
-import { navigate } from "./router.js";
-import { clearSession, state, storage } from "./state.js";
-import { errorText, normalizeUsage, setStored } from "./utils.js";
+import {
+  createInviteCode,
+  createKey,
+  createTier,
+  deleteAdminUser,
+  deleteInviteCode,
+  deleteKey,
+  deleteTier,
+  fetchAdminUserUsage,
+  fetchKeyUsage,
+  fetchModels,
+  login,
+  panelAPI,
+  register,
+  updateAdminUser,
+  updateInviteCode,
+  updateKey,
+  updateSettings,
+  updateTier
+} from "./api.js";
+import { renderIcon } from "./components/icons.js";
+import { showToast } from "./components/toast.js";
+import { adminPages, availablePages, readPageFromLocation } from "./router.js";
+import {
+  clearAuthenticatedState,
+  clearCachedData,
+  compareTiers,
+  normalizeUsage,
+  removeItemByIdentifier,
+  replaceItemByIdentifier,
+  state
+} from "./state.js";
+import { createFormDataObject } from "./utils.js";
 
-const VALID_USAGE_RANGE_MODES = new Set(["24h", "7d", "all"]);
-const VALID_USAGE_ACTIVITY_PAGE_SIZES = new Set([10, 20, 50, 100]);
+export function createApplicationEvents({
+  applicationElement,
+  modalRegionElement,
+  renderApplication,
+  renderModalRegion,
+  loadCurrentPage,
+  normalizeCurrentPageForRole,
+  handleSessionError
+}) {
+  function registerEventHandlers() {
+    applicationElement.addEventListener("click", handleApplicationClick);
+    applicationElement.addEventListener("submit", handleFormSubmit);
+    applicationElement.addEventListener("input", handleApplicationInput);
+    modalRegionElement.addEventListener("click", handleModalClick);
+    modalRegionElement.addEventListener("submit", handleFormSubmit);
+    window.addEventListener("hashchange", handleLocationChange);
+    document.addEventListener("keydown", handleGlobalKeydown);
+  }
 
-export async function onSubmit(event) {
-  const form = event.target;
-  if (!(form instanceof HTMLFormElement)) return;
-  event.preventDefault();
-
-  if (form.id === "login-form") {
-    await submitLogin(form);
-  } else if (form.id === "register-form") {
-    await submitRegister(form);
-  } else if (form.id === "create-key-form") {
-    await submitCreateKey(form);
-  } else if (form.id === "edit-key-form") {
-    await submitEditKey(form);
-  } else if (form.id === "edit-user-form") {
-    await submitEditUser(form);
-  } else if (form.id === "create-tier-form") {
-    await submitCreateTier(form);
-  } else if (form.id === "edit-tier-form") {
-    await submitEditTier(form);
-  } else if (form.id === "create-invite-code-form") {
-    await submitCreateInviteCode(form);
-  } else if (form.id === "edit-invite-code-form") {
-    await submitEditInviteCode(form);
-  } else if (form.id === "server-settings-form") {
-    await submitServerSettings(form);
-  }
-}
-
-export async function submitLogin(form) {
-  const data = new FormData(form);
-  try {
-    const resp = await api("/auth/login", {
-      method: "POST",
-      auth: false,
-      body: {
-        username: String(data.get("username") || "").trim(),
-        password: String(data.get("password") || "")
-      }
-    });
-    state.token = resp.token;
-    state.user = resp.user;
-    setStored(storage.token, state.token);
-    setStored(storage.user, JSON.stringify(state.user));
-    notify("登录成功。", "success");
-    navigate("dashboard");
-    await loadRouteData();
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitRegister(form) {
-  const data = new FormData(form);
-  const username = String(data.get("username") || "").trim();
-  const password = String(data.get("password") || "");
-  const body = { username, password };
-  if (state.registrationSettings?.registration_mode === "invite") {
-    body.invite_code = String(data.get("invite_code") || "").trim();
-  }
-  try {
-    await api("/auth/register", {
-      method: "POST",
-      auth: false,
-      body
-    });
-    notify("注册成功，正在登录。", "success");
-    const loginForm = new FormData();
-    loginForm.set("username", username);
-    loginForm.set("password", password);
-    const resp = await api("/auth/login", {
-      method: "POST",
-      auth: false,
-      body: { username, password }
-    });
-    state.token = resp.token;
-    state.user = resp.user;
-    setStored(storage.token, state.token);
-    setStored(storage.user, JSON.stringify(state.user));
-    navigate("dashboard");
-    await loadRouteData();
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitCreateKey(form) {
-  const data = new FormData(form);
-  try {
-    const resp = await api("/keys", {
-      method: "POST",
-      body: { name: String(data.get("name") || "").trim() }
-    });
-    await loadKeys();
-    state.modal = { type: "key-created", key: resp.key, apiKey: resp.api_key };
-    window.clearTimeout(notify.timer);
-    state.toast = null;
-    render();
-    await copyCreatedKey({ automatic: true });
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitEditKey(form) {
-  const data = new FormData(form);
-  const id = String(data.get("id") || "");
-  const name = String(data.get("name") || "").trim();
-  if (!id) {
-    notify("Key 信息缺失，请刷新后重试。", "error");
-    render();
-    return;
-  }
-  if (!name) {
-    notify("请输入 API Key 名称后再保存。", "error");
-    render();
-    return;
-  }
-  const submitButton = form.querySelector('[data-action="submit-edit-key"]');
-  const originalSubmitButtonHTML = submitButton ? submitButton.innerHTML : "";
-  if (submitButton) {
-    submitButton.disabled = true;
-    submitButton.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span><span>Saving...</span>';
-  }
-  try {
-    const updatedKey = await api(`/keys/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: {
-        name,
-        enabled: data.get("enabled") === "on"
-      }
-    });
-    state.keys = state.keys.map((key) => key.id === updatedKey.id ? updatedKey : key);
-    state.modal = null;
-    notify(updatedKey.enabled ? "Key 已启用。" : "Key 已禁用。", "success");
-    render();
-  } catch (err) {
-    if (submitButton && document.contains(submitButton)) {
-      submitButton.disabled = false;
-      submitButton.innerHTML = originalSubmitButtonHTML;
-    }
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitEditUser(form) {
-  const data = new FormData(form);
-  const id = String(data.get("id") || "");
-  const tierID = String(data.get("tier_id") || "").trim();
-  if (!id) {
-    notify("用户信息缺失，请刷新后重试。", "error");
-    render();
-    return;
-  }
-  if (!tierID) {
-    notify("请选择用户 Tier 后再保存。", "error");
-    render();
-    return;
-  }
-  const body = {
-    enabled: data.get("enabled") === "on",
-    role: String(data.get("role") || "user"),
-    tier_id: tierID
-  };
-  if (data.get("revoke_tokens") === "on") {
-    body.revoke_tokens = true;
-  }
-  const submitButton = form.querySelector('[data-action="submit-edit-user"]');
-  const originalSubmitButtonHTML = submitButton ? submitButton.innerHTML : "";
-  if (submitButton) {
-    submitButton.disabled = true;
-    submitButton.innerHTML = '<span class="material-symbols-outlined">hourglass_top</span><span>Saving...</span>';
-  }
-  try {
-    const updatedUser = await api(`/admin/users/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body
-    });
-    state.users = state.users.map((user) => user.id === updatedUser.id ? updatedUser : user);
-    if (state.user && state.user.id === updatedUser.id) {
-      state.user = updatedUser;
-      setStored(storage.user, JSON.stringify(state.user));
-    }
-    state.modal = null;
-    notify("用户已更新。", "success");
-    render();
-  } catch (err) {
-    if (submitButton && document.contains(submitButton)) {
-      submitButton.disabled = false;
-      submitButton.innerHTML = originalSubmitButtonHTML;
-    }
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitCreateTier(form) {
-  const data = new FormData(form);
-  try {
-    await api("/admin/tiers", {
-      method: "POST",
-      body: {
-        name: String(data.get("name") || "").trim(),
-        level: Number(data.get("level") || 0),
-        rpm: Number(data.get("rpm") || 0),
-        success_limit: Number(data.get("success_limit") || 0)
-      }
-    });
-    state.modal = null;
-    await loadTiers();
-    notify("等级已创建。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitEditTier(form) {
-  const data = new FormData(form);
-  const id = String(data.get("id") || "");
-  try {
-    await api(`/admin/tiers/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: {
-        name: String(data.get("name") || "").trim(),
-        level: Number(data.get("level") || 0),
-        rpm: Number(data.get("rpm") || 0),
-        success_limit: Number(data.get("success_limit") || 0)
-      }
-    });
-    state.modal = null;
-    await loadTiers();
-    notify("等级已更新。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitServerSettings(form) {
-  const data = new FormData(form);
-  const cpaAPIKey = String(data.get("cpa_api_key") || "").trim();
-  const body = {
-    cpa_base_url: String(data.get("cpa_base_url") || "").trim(),
-    model: String(data.get("model") || "").trim(),
-    timeout_seconds: Number(data.get("timeout_seconds") || 0),
-    proxy_url: String(data.get("proxy_url") || "").trim(),
-    proxy_enabled: data.get("proxy_enabled") === "on",
-    registration_mode: String(data.get("registration_mode") || "free"),
-    debug: data.get("debug") === "on"
-  };
-  if (cpaAPIKey !== "") {
-    body.cpa_api_key = cpaAPIKey;
-  }
-  try {
-    state.serverSettings = await api("/admin/settings", {
-      method: "PATCH",
-      body
-    });
-    state.registrationSettings = { registration_mode: state.serverSettings.registration_mode || "free" };
-    notify("服务器设置已保存。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitCreateInviteCode(form) {
-  const data = new FormData(form);
-  try {
-    const response = await api("/admin/invite-codes", {
-      method: "POST",
-      body: { registration_limit: Number(data.get("registration_limit") || 0) }
-    });
-    const createdInviteCode = response.invite_code || response;
-    state.modal = null;
-    await loadInviteCodes();
-    notify(createdInviteCode.code ? "邀请码已创建，可在列表中复制。" : "邀请码已创建。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function submitEditInviteCode(form) {
-  const data = new FormData(form);
-  const id = String(data.get("id") || "");
-  if (!id) {
-    notify("邀请码信息缺失，请刷新后重试。", "error");
-    render();
-    return;
-  }
-  try {
-    await api(`/admin/invite-codes/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: {
-        registration_limit: Number(data.get("registration_limit") || 0),
-        enabled: data.get("enabled") === "on"
-      }
-    });
-    state.modal = null;
-    await loadInviteCodes();
-    notify("邀请码已更新。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export function openDeleteInviteCodeModal(id) {
-  const inviteCode = state.inviteCodes.find((item) => item.id === id);
-  if (!inviteCode) return;
-  state.modal = {
-    type: "delete-confirm",
-    title: "Delete invite code?",
-    message: `Delete invite code "${inviteCode.code_prefix || inviteCode.id}"?`,
-    detail: "Existing users created by this code are not affected. Deleted invite codes cannot be used again.",
-    confirmLabel: "Delete Invite Code",
-    confirmAction: "confirm-delete-invite-code",
-    targetId: inviteCode.id
-  };
-  render();
-}
-
-export async function deleteInviteCode(id) {
-  const inviteCode = state.inviteCodes.find((item) => item.id === id);
-  if (!inviteCode) return;
-  try {
-    await api(`/admin/invite-codes/${encodeURIComponent(id)}`, { method: "DELETE" });
-    state.modal = null;
-    await loadInviteCodes();
-    notify("邀请码已删除。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export function openDeleteTierModal(id) {
-  const tier = state.tiers.find((item) => item.id === id);
-  if (!tier) return;
-  state.modal = {
-    type: "delete-confirm",
-    title: "Delete tier?",
-    message: `Delete tier "${tier.name}"?`,
-    detail: "Users must be reassigned before an in-use tier can be deleted.",
-    confirmLabel: "Delete Tier",
-    confirmAction: "confirm-delete-tier",
-    targetId: tier.id
-  };
-  render();
-}
-
-export async function deleteTier(id) {
-  const tier = state.tiers.find((item) => item.id === id);
-  if (!tier) return;
-  try {
-    await api(`/admin/tiers/${encodeURIComponent(id)}`, { method: "DELETE" });
-    state.modal = null;
-    await loadTiers();
-    notify("等级已删除。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export function openDeleteUserModal(id) {
-  const user = state.users.find((item) => item.id === id);
-  if (!user) return;
-  state.modal = {
-    type: "delete-confirm",
-    title: "Delete user?",
-    message: `Delete user "${user.username}"?`,
-    detail: "This will also delete this user's API keys and usage logs.",
-    confirmLabel: "Delete User",
-    confirmAction: "confirm-delete-user",
-    targetId: user.id
-  };
-  render();
-}
-
-export async function deleteUser(id) {
-  const user = state.users.find((item) => item.id === id);
-  if (!user) return;
-  try {
-    await api(`/admin/users/${encodeURIComponent(id)}`, { method: "DELETE" });
-    state.modal = null;
-    await loadUsers();
-    notify("用户已删除。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function onClick(event) {
-  const actionEl = event.target.closest("[data-action]");
-  if (!actionEl) return;
-  const action = actionEl.dataset.action;
-
-  if (action === "auth-tab") {
-    state.authMode = actionEl.dataset.tab === "register" ? "register" : "login";
-    render();
-  } else if (action === "go") {
-    const nextRoute = actionEl.dataset.route || "dashboard";
-    state.expandUsageActivityOnNextUsageNavigation = nextRoute === "usage" && actionEl.dataset.expandUsageActivity === "true";
-    navigate(nextRoute);
-  } else if (action === "refresh") {
-    await loadRouteData();
-    render();
-  } else if (action === "usage-range") {
-    const nextUsageRangeMode = actionEl.dataset.range;
-    if (!VALID_USAGE_RANGE_MODES.has(nextUsageRangeMode) || state.sinceMode === nextUsageRangeMode) {
+  async function handleApplicationClick(event) {
+    const actionElement = event.target.closest("[data-action]");
+    if (!actionElement) {
       return;
     }
-    state.sinceMode = nextUsageRangeMode;
-    state.usageActivityPage = 1;
-    await loadRouteData();
-    render();
-  } else if (action === "expand-usage-activity") {
-    state.usageActivityCompact = false;
-    state.usageActivityPage = 1;
-    render();
-  } else if (action === "usage-activity-page") {
-    const nextUsageActivityPage = Math.floor(Number(actionEl.dataset.page) || 1);
-    if (nextUsageActivityPage < 1 || state.usageActivityPage === nextUsageActivityPage) {
+
+    const action = actionElement.dataset.action;
+    switch (action) {
+      case "switch-auth":
+        state.authMode = actionElement.dataset.mode || "login";
+        state.authError = "";
+        renderApplication();
+        break;
+      case "toggle-password":
+        togglePasswordVisibility(actionElement);
+        break;
+      case "navigate":
+        navigateToPage(actionElement.dataset.page);
+        break;
+      case "toggle-sidebar":
+        state.sidebarOpen = !state.sidebarOpen;
+        renderApplication();
+        break;
+      case "close-sidebar":
+        state.sidebarOpen = false;
+        renderApplication();
+        break;
+      case "logout":
+        logout();
+        break;
+      case "refresh-page":
+        await loadCurrentPage({ refreshing: true });
+        break;
+      case "open-create-key":
+        openModal({ type: "createKey", busy: false, error: "" });
+        break;
+      case "open-edit-key":
+        openEditKeyModal(actionElement.dataset.id);
+        break;
+      case "open-key-usage":
+        await openKeyUsageModal(actionElement.dataset.id);
+        break;
+      case "confirm-delete-key":
+        confirmDeleteKey(actionElement.dataset.id);
+        break;
+      case "set-usage-period":
+        state.filters.usagePeriod = actionElement.dataset.period || "24h";
+        state.data.usage = null;
+        await loadCurrentPage();
+        break;
+      case "view-debug-json":
+        openDebugJSONModal(actionElement.dataset.recordId);
+        break;
+      case "open-edit-user":
+        openEditUserModal(actionElement.dataset.id);
+        break;
+      case "open-user-usage":
+        await openUserUsageModal(actionElement.dataset.id);
+        break;
+      case "confirm-delete-user":
+        confirmDeleteUser(actionElement.dataset.id);
+        break;
+      case "open-create-tier":
+        openModal({ type: "createTier", busy: false, error: "" });
+        break;
+      case "open-edit-tier":
+        openEditTierModal(actionElement.dataset.id);
+        break;
+      case "confirm-delete-tier":
+        confirmDeleteTier(actionElement.dataset.id);
+        break;
+      case "open-create-invite":
+        openModal({ type: "createInvite", busy: false, error: "" });
+        break;
+      case "toggle-invite":
+        await toggleInviteCode(actionElement.dataset.id);
+        break;
+      case "copy-value":
+        await copyValue(actionElement.dataset.value || "");
+        break;
+      case "confirm-delete-invite":
+        confirmDeleteInviteCode(actionElement.dataset.id);
+        break;
+      case "load-models":
+        await loadAvailableModels(actionElement);
+        break;
+      default:
+        break;
+    }
+  }
+
+  async function handleModalClick(event) {
+    const actionElement = event.target.closest("[data-action]");
+    if (!actionElement) {
       return;
     }
-    state.usageActivityPage = nextUsageActivityPage;
-    render();
-  } else if (action === "reload-server-settings") {
-    await loadServerSettings();
-    notify("服务器设置已刷新。", "success");
-    render();
-  } else if (action === "open-create-key") {
-    state.modal = { type: "create-key" };
-    render();
-  } else if (action === "close-modal") {
-    if (!event.target.closest("[data-modal]") || actionEl.classList.contains("modal-close") || actionEl.classList.contains("button")) {
-      state.modal = null;
-      render();
+
+    const action = actionElement.dataset.action;
+    if (action === "modal-backdrop" && event.target !== actionElement) {
+      return;
     }
-  } else if (action === "copy-created-key") {
-    await copyCreatedKey();
-  } else if (action === "copy-created-invite-code") {
-    await copyCreatedInviteCode();
-  } else if (action === "dismiss-created-invite-code") {
-    state.createdInviteCode = null;
-    render();
-  } else if (action === "edit-key") {
-    const key = state.keys.find((item) => item.id === actionEl.dataset.keyId);
-    if (!key) return;
-    state.modal = { type: "edit-key", key };
-    render();
-  } else if (action === "submit-edit-key") {
+
+    switch (action) {
+      case "close-modal":
+      case "modal-backdrop":
+        if (!state.modal?.busy) {
+          closeModal();
+        }
+        break;
+      case "copy-value":
+        await copyValue(actionElement.dataset.value || "");
+        break;
+      case "view-debug-json":
+        openDebugJSONModal(actionElement.dataset.recordId);
+        break;
+      case "copy-debug-json":
+        if (state.modal?.type === "debugJSON") {
+          await copyValue(String(state.modal.record?.debug_json || ""));
+        }
+        break;
+      case "execute-confirm":
+        await executeConfirmedAction();
+        break;
+      default:
+        break;
+    }
+  }
+
+  function handleApplicationInput(event) {
+    if (!event.target.matches('[data-filter="user-search"]')) {
+      return;
+    }
+
+    const selectionStart = event.target.selectionStart;
+    state.filters.userSearch = event.target.value;
+    renderApplication();
+    const replacementInput = applicationElement.querySelector('[data-filter="user-search"]');
+    replacementInput?.focus();
+    replacementInput?.setSelectionRange(selectionStart, selectionStart);
+  }
+
+  async function handleFormSubmit(event) {
+    const formElement = event.target.closest("form[data-form]");
+    if (!formElement) {
+      return;
+    }
     event.preventDefault();
-    const form = actionEl.closest("form");
-    if (form instanceof HTMLFormElement) {
-      await submitEditKey(form);
+
+    if (!formElement.reportValidity()) {
+      return;
     }
-  } else if (action === "delete-key") {
-    openDeleteKeyModal(actionEl.dataset.keyId);
-  } else if (action === "key-usage") {
-    state.selectedKeyID = actionEl.dataset.keyId || "all";
-    navigate("usage");
-  } else if (action === "edit-user") {
-    const user = state.users.find((item) => item.id === actionEl.dataset.userId);
-    if (!user) return;
+
+    switch (formElement.dataset.form) {
+      case "login":
+        await submitLogin(formElement);
+        break;
+      case "register":
+        await submitRegistration(formElement);
+        break;
+      case "create-key":
+        await submitCreateKey(formElement);
+        break;
+      case "edit-key":
+        await submitEditKey(formElement);
+        break;
+      case "edit-user":
+        await submitEditUser(formElement);
+        break;
+      case "create-tier":
+        await submitTier(formElement, false);
+        break;
+      case "edit-tier":
+        await submitTier(formElement, true);
+        break;
+      case "create-invite":
+        await submitCreateInviteCode(formElement);
+        break;
+      case "settings":
+        await submitSettings(formElement);
+        break;
+      default:
+        break;
+    }
+  }
+
+  function handleLocationChange() {
+    if (!state.authenticated) {
+      return;
+    }
+    const requestedPage = readPageFromLocation();
+    if (requestedPage === state.currentPage) {
+      return;
+    }
+    state.currentPage = requestedPage;
+    normalizeCurrentPageForRole();
+    state.sidebarOpen = false;
+    loadCurrentPage();
+  }
+
+  function handleGlobalKeydown(event) {
+    if (event.key === "Escape" && state.modal && !state.modal.busy) {
+      closeModal();
+    }
+  }
+
+  function togglePasswordVisibility(actionElement) {
+    const passwordInput = document.getElementById(actionElement.dataset.target);
+    if (!passwordInput) {
+      return;
+    }
+    const shouldShowPassword = passwordInput.type === "password";
+    passwordInput.type = shouldShowPassword ? "text" : "password";
+    actionElement.innerHTML = renderIcon(shouldShowPassword ? "eyeOff" : "eye");
+    passwordInput.focus();
+  }
+
+  function navigateToPage(page) {
+    if (!availablePages.has(page)) {
+      return;
+    }
+    if (adminPages.has(page) && state.user?.role !== "admin") {
+      showToast("权限不足", "当前账户无法访问系统管理页面。", "error");
+      return;
+    }
+
+    state.sidebarOpen = false;
+    if (state.currentPage === page) {
+      renderApplication();
+      return;
+    }
+    window.location.hash = page;
+  }
+
+  function logout() {
+    panelAPI.clearSession();
+    clearAuthenticatedState();
+    state.authError = "";
+    state.currentPage = "overview";
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    renderApplication();
+    showToast("已退出", "当前会话已从浏览器标签页中清除。", "success");
+  }
+
+  async function submitLogin(formElement) {
+    const credentials = createFormDataObject(formElement);
+    state.authBusy = true;
+    state.authError = "";
+    renderApplication();
+
     try {
-      if (!state.tiers.length) {
-        await loadTiers();
-      }
-    } catch (err) {
-      notify(errorText(err), "error");
-      render();
-      return;
+      const loginResponse = await login({
+        username: String(credentials.username || "").trim(),
+        password: String(credentials.password || "")
+      });
+      panelAPI.saveSession(loginResponse.token, loginResponse.expires_at);
+      state.user = loginResponse.user;
+      state.authenticated = true;
+      state.currentPage = "overview";
+      state.authBusy = false;
+      state.authError = "";
+      clearCachedData();
+      window.history.replaceState(null, "", "#overview");
+      renderApplication();
+      showToast("欢迎回来", `已以 ${state.user.username} 的身份安全登录。`, "success");
+      await loadCurrentPage();
+    } catch (error) {
+      state.authBusy = false;
+      state.authError = withRetryAfter(getErrorMessage(error), error);
+      renderApplication();
     }
-    state.modal = { type: "edit-user", user };
-    render();
-  } else if (action === "submit-edit-user") {
-    event.preventDefault();
-    const form = actionEl.closest("form");
-    if (form instanceof HTMLFormElement) {
-      await submitEditUser(form);
-    }
-  } else if (action === "delete-user") {
-    openDeleteUserModal(actionEl.dataset.userId);
-  } else if (action === "confirm-delete-user") {
-    await deleteUser(actionEl.dataset.targetId);
-  } else if (action === "open-create-invite-code") {
-    state.modal = { type: "create-invite-code" };
-    render();
-  } else if (action === "copy-invite-code") {
-    await copyInviteCode(actionEl.dataset.inviteCodeId);
-  } else if (action === "edit-invite-code") {
-    const inviteCode = state.inviteCodes.find((item) => item.id === actionEl.dataset.inviteCodeId);
-    if (!inviteCode) return;
-    state.modal = { type: "edit-invite-code", inviteCode };
-    render();
-  } else if (action === "submit-edit-invite-code") {
-    event.preventDefault();
-    const form = actionEl.closest("form");
-    if (form instanceof HTMLFormElement) {
-      await submitEditInviteCode(form);
-    }
-  } else if (action === "delete-invite-code") {
-    openDeleteInviteCodeModal(actionEl.dataset.inviteCodeId);
-  } else if (action === "confirm-delete-invite-code") {
-    await deleteInviteCode(actionEl.dataset.targetId);
-  } else if (action === "open-create-tier") {
-    state.modal = { type: "create-tier" };
-    render();
-  } else if (action === "edit-tier") {
-    const tier = state.tiers.find((item) => item.id === actionEl.dataset.tierId);
-    state.modal = { type: "edit-tier", tier };
-    render();
-  } else if (action === "delete-tier") {
-    openDeleteTierModal(actionEl.dataset.tierId);
-  } else if (action === "confirm-delete-tier") {
-    await deleteTier(actionEl.dataset.targetId);
-  } else if (action === "confirm-delete-key") {
-    await deleteKey(actionEl.dataset.targetId);
-  } else if (action === "user-usage") {
-    await openUserUsage(actionEl.dataset.userId);
-  } else if (action === "view-user-usage-logs") {
-    await viewUserUsageLogs(actionEl.dataset.userId);
-  } else if (action === "view-debug-json") {
-    openDebugJSONModal(actionEl.dataset.recordId);
-  } else if (action === "logout") {
-    clearSession();
+  }
+
+  async function submitRegistration(formElement) {
+    const registrationData = createFormDataObject(formElement);
+    state.authBusy = true;
+    state.authError = "";
+    renderApplication();
+
     try {
-      await loadRegistrationSettings();
-      notify("已退出登录。", "success");
-    } catch (err) {
-      notify(`已退出登录，但注册设置刷新失败：${errorText(err)}`, "error");
+      await register({
+        username: String(registrationData.username || "").trim(),
+        password: String(registrationData.password || ""),
+        ...(state.registrationMode === "invite"
+          ? { invite_code: String(registrationData.invite_code || "").trim() }
+          : {})
+      });
+      state.authBusy = false;
+      state.authMode = "login";
+      state.authError = "";
+      renderApplication();
+      showToast("账户已创建", "请使用刚刚设置的用户名和密码登录。", "success");
+    } catch (error) {
+      state.authBusy = false;
+      state.authError = withRetryAfter(getErrorMessage(error), error);
+      renderApplication();
     }
-    render();
   }
-}
 
-export async function onChange(event) {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) return;
+  function openModal(modalState) {
+    state.modal = modalState;
+    renderModalRegion();
+    window.requestAnimationFrame(() => {
+      modalRegionElement.querySelector("[autofocus]")?.focus();
+    });
+  }
 
-  if (target.matches("[data-key-toggle]")) {
-    const checkbox = target;
-    await updateKeyEnabled(checkbox.dataset.keyToggle, checkbox.checked);
-  } else if (target.matches("[data-invite-code-toggle]")) {
-    const checkbox = target;
-    await updateInviteCodeEnabled(checkbox.dataset.inviteCodeToggle, checkbox.checked);
-  } else if (target.id === "usage-key-select") {
-    if (state.selectedKeyID === target.value) {
+  function openDebugJSONModal(recordIdentifier) {
+    const pageUsageRecords = state.data.usage?.records || [];
+    const modalUsageRecords = state.modal?.usage?.records || [];
+    const matchingRecord = [...modalUsageRecords, ...pageUsageRecords].find(
+      (usageRecord) => String(usageRecord.id) === String(recordIdentifier)
+    );
+
+    if (!matchingRecord?.debug_json) {
+      showToast("调试详情不可用", "该调用没有可展示的调试数据，请刷新后重试。", "error");
       return;
     }
-    state.selectedKeyID = target.value;
-    state.usageActivityPage = 1;
-    await loadRouteData();
-    render();
-  } else if (target.id === "usage-since-select") {
-    state.sinceMode = target.value;
-    state.usageActivityPage = 1;
-    await loadRouteData();
-    render();
-  } else if (target.id === "usage-activity-page-size") {
-    const nextUsageActivityPageSize = Number(target.value);
-    if (!VALID_USAGE_ACTIVITY_PAGE_SIZES.has(nextUsageActivityPageSize) || state.usageActivityPageSize === nextUsageActivityPageSize) {
-      return;
-    }
-    state.usageActivityPageSize = nextUsageActivityPageSize;
-    state.usageActivityPage = 1;
-    render();
+
+    openModal({ type: "debugJSON", record: matchingRecord, busy: false });
   }
-}
 
-export function onInput(event) {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement)) return;
-  if (target.id === "global-search") {
-    state.search = target.value;
-    state.usageActivityPage = 1;
-    render();
-    const next = document.getElementById("global-search");
-    if (next) {
-      next.focus();
-      next.setSelectionRange(next.value.length, next.value.length);
-    }
-  }
-}
-
-export function openDebugJSONModal(id) {
-  const modalUsageRecords = state.modal && state.modal.usage ? state.modal.usage.records || [] : [];
-  const records = [...(state.usage.records || []), ...modalUsageRecords];
-  const record = records.find((item) => String(item.id) === String(id));
-  if (!record || !record.debug_json) return;
-  state.modal = { type: "debug-json", record };
-  render();
-}
-
-export async function updateKeyEnabled(id, enabled) {
-  try {
-    await api(`/keys/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: { enabled }
-    });
-    const key = state.keys.find((item) => item.id === id);
-    if (key) key.enabled = enabled;
-    notify(enabled ? "Key 已启用。" : "Key 已禁用。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    await loadKeys();
-    render();
-  }
-}
-
-export async function updateInviteCodeEnabled(id, enabled) {
-  try {
-    const response = await api(`/admin/invite-codes/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: { enabled }
-    });
-    const updatedInviteCode = response.invite_code || response;
-    state.inviteCodes = state.inviteCodes.map((inviteCode) => inviteCode.id === updatedInviteCode.id ? updatedInviteCode : inviteCode);
-    notify(enabled ? "邀请码已启用。" : "邀请码已禁用。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    await loadInviteCodes();
-    render();
-  }
-}
-
-export function openDeleteKeyModal(id) {
-  const key = state.keys.find((item) => item.id === id);
-  if (!key) return;
-  state.modal = {
-    type: "delete-confirm",
-    title: "Delete API key?",
-    message: `Delete API key "${key.name || key.key_prefix}"?`,
-    detail: "MCP clients using this key will stop working immediately.",
-    confirmLabel: "Delete Key",
-    confirmAction: "confirm-delete-key",
-    targetId: key.id
-  };
-  render();
-}
-
-export async function deleteKey(id) {
-  const key = state.keys.find((item) => item.id === id);
-  if (!key) return;
-  try {
-    await api(`/keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+  function closeModal() {
     state.modal = null;
-    await loadKeys();
-    notify("Key 已删除。", "success");
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
+    renderModalRegion();
   }
-}
 
-export async function openUserUsage(id) {
-  const user = state.users.find((item) => item.id === id);
-  if (!user) return;
-  try {
-    const usage = await api(`/admin/users/${encodeURIComponent(id)}/usage`);
-    state.modal = { type: "user-usage", user, usage: normalizeUsage(usage) };
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
+  function setModalBusy(busy, error = "") {
+    if (!state.modal) {
+      return;
+    }
+    state.modal.busy = busy;
+    state.modal.error = error;
+    renderModalRegion();
   }
-}
 
-export async function viewUserUsageLogs(id) {
-  const user = state.users.find((item) => item.id === id) || (state.modal && state.modal.user && state.modal.user.id === id ? state.modal.user : null);
-  if (!user) return;
-  try {
-    const usage = await api(`/admin/users/${encodeURIComponent(id)}/usage`);
-    state.usageActivityPage = 1;
-    state.modal = { type: "user-usage-logs", user, usage: normalizeUsage(usage) };
-    render();
-  } catch (err) {
-    notify(errorText(err), "error");
-    render();
-  }
-}
-
-export async function copyCreatedKey(options = {}) {
-  const input = document.getElementById("created-api-key");
-  const value = input ? input.value : state.modal && state.modal.apiKey;
-  if (!value) return;
-  let copied = copyTextWithSelection(value, input);
-  if (!copied) {
+  async function submitCreateKey(formElement) {
+    const formData = createFormDataObject(formElement);
+    setModalBusy(true);
     try {
-      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-        throw new Error("clipboard unavailable");
+      const createResponse = await createKey({ name: String(formData.name || "").trim() });
+      state.data.keys = [createResponse.key, ...(state.data.keys || [])];
+      state.modal = {
+        type: "secret",
+        secretType: "key",
+        secret: createResponse.api_key,
+        title: "API 密钥已创建",
+        subtitle: createResponse.key?.name || "创建成功"
+      };
+      renderApplication();
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        setModalBusy(false, getErrorMessage(error));
       }
+    }
+  }
+
+  function openEditKeyModal(keyIdentifier) {
+    const apiKey = (state.data.keys || []).find((candidateKey) => candidateKey.id === keyIdentifier);
+    if (!apiKey) {
+      showToast("密钥不存在", "请刷新页面后重试。", "error");
+      return;
+    }
+    openModal({ type: "editKey", data: { ...apiKey }, busy: false, error: "" });
+  }
+
+  async function submitEditKey(formElement) {
+    const keyIdentifier = formElement.dataset.id;
+    const formData = createFormDataObject(formElement);
+    setModalBusy(true);
+    try {
+      const updatedKey = await updateKey(keyIdentifier, {
+        name: String(formData.name || "").trim(),
+        enabled: formElement.elements.enabled.checked
+      });
+      state.data.keys = replaceItemByIdentifier(state.data.keys, updatedKey);
+      closeModal();
+      renderApplication();
+      showToast("密钥已更新", "名称与访问状态已保存。", "success");
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        setModalBusy(false, getErrorMessage(error));
+      }
+    }
+  }
+
+  async function openKeyUsageModal(keyIdentifier) {
+    const apiKey = (state.data.keys || []).find((candidateKey) => candidateKey.id === keyIdentifier);
+    openModal({ type: "keyUsage", title: apiKey?.name || "密钥调用分析", loading: true, usage: null });
+    try {
+      const usage = await fetchKeyUsage(keyIdentifier);
+      if (state.modal?.type === "keyUsage") {
+        state.modal.loading = false;
+        state.modal.usage = normalizeUsage(usage);
+        renderModalRegion();
+      }
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        closeModal();
+        showToast("无法加载密钥用量", getErrorMessage(error), "error");
+      }
+    }
+  }
+
+  function confirmDeleteKey(keyIdentifier) {
+    const apiKey = (state.data.keys || []).find((candidateKey) => candidateKey.id === keyIdentifier);
+    openModal({
+      type: "confirm",
+      confirmAction: "deleteKey",
+      identifier: keyIdentifier,
+      title: "删除 API 密钥",
+      message: `删除“${apiKey?.name || "该密钥"}”后，使用它的 MCP 客户端将立即无法访问服务。此操作无法撤销。`,
+      confirmLabel: "删除密钥",
+      busy: false,
+      error: ""
+    });
+  }
+
+  function openEditUserModal(userIdentifier) {
+    const user = (state.data.users || []).find((candidateUser) => candidateUser.id === userIdentifier);
+    if (!user) {
+      showToast("用户不存在", "请刷新页面后重试。", "error");
+      return;
+    }
+    openModal({ type: "editUser", data: { ...user }, busy: false, error: "" });
+  }
+
+  async function submitEditUser(formElement) {
+    const userIdentifier = formElement.dataset.id;
+    const updatePayload = {
+      tier_id: String(formElement.elements.tier_id.value || "").trim(),
+      revoke_tokens: formElement.elements.revoke_tokens.checked
+    };
+    if (!formElement.elements.role.disabled) {
+      updatePayload.role = formElement.elements.role.value;
+    }
+    if (!formElement.elements.enabled.disabled) {
+      updatePayload.enabled = formElement.elements.enabled.checked;
+    }
+
+    setModalBusy(true);
+    try {
+      const updatedUser = await updateAdminUser(userIdentifier, updatePayload);
+      state.data.users = replaceItemByIdentifier(state.data.users, updatedUser);
+      if (updatedUser.id === state.user?.id) {
+        state.user = updatedUser;
+      }
+      closeModal();
+      renderApplication();
+      showToast("用户已更新", "角色、等级与会话策略已应用。", "success");
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        setModalBusy(false, getErrorMessage(error));
+      }
+    }
+  }
+
+  async function openUserUsageModal(userIdentifier) {
+    const user = (state.data.users || []).find((candidateUser) => candidateUser.id === userIdentifier);
+    openModal({ type: "userUsage", username: user?.username || "用户", loading: true, usage: null });
+    try {
+      const usage = await fetchAdminUserUsage(userIdentifier);
+      if (state.modal?.type === "userUsage") {
+        state.modal.loading = false;
+        state.modal.usage = normalizeUsage(usage);
+        renderModalRegion();
+      }
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        closeModal();
+        showToast("无法加载用户用量", getErrorMessage(error), "error");
+      }
+    }
+  }
+
+  function confirmDeleteUser(userIdentifier) {
+    const user = (state.data.users || []).find((candidateUser) => candidateUser.id === userIdentifier);
+    openModal({
+      type: "confirm",
+      confirmAction: "deleteUser",
+      identifier: userIdentifier,
+      title: "删除用户",
+      message: `删除“${user?.username || "该用户"}”会同时删除其全部 API 密钥与调用日志，且无法恢复。`,
+      confirmLabel: "删除用户",
+      busy: false,
+      error: ""
+    });
+  }
+
+  function openEditTierModal(tierIdentifier) {
+    const tier = (state.data.tiers || []).find((candidateTier) => candidateTier.id === tierIdentifier);
+    if (!tier) {
+      showToast("等级不存在", "请刷新页面后重试。", "error");
+      return;
+    }
+    openModal({ type: "editTier", data: { ...tier }, busy: false, error: "" });
+  }
+
+  async function submitTier(formElement, isEdit) {
+    const formData = createFormDataObject(formElement);
+    const tierPayload = {
+      name: String(formData.name || "").trim(),
+      level: Number(formData.level),
+      rpm: Number(formData.rpm),
+      success_limit: Number(formData.success_limit)
+    };
+    const tierIdentifier = formElement.dataset.id;
+    setModalBusy(true);
+
+    try {
+      const tier = isEdit
+        ? await updateTier(tierIdentifier, tierPayload)
+        : await createTier(tierPayload);
+      if (isEdit) {
+        state.data.tiers = replaceItemByIdentifier(state.data.tiers, tier);
+      } else {
+        state.data.tiers = [...(state.data.tiers || []), tier].sort(compareTiers);
+      }
+      closeModal();
+      renderApplication();
+      showToast(isEdit ? "方案已更新" : "方案已创建", "新的配额方案已可以分配给用户。", "success");
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        setModalBusy(false, getErrorMessage(error));
+      }
+    }
+  }
+
+  function confirmDeleteTier(tierIdentifier) {
+    const tier = (state.data.tiers || []).find((candidateTier) => candidateTier.id === tierIdentifier);
+    openModal({
+      type: "confirm",
+      confirmAction: "deleteTier",
+      identifier: tierIdentifier,
+      title: "删除配额方案",
+      message: `将永久删除“${tier?.name || "该方案"}”。仍有用户使用的方案无法删除。`,
+      confirmLabel: "删除方案",
+      busy: false,
+      error: ""
+    });
+  }
+
+  async function submitCreateInviteCode(formElement) {
+    const formData = createFormDataObject(formElement);
+    setModalBusy(true);
+    try {
+      const createResponse = await createInviteCode({
+        registration_limit: Number(formData.registration_limit)
+      });
+      state.data.invites = [createResponse.invite_code, ...(state.data.invites || [])];
+      state.modal = {
+        type: "secret",
+        secretType: "invite",
+        secret: createResponse.code,
+        title: "邀请码已创建",
+        subtitle: `最多可注册 ${createResponse.invite_code?.registration_limit || 1} 位用户`
+      };
+      renderApplication();
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        setModalBusy(false, getErrorMessage(error));
+      }
+    }
+  }
+
+  async function toggleInviteCode(inviteIdentifier) {
+    const inviteCode = (state.data.invites || []).find((candidateInvite) => candidateInvite.id === inviteIdentifier);
+    if (!inviteCode) {
+      return;
+    }
+    try {
+      const updatedInviteCode = await updateInviteCode(inviteIdentifier, { enabled: !inviteCode.enabled });
+      state.data.invites = replaceItemByIdentifier(state.data.invites, updatedInviteCode);
+      renderApplication();
+      showToast(updatedInviteCode.enabled ? "邀请码已启用" : "邀请码已停用", "注册策略已即时更新。", "success");
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        showToast("操作失败", getErrorMessage(error), "error");
+      }
+    }
+  }
+
+  function confirmDeleteInviteCode(inviteIdentifier) {
+    const inviteCode = (state.data.invites || []).find((candidateInvite) => candidateInvite.id === inviteIdentifier);
+    openModal({
+      type: "confirm",
+      confirmAction: "deleteInvite",
+      identifier: inviteIdentifier,
+      title: "删除邀请码",
+      message: `删除“${inviteCode?.code_prefix || "该邀请码"}”后，尚未使用的注册名额也会立即失效。`,
+      confirmLabel: "删除邀请码",
+      busy: false,
+      error: ""
+    });
+  }
+
+  async function submitSettings(formElement) {
+    const formData = createFormDataObject(formElement);
+    const settingsPayload = {
+      cpa_base_url: String(formData.cpa_base_url || "").trim(),
+      model: String(formData.model || "").trim(),
+      timeout_seconds: Number(formData.timeout_seconds),
+      proxy_url: String(formData.proxy_url || "").trim(),
+      proxy_enabled: formElement.elements.proxy_enabled.checked,
+      registration_mode: formElement.elements.registration_mode.value,
+      debug: formElement.elements.debug.checked
+    };
+    const apiKey = String(formData.cpa_api_key || "").trim();
+    if (apiKey) {
+      settingsPayload.cpa_api_key = apiKey;
+    }
+
+    state.formBusy = true;
+    renderApplication();
+    try {
+      state.data.settings = await updateSettings(settingsPayload);
+      state.registrationMode = state.data.settings.registration_mode || state.registrationMode;
+      state.formBusy = false;
+      renderApplication();
+      showToast("设置已应用", "上游客户端已使用新的运行时配置。", "success");
+    } catch (error) {
+      state.formBusy = false;
+      if (!handleSessionError(error)) {
+        renderApplication();
+        showToast("保存失败", getErrorMessage(error), "error");
+      }
+    }
+  }
+
+  async function loadAvailableModels(actionElement) {
+    const previousContent = actionElement.innerHTML;
+    actionElement.disabled = true;
+    actionElement.innerHTML = `${renderIcon("refresh")} 正在拉取`;
+    try {
+      const modelResponse = await fetchModels();
+      state.data.models = modelResponse?.models || [];
+      renderApplication();
+      showToast("模型列表已更新", `发现 ${state.data.models.length} 个可用 Grok 模型。`, "success");
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        actionElement.disabled = false;
+        actionElement.innerHTML = previousContent;
+        showToast("模型加载失败", getErrorMessage(error), "error");
+      }
+    }
+  }
+
+  async function executeConfirmedAction() {
+    if (!state.modal || state.modal.type !== "confirm") {
+      return;
+    }
+    const { confirmAction, identifier } = state.modal;
+    setModalBusy(true);
+
+    try {
+      switch (confirmAction) {
+        case "deleteKey":
+          await deleteKey(identifier);
+          state.data.keys = removeItemByIdentifier(state.data.keys, identifier);
+          break;
+        case "deleteUser":
+          await deleteAdminUser(identifier);
+          state.data.users = removeItemByIdentifier(state.data.users, identifier);
+          break;
+        case "deleteTier":
+          await deleteTier(identifier);
+          state.data.tiers = removeItemByIdentifier(state.data.tiers, identifier);
+          break;
+        case "deleteInvite":
+          await deleteInviteCode(identifier);
+          state.data.invites = removeItemByIdentifier(state.data.invites, identifier);
+          break;
+        default:
+          throw new Error("未知的确认操作。");
+      }
+      closeModal();
+      renderApplication();
+      showToast("删除成功", "资源已从服务中永久移除。", "success");
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        setModalBusy(false, getErrorMessage(error));
+      }
+    }
+  }
+
+  async function copyValue(value) {
+    if (!value) {
+      return;
+    }
+    try {
       await navigator.clipboard.writeText(value);
-      copied = true;
+      showToast("已复制", "内容已写入剪贴板。", "success");
     } catch {
-      copied = false;
+      const fallbackTextArea = document.createElement("textarea");
+      fallbackTextArea.value = value;
+      fallbackTextArea.setAttribute("readonly", "");
+      fallbackTextArea.style.position = "fixed";
+      fallbackTextArea.style.opacity = "0";
+      document.body.appendChild(fallbackTextArea);
+      fallbackTextArea.select();
+      const copySucceeded = document.execCommand("copy");
+      fallbackTextArea.remove();
+      showToast(
+        copySucceeded ? "已复制" : "复制失败",
+        copySucceeded ? "内容已写入剪贴板。" : "请手动选择并复制内容。",
+        copySucceeded ? "success" : "error"
+      );
     }
   }
 
-  if (state.modal && state.modal.type === "key-created") {
-    state.modal.copyFailed = !copied;
-    state.modal.copySucceeded = copied;
-  }
-
-  if (copied) {
-    notify(options.automatic ? "Key 已自动复制到剪贴板。" : "已复制到剪贴板。", "success");
-  } else {
-    window.clearTimeout(notify.timer);
-    state.toast = null;
-  }
-
-  render();
-  if (state.modal && state.modal.type === "key-created" && state.modal.copyFailed) {
-    selectCreatedKey();
-  }
-  return copied;
+  return { register: registerEventHandlers };
 }
 
-export async function copyCreatedInviteCode(options = {}) {
-  const input = document.getElementById("created-invite-code");
-  const value = input ? input.value : state.createdInviteCode && (state.createdInviteCode.code || state.createdInviteCode.invite_code?.code);
-  if (!value) return;
-  let copied = copyTextWithSelection(value, input);
-  if (!copied) {
-    try {
-      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-        throw new Error("clipboard unavailable");
-      }
-      await navigator.clipboard.writeText(value);
-      copied = true;
-    } catch {
-      copied = false;
-    }
+function getErrorMessage(error) {
+  if (error instanceof Error && error.message) {
+    return error.message;
   }
-
-  if (copied) {
-    notify(options.automatic ? "邀请码已自动复制到剪贴板。" : "已复制到剪贴板。", "success");
-  } else {
-    window.clearTimeout(notify.timer);
-    state.toast = null;
-  }
-
-  render();
-  if (!copied) {
-    selectCreatedInviteCode();
-  }
-  return copied;
+  return "发生未知错误，请稍后重试。";
 }
 
-export async function copyInviteCode(id) {
-  const inviteCode = state.inviteCodes.find((item) => item.id === id);
-  if (!inviteCode || !inviteCode.code) {
-    notify("该邀请码没有可复制的明文，请重新生成邀请码。", "error");
-    render();
-    return false;
+function withRetryAfter(message, error) {
+  if (Number.isFinite(error?.retryAfterSeconds) && error.retryAfterSeconds > 0) {
+    return `${message} 约 ${Math.ceil(error.retryAfterSeconds)} 秒后可重试。`;
   }
-
-  let copied = copyTextWithSelection(inviteCode.code);
-  if (!copied) {
-    try {
-      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-        throw new Error("clipboard unavailable");
-      }
-      await navigator.clipboard.writeText(inviteCode.code);
-      copied = true;
-    } catch {
-      copied = false;
-    }
-  }
-
-  if (copied) {
-    notify("邀请码已复制到剪贴板。", "success");
-  } else {
-    notify("浏览器拒绝复制，请手动选中邀请码复制。", "error");
-  }
-  render();
-  return copied;
-}
-
-export function copyTextWithSelection(value, input) {
-  const target = input || document.createElement("textarea");
-  let appended = false;
-
-  if (!input) {
-    target.value = value;
-    target.setAttribute("readonly", "");
-    target.style.position = "fixed";
-    target.style.left = "-9999px";
-    target.style.top = "0";
-    document.body.appendChild(target);
-    appended = true;
-  }
-
-  try {
-    target.focus({ preventScroll: true });
-    target.select();
-    target.setSelectionRange(0, target.value.length);
-    return typeof document.execCommand === "function" && document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    if (appended) {
-      target.remove();
-    }
-  }
-}
-
-export function selectCreatedKey() {
-  const input = document.getElementById("created-api-key");
-  if (!input) return;
-  input.focus({ preventScroll: true });
-  input.select();
-  input.setSelectionRange(0, input.value.length);
-}
-
-export function selectCreatedInviteCode() {
-  const input = document.getElementById("created-invite-code");
-  if (!input) return;
-  input.focus({ preventScroll: true });
-  input.select();
-  input.setSelectionRange(0, input.value.length);
+  return message;
 }

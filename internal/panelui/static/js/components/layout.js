@@ -1,61 +1,78 @@
-import { renderInlineLoading } from "./loading.js";
-import { isRouteVisibleInNavigation, renderRoute, routeMeta, routes } from "../router.js";
-import { isAdmin, state } from "../state.js";
-import { escapeHTML, initials } from "../utils.js";
+import { escapeHTML, getInitials } from "../utils.js";
+import { renderIcon } from "./icons.js";
 
-export function renderShell() {
+export function renderShell(state, currentMetadata, currentPageHTML) {
+  const isAdmin = state.user?.role === "admin";
   return `
-    <div class="app-shell">
-      ${renderSidebar()}
-      <header class="topbar">
-        <button class="icon-button mobile-menu" data-action="go" data-route="dashboard" title="Dashboard" type="button">
-          <span class="material-symbols-outlined">developer_board</span>
-        </button>
-        <label class="search-box">
-          <span class="material-symbols-outlined">search</span>
-          <input id="global-search" value="${escapeHTML(state.search)}" placeholder="Search resources, logs..." autocomplete="off">
-        </label>
-        <div class="top-actions">
-          <button class="icon-button" data-action="refresh" title="刷新" type="button"><span class="material-symbols-outlined">notifications</span></button>
-          <button class="avatar" data-action="go" data-route="account" title="${escapeHTML(state.user.username)}" type="button">${escapeHTML(initials(state.user.username))}</button>
-        </div>
-      </header>
-      <main class="main">
-        <div class="content">
-          ${state.loading ? renderInlineLoading() : renderRoute()}
-        </div>
-      </main>
-    </div>`;
+    <div class="app-shell ${state.sidebarOpen ? "is-sidebar-open" : ""}">
+      <button class="sidebar-backdrop" type="button" data-action="close-sidebar" aria-label="关闭导航"></button>
+      ${renderSidebar(state, isAdmin)}
+      <div class="main-shell">
+        <header class="topbar">
+          <div class="topbar-left">
+            <button class="icon-button mobile-menu-button" type="button" data-action="toggle-sidebar" aria-label="打开导航">${renderIcon("menu")}</button>
+            <span class="breadcrumb">${escapeHTML(currentMetadata.section)} / <strong>${escapeHTML(currentMetadata.title)}</strong></span>
+          </div>
+          <div class="topbar-actions">
+            <span class="system-status"><span class="status-dot"></span>服务已连接</span>
+            <button class="icon-button ${state.refreshing ? "is-spinning" : ""}" type="button" data-action="refresh-page" aria-label="刷新当前页面" ${state.refreshing ? "disabled" : ""}>${renderIcon("refresh")}</button>
+          </div>
+        </header>
+        <main class="page-wrap page-enter">
+          ${currentPageHTML}
+        </main>
+      </div>
+    </div>
+  `;
 }
 
-export function renderSidebar() {
-  const visibleRoutes = routes.filter(isRouteVisibleInNavigation);
-  const top = visibleRoutes.filter((route) => !routeMeta[route].bottom).map(renderNavLink).join("");
-  const bottom = visibleRoutes.filter((route) => routeMeta[route].bottom).map(renderNavLink).join("");
+function renderSidebar(state, isAdmin) {
+  const renderNavigationItem = (page, label, icon) => `
+    <button class="nav-item ${state.currentPage === page ? "is-active" : ""}" type="button" data-action="navigate" data-page="${page}">
+      ${renderIcon(icon)}<span>${escapeHTML(label)}</span>
+    </button>
+  `;
+
   return `
     <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark">
-          <span class="material-symbols-outlined">developer_board</span>
-        </div>
-        <div class="brand-copy">
-          <h1>MCP Central</h1>
-          <p>Protocol Management</p>
-        </div>
+      <div class="brand-lockup">
+        <span class="brand-symbol" aria-hidden="true"></span>
+        <span>Grok MCP<small>Control plane</small></span>
       </div>
-      <nav class="nav-list" aria-label="主导航">
-        ${top}
-        <div class="nav-bottom">${bottom}</div>
-      </nav>
-    </aside>`;
-}
 
-export function renderNavLink(route) {
-  const meta = routeMeta[route];
-  const locked = meta.admin && !isAdmin();
-  return `
-    <a class="nav-link ${state.route === route ? "active" : ""} ${locked ? "locked" : ""}" href="#/${route}" title="${escapeHTML(meta.label)}">
-      <span class="material-symbols-outlined">${meta.icon}</span>
-      <span>${escapeHTML(meta.label)}</span>
-    </a>`;
+      <div class="sidebar-scroll">
+        <section class="nav-section">
+          <p class="nav-section-label">Workspace</p>
+          <nav class="nav-list" aria-label="工作台导航">
+            ${renderNavigationItem("overview", "总览", "home")}
+            ${renderNavigationItem("keys", "API 密钥", "key")}
+            ${renderNavigationItem("usage", "调用分析", "chart")}
+          </nav>
+        </section>
+
+        ${isAdmin ? `
+          <section class="nav-section">
+            <p class="nav-section-label">Administration</p>
+            <nav class="nav-list" aria-label="系统管理导航">
+              ${renderNavigationItem("users", "用户管理", "users")}
+              ${renderNavigationItem("tiers", "配额方案", "layers")}
+              ${renderNavigationItem("invites", "邀请码", "ticket")}
+              ${renderNavigationItem("settings", "服务设置", "settings")}
+            </nav>
+          </section>
+        ` : ""}
+      </div>
+
+      <footer class="sidebar-footer">
+        <div class="sidebar-user">
+          <span class="user-avatar">${escapeHTML(getInitials(state.user?.username))}</span>
+          <span class="sidebar-user-copy">
+            <strong>${escapeHTML(state.user?.username || "User")}</strong>
+            <span>${state.user?.role === "admin" ? "管理员" : escapeHTML(state.user?.tier_name || "普通用户")}</span>
+          </span>
+          <button class="logout-button" type="button" data-action="logout" aria-label="退出登录">${renderIcon("logout")}</button>
+        </div>
+      </footer>
+    </aside>
+  `;
 }

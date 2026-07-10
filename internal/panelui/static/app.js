@@ -1,124 +1,195 @@
-import { api, loadAggregatedUsage, loadInviteCodes, loadKeys, loadRegistrationSettings, loadServerSettings, loadTiers, loadUsageForSelection, loadUsers } from "./js/api.js";
-import { renderAuth } from "./js/components/forms.js";
-import { renderShell } from "./js/components/layout.js";
-import { renderLoading } from "./js/components/loading.js";
+import {
+  APIError,
+  fetchAdminUsers,
+  fetchCurrentUser,
+  fetchInviteCodes,
+  fetchKeys,
+  fetchRegistrationSettings,
+  fetchSettings,
+  fetchTiers,
+  fetchUsage,
+  panelAPI
+} from "./js/api.js";
+import { renderAuthView } from "./js/components/forms.js";
 import { renderModal } from "./js/components/modal.js";
-import { notify, renderToast } from "./js/components/toast.js";
-import { onChange, onClick, onInput, onSubmit } from "./js/events.js";
-import { readRoute, renderRoute } from "./js/router.js";
-import { clearSession, isAdmin, state, storage } from "./js/state.js";
-import { errorText, setStored } from "./js/utils.js";
+import { configureToastRegion, showToast } from "./js/components/toast.js";
+import { createApplicationEvents } from "./js/events.js";
+import { adminPages, availablePages, pageMetadata, renderShell } from "./js/router.js";
+import {
+  clearAuthenticatedState,
+  commitPageData,
+  normalizeUsage,
+  pageHasExistingData,
+  state
+} from "./js/state.js";
+import { getUsagePeriodSince } from "./js/utils.js";
 
-const app = document.getElementById("app");
+const applicationElement = document.querySelector("#app");
+const modalRegionElement = document.querySelector("#modal-region");
+const toastRegionElement = document.querySelector("#toast-region");
 
-state.route = readRoute();
+let activePageRequestIdentifier = 0;
 
-document.addEventListener("submit", onSubmit);
-document.addEventListener("click", onClick);
-document.addEventListener("change", onChange);
-document.addEventListener("input", onInput);
-window.addEventListener("hashchange", async () => {
-  const previousRoute = state.route;
-  state.route = readRoute();
-  resetUsageActivityView(previousRoute, state.route);
-  await loadRouteData();
-  render();
-});
+function renderApplication() {
+  applicationElement.innerHTML = state.authenticated ? renderShell(state) : renderAuthView(state);
+  renderModalRegion();
+  document.title = state.authenticated
+    ? `${pageMetadata[state.currentPage]?.title || "控制台"} · Grok MCP`
+    : "登录 · Grok MCP Control";
+}
 
-bootstrap();
+function renderModalRegion() {
+  modalRegionElement.innerHTML = renderModal(state);
+}
 
-export async function bootstrap() {
-  if (!state.token) {
-    try {
-      await loadRegistrationSettings();
-    } catch (err) {
-      notify(errorText(err), "error");
-    } finally {
-      state.ready = true;
-      render();
+async function initializeApplication() {
+  configureToastRegion(toastRegionElement);
+  createApplicationEvents({
+    applicationElement,
+    modalRegionElement,
+    renderApplication,
+    renderModalRegion,
+    loadCurrentPage,
+    normalizeCurrentPageForRole,
+    handleSessionError
+  }).register();
+
+  await loadRegistrationMode();
+  if (!panelAPI.hasSession()) {
+    renderApplication();
+    return;
+  }
+
+  try {
+    state.user = await fetchCurrentUser();
+    state.authenticated = true;
+    normalizeCurrentPageForRole();
+    renderApplication();
+    await loadCurrentPage();
+  } catch (error) {
+    panelAPI.clearSession();
+    clearAuthenticatedState();
+    if (!(error instanceof APIError && error.status === 401)) {
+      state.authError = getErrorMessage(error);
+    }
+    renderApplication();
+  }
+}
+
+async function loadRegistrationMode() {
+  try {
+    const registrationSettings = await fetchRegistrationSettings();
+    state.registrationMode = registrationSettings?.registration_mode || "free";
+    if (state.registrationMode === "disabled") {
+      state.authMode = "login";
+    }
+  } catch (error) {
+    state.registrationMode = "free";
+    state.authError = getErrorMessage(error);
+  }
+}
+
+function normalizeCurrentPageForRole() {
+  if (!availablePages.has(state.currentPage)) {
+    state.currentPage = "overview";
+  }
+  if (adminPages.has(state.currentPage) && state.user?.role !== "admin") {
+    state.currentPage = "overview";
+    window.history.replaceState(null, "", "#overview");
+  }
+}
+
+async function loadCurrentPage(options = {}) {
+  const page = state.currentPage;
+  const requestIdentifier = ++activePageRequestIdentifier;
+  state.pageLoading = !pageHasExistingData(page);
+  state.refreshing = Boolean(options.refreshing);
+  renderApplication();
+
+  try {
+    const pageResult = await loadPageData(page);
+    if (requestIdentifier !== activePageRequestIdentifier) {
       return;
     }
-  }
-  try {
-    state.user = await api("/me");
-    setStored(storage.user, JSON.stringify(state.user));
-    await loadRouteData();
-  } catch (err) {
-    clearSession();
-    notify(errorText(err), "error");
-  } finally {
-    state.ready = true;
-    render();
-  }
-}
-
-export async function loadRouteData() {
-  if (!state.token || !state.user) {
-    return;
-  }
-  state.loading = true;
-  render();
-  try {
-    state.user = await api("/me");
-    setStored(storage.user, JSON.stringify(state.user));
-    if (state.route === "dashboard") {
-      await loadKeys();
-      state.usage = await loadAggregatedUsage(state.sinceMode);
-    } else if (state.route === "keys") {
-      await loadKeys();
-    } else if (state.route === "usage") {
-      await loadKeys();
-      state.usage = await loadUsageForSelection();
-    } else if (state.route === "users" && isAdmin()) {
-      await loadUsers();
-      await loadTiers();
-    } else if (state.route === "tiers" && isAdmin()) {
-      await loadTiers();
-    } else if (state.route === "invites" && isAdmin()) {
-      await loadInviteCodes();
-      await loadServerSettings();
-    } else if (state.route === "settings" && isAdmin()) {
-      await loadServerSettings();
+    commitPageData(page, pageResult);
+  } catch (error) {
+    if (requestIdentifier !== activePageRequestIdentifier) {
+      return;
     }
-  } catch (err) {
-    handleAPIError(err);
+    if (handleSessionError(error)) {
+      return;
+    }
+    showToast("加载失败", getErrorMessage(error), "error");
   } finally {
-    state.loading = false;
+    if (requestIdentifier === activePageRequestIdentifier && state.authenticated) {
+      state.pageLoading = false;
+      state.refreshing = false;
+      renderApplication();
+    }
   }
 }
 
-function resetUsageActivityView(previousRoute, nextRoute) {
-  if (nextRoute !== "usage") {
-    state.expandUsageActivityOnNextUsageNavigation = false;
-    state.usageActivityPage = 1;
-    return;
+async function loadPageData(page) {
+  switch (page) {
+    case "overview": {
+      const [user, keyResponse, usage] = await Promise.all([
+        fetchCurrentUser(),
+        fetchKeys(),
+        fetchUsage(getUsagePeriodSince("24h"))
+      ]);
+      return {
+        user,
+        keys: keyResponse?.keys || [],
+        overviewUsage: normalizeUsage(usage)
+      };
+    }
+    case "keys": {
+      const keyResponse = await fetchKeys();
+      return { keys: keyResponse?.keys || [] };
+    }
+    case "usage": {
+      const usage = await fetchUsage(getUsagePeriodSince(state.filters.usagePeriod));
+      return { usage: normalizeUsage(usage) };
+    }
+    case "users": {
+      const [userResponse, tierResponse] = await Promise.all([fetchAdminUsers(), fetchTiers()]);
+      return {
+        users: userResponse?.users || [],
+        tiers: tierResponse?.tiers || []
+      };
+    }
+    case "tiers": {
+      const tierResponse = await fetchTiers();
+      return { tiers: tierResponse?.tiers || [] };
+    }
+    case "invites": {
+      const inviteResponse = await fetchInviteCodes();
+      return { invites: inviteResponse?.invite_codes || [] };
+    }
+    case "settings":
+      return { settings: await fetchSettings() };
+    default:
+      return {};
   }
-
-  if (previousRoute !== "usage") {
-    state.usageActivityCompact = !state.expandUsageActivityOnNextUsageNavigation;
-    state.usageActivityPage = 1;
-  }
-
-  state.expandUsageActivityOnNextUsageNavigation = false;
 }
 
-export function render() {
-  if (!state.ready) {
-    app.innerHTML = renderLoading("加载管理面板...");
-    return;
+function handleSessionError(error) {
+  if (!(error instanceof APIError) || error.status !== 401) {
+    return false;
   }
-  if (!state.token || !state.user) {
-    app.innerHTML = renderAuth() + renderToast();
-    return;
-  }
-  app.innerHTML = renderShell() + renderModal() + renderToast();
+
+  panelAPI.clearSession();
+  clearAuthenticatedState();
+  state.authError = "会话已失效，请重新登录。";
+  renderApplication();
+  return true;
 }
 
-export function handleAPIError(err) {
-  if (err && err.status === 401) {
-    clearSession();
-    notify("登录已失效，请重新登录。", "error");
-  } else {
-    notify(errorText(err), "error");
+function getErrorMessage(error) {
+  if (error instanceof Error && error.message) {
+    return error.message;
   }
+  return "发生未知错误，请稍后重试。";
 }
+
+initializeApplication();

@@ -1,76 +1,34 @@
-import { renderEmptyRow } from "../components/metric-card.js";
-import { isAdmin, state } from "../state.js";
-import { escapeAttr, escapeHTML, formatNumber, limitText, rpmText } from "../utils.js";
+import { escapeHTML, formatLimit, formatNumber } from "../utils.js";
+import { renderIcon } from "../components/icons.js";
+import { renderEmptyState, renderPageHeading } from "../components/loading.js";
 
-export function renderTiers() {
-  if (!isAdmin()) {
-    return `
-      <div class="page-head">
-        <div>
-          <h2>Tier Management</h2>
-          <p>Admin role is required to manage tiers.</p>
-        </div>
-      </div>
-      <section class="card empty">
-        <div>
-          <span class="material-symbols-outlined">lock</span>
-          <h3>Admin required</h3>
-          <p>当前账号没有管理员权限。</p>
-        </div>
-      </section>`;
+export function renderTiersPage(state) {
+  const createButton = `<button class="button button-primary" type="button" data-action="open-create-tier">${renderIcon("plus")} 新建方案</button>`;
+  if (state.pageLoading && !state.data.tiers) {
+    return `${renderPageHeading("配额方案", "集中管理每种方案的 RPM 与月度成功调用额度。", createButton)}<div class="tier-grid">${Array.from({ length: 6 }, () => '<div class="skeleton" style="height:250px;border-radius:16px"></div>').join("")}</div>`;
   }
-  const tiers = state.tiers || [];
-  return `
-    <div class="page-head">
-      <div>
-        <h2>Tier Management</h2>
-        <p>管理等级预设（预置 tier0~tier6，可自定义）；任意已存在的 tier 均可分配给用户，注册默认 tier0。</p>
-      </div>
-      <span class="row-actions">
-        <button class="button secondary" data-action="refresh" type="button"><span class="material-symbols-outlined">refresh</span><span>Refresh</span></button>
-        <button class="button" data-action="open-create-tier" type="button"><span class="material-symbols-outlined">add</span><span>New Tier</span></button>
-      </span>
-    </div>
-    <section class="card table-card">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Level</th>
-              <th>RPM</th>
-              <th>Success Limit</th>
-              <th>Users</th>
-              <th class="right">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tiers.length ? tiers.map(renderTierRow).join("") : renderEmptyRow("workspace_premium", "No tiers", "Create a tier preset to get started.")}
-          </tbody>
-        </table>
-      </div>
-    </section>`;
-}
 
-export function renderTierRow(tier) {
+  const tiers = state.data.tiers || [];
   return `
-    <tr>
-      <td><strong>${escapeHTML(tier.name)}</strong></td>
-      <td><span class="badge off">L${tier.level}</span></td>
-      <td class="mono">${rpmText(tier.rpm)}</td>
-      <td class="mono">${limitText(tier.success_limit)}</td>
-      <td>${formatNumber(tier.user_count || 0)}</td>
-      <td class="right">
-        <span class="row-actions">
-          <button class="mini-icon" data-action="edit-tier" data-tier-id="${escapeAttr(tier.id)}" title="Edit" type="button"><span class="material-symbols-outlined">edit</span></button>
-          <button class="mini-icon" data-action="delete-tier" data-tier-id="${escapeAttr(tier.id)}" title="Delete" type="button"><span class="material-symbols-outlined">delete</span></button>
-        </span>
-      </td>
-    </tr>`;
-}
-
-export function tierOptions(selectedID) {
-  return (state.tiers || [])
-    .map((t) => `<option value="${escapeAttr(t.id)}" ${selectedID === t.id ? "selected" : ""}>${escapeHTML(t.name)} (L${t.level})</option>`)
-    .join("");
+    ${renderPageHeading("配额方案", "方案决定用户的请求速率和月度成功调用额度；展示顺序仅用于排列。", createButton)}
+    ${tiers.length === 0 ? `<div class="data-card">${renderEmptyState("layers", "还没有配额方案", "创建方案后即可向用户分配统一限额。", createButton)}</div>` : `
+      <section class="tier-grid">${tiers.map((tier) => `
+        <article class="tier-card">
+          <span class="tier-kind ${String(tier.name).toLowerCase() === "tier0" ? "is-default" : ""}">${String(tier.name).toLowerCase() === "tier0" ? "默认方案" : "自定义方案"}</span>
+          <h3>${escapeHTML(tier.name)}</h3>
+          <div class="tier-limits">
+            <div class="tier-limit"><span>Requests / min</span><strong>${escapeHTML(formatLimit(tier.rpm))}</strong></div>
+            <div class="tier-limit"><span>Monthly success</span><strong>${escapeHTML(formatLimit(tier.success_limit))}</strong></div>
+          </div>
+          <footer class="tier-card-footer">
+            <span class="tier-user-count">${escapeHTML(formatNumber(tier.user_count))} 位用户</span>
+            <div class="table-actions">
+              <button class="table-action" type="button" data-action="open-edit-tier" data-id="${escapeHTML(tier.id)}" aria-label="编辑配额方案">${renderIcon("edit")}</button>
+              <button class="table-action is-danger" type="button" data-action="confirm-delete-tier" data-id="${escapeHTML(tier.id)}" aria-label="删除配额方案" ${Number(tier.user_count) > 0 ? "disabled" : ""}>${renderIcon("trash")}</button>
+            </div>
+          </footer>
+        </article>
+      `).join("")}</section>
+    `}
+  `;
 }
