@@ -64,6 +64,8 @@ export function pageHasExistingData(page) {
       return Boolean(state.data.invites);
     case "settings":
       return Boolean(state.data.settings);
+    case "account":
+      return Boolean(state.user);
     default:
       return false;
   }
@@ -94,6 +96,9 @@ export function commitPageData(page, pageResult) {
       break;
     case "settings":
       state.data.settings = pageResult.settings;
+      break;
+    case "account":
+      state.user = pageResult.user;
       break;
     default:
       break;

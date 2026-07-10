@@ -1,4 +1,5 @@
 import { renderShell as renderLayoutShell } from "./components/layout.js";
+import { renderAccountPage } from "./pages/account.js";
 import { renderInvitesPage } from "./pages/invite-codes.js";
 import { renderKeysPage } from "./pages/keys.js";
 import { renderOverviewPage } from "./pages/overview.js";
@@ -14,7 +15,8 @@ export const pageMetadata = {
   users: { title: "用户管理", section: "系统管理" },
   tiers: { title: "配额方案", section: "系统管理" },
   invites: { title: "邀请码", section: "系统管理" },
-  settings: { title: "服务设置", section: "系统管理" }
+  settings: { title: "服务设置", section: "系统管理" },
+  account: { title: "账户信息", section: "账户" }
 };
 
 export const availablePages = new Set(Object.keys(pageMetadata));
@@ -39,6 +41,8 @@ export function renderCurrentPage(state) {
       return renderInvitesPage(state);
     case "settings":
       return renderSettingsPage(state);
+    case "account":
+      return renderAccountPage(state);
     case "overview":
     default:
       return renderOverviewPage(state);

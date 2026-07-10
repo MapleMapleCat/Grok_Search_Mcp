@@ -65,11 +65,19 @@ function renderSidebar(state, isAdmin) {
 
       <footer class="sidebar-footer">
         <div class="sidebar-user">
-          <span class="user-avatar">${escapeHTML(getInitials(state.user?.username))}</span>
-          <span class="sidebar-user-copy">
-            <strong>${escapeHTML(state.user?.username || "User")}</strong>
-            <span>${state.user?.role === "admin" ? "管理员" : escapeHTML(state.user?.tier_name || "普通用户")}</span>
-          </span>
+          <button
+            class="sidebar-user-profile ${state.currentPage === "account" ? "is-active" : ""}"
+            type="button"
+            data-action="navigate"
+            data-page="account"
+            aria-label="查看账户信息"
+          >
+            <span class="user-avatar">${escapeHTML(getInitials(state.user?.username))}</span>
+            <span class="sidebar-user-copy">
+              <strong>${escapeHTML(state.user?.username || "User")}</strong>
+              <span>${state.user?.role === "admin" ? "管理员" : escapeHTML(state.user?.tier_name || "普通用户")}</span>
+            </span>
+          </button>
           <button class="logout-button" type="button" data-action="logout" aria-label="退出登录">${renderIcon("logout")}</button>
         </div>
       </footer>

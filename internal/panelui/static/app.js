@@ -168,6 +168,8 @@ async function loadPageData(page) {
     }
     case "settings":
       return { settings: await fetchSettings() };
+    case "account":
+      return { user: await fetchCurrentUser() };
     default:
       return {};
   }
