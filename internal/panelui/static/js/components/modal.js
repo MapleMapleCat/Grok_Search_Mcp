@@ -247,9 +247,9 @@ function renderKeyUsageModal(modal) {
   const usage = modal.usage;
   const body = modal.loading ? '<div class="skeleton" style="height:300px"></div>' : `
     <section class="metric-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-      ${renderMetricCard("总调用", formatNumber(usage?.total_calls), "全部时间", "activity", "#eeeaff", "#7667f4")}
-      ${renderMetricCard("成功调用", formatNumber(usage?.success_calls), formatPercent(getSuccessRate(usage)), "shield", "#e8f8ef", "#238a54")}
-      ${renderMetricCard("当前 RPM", formatNumber(usage?.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6")}
+      ${renderMetricCard("总调用", formatNumber(usage?.total_calls), "全部时间", "activity", "#eeeaff", "#7667f4", false, "trend", usage?.traffic_buckets)}
+      ${renderMetricCard("成功调用", formatNumber(usage?.success_calls), formatPercent(getSuccessRate(usage)), "shield", "#e8f8ef", "#238a54", false, "ring", getSuccessRate(usage))}
+      ${renderMetricCard("当前 RPM", formatNumber(usage?.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6", false, "pulse", usage?.current_rpm)}
     </section>
     <div class="chart-wrap">${renderChart(usage?.traffic_buckets || [])}</div>
   `;
@@ -278,9 +278,9 @@ function renderUserUsageModal(modal) {
   const usage = modal.usage;
   const body = modal.loading ? '<div class="skeleton" style="height:380px"></div>' : `
     <section class="metric-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-      ${renderMetricCard("总调用", formatNumber(usage?.total_calls), "全部密钥", "activity", "#eeeaff", "#7667f4")}
-      ${renderMetricCard("成功调用", formatNumber(usage?.success_calls), formatPercent(getSuccessRate(usage)), "shield", "#e8f8ef", "#238a54")}
-      ${renderMetricCard("当前 RPM", formatNumber(usage?.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6")}
+      ${renderMetricCard("总调用", formatNumber(usage?.total_calls), "全部密钥", "activity", "#eeeaff", "#7667f4", false, "trend", usage?.traffic_buckets)}
+      ${renderMetricCard("成功调用", formatNumber(usage?.success_calls), formatPercent(getSuccessRate(usage)), "shield", "#e8f8ef", "#238a54", false, "ring", getSuccessRate(usage))}
+      ${renderMetricCard("当前 RPM", formatNumber(usage?.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6", false, "pulse", usage?.current_rpm)}
     </section>
     <div class="chart-wrap">${renderChart(usage?.traffic_buckets || [])}</div>
     ${renderUsageRecords((usage?.records || []).slice(0, 8))}

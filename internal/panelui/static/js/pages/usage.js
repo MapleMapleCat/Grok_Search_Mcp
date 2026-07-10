@@ -24,7 +24,7 @@ export function renderUsagePage(state) {
   return `
     ${renderPageHeading("调用分析", "按时间范围查看请求趋势、工具分布和最近调用记录。", periodFilters)}
     <section class="metric-grid">
-      ${renderMetricCard("总调用", formatNumber(usage.total_calls), getPeriodLabel(period), "activity", "#eeeaff", "#7667f4", false, "trend", usage.total_calls)}
+      ${renderMetricCard("总调用", formatNumber(usage.total_calls), getPeriodLabel(period), "activity", "#eeeaff", "#7667f4", false, "trend", usage.traffic_buckets)}
       ${renderMetricCard("成功调用", formatNumber(usage.success_calls), formatPercent(successRate), "shield", "#e8f8ef", "#238a54", successRate >= 95, "ring", successRate)}
       ${renderMetricCard("当前 RPM", formatNumber(usage.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6", false, "pulse", usage.current_rpm)}
       ${renderMetricCard("工具种类", formatNumber(Object.keys(usage.by_tool || {}).length), "已调用工具", "model", "#fff6e5", "#d58a19", false, "nodes", Object.keys(usage.by_tool || {}).length)}

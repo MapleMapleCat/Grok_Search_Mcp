@@ -52,7 +52,7 @@ export function renderOverviewPage(state) {
     </section>
 
     <section class="metric-grid" aria-label="核心指标">
-      ${renderMetricCard("总调用", formatNumber(usage.total_calls), "最近 24 小时", "activity", "#eeeaff", "#7667f4", false, "trend", usage.total_calls)}
+      ${renderMetricCard("总调用", formatNumber(usage.total_calls), "最近 24 小时", "activity", "#eeeaff", "#7667f4", false, "trend", usage.traffic_buckets)}
       ${renderMetricCard("成功率", formatPercent(successRate), `${formatNumber(usage.success_calls)} 次成功`, "shield", "#e8f8ef", "#238a54", successRate >= 95, "ring", successRate)}
       ${renderMetricCard("当前 RPM", formatNumber(usage.current_rpm), user.rpm > 0 ? `上限 ${formatNumber(user.rpm)}` : "当前方案不限速", "chart", "#e8f1ff", "#3d83f6", false, "pulse", usage.current_rpm)}
       ${renderMetricCard("可用密钥", formatNumber(activeKeys), `共 ${formatNumber(keys.length)} 个密钥`, "key", "#fff6e5", "#d58a19", false, "nodes", activeKeys)}

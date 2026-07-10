@@ -1188,12 +1188,6 @@ svg {
   pointer-events: none;
 }
 
-.metric-card:hover {
-  border-color: var(--line-strong);
-  box-shadow: 0 16px 38px rgba(22, 33, 27, 0.08);
-  transform: translateY(-3px);
-}
-
 .metric-card--trend {
   background:
     radial-gradient(circle at 84% 26%, color-mix(in srgb, var(--metric-ink) 9%, transparent), transparent 42%),
@@ -1329,16 +1323,22 @@ svg {
   animation: draw-line 900ms var(--transition-smooth) both;
 }
 
+.metric-trend-baseline {
+  fill: none;
+  stroke: currentColor;
+  stroke-dasharray: 3 5;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+  opacity: 0.28;
+  vector-effect: non-scaling-stroke;
+}
+
 .metric-visual-trend circle {
   fill: var(--surface);
   stroke: currentColor;
   stroke-width: 2;
   transform-origin: center;
   transition: transform var(--transition-smooth);
-}
-
-.metric-card:hover .metric-visual-trend circle {
-  transform: scale(1.45);
 }
 
 .metric-visual-ring {
@@ -1367,10 +1367,6 @@ svg {
   font-size: 8px;
   font-weight: 800;
   letter-spacing: -0.025em;
-}
-
-.metric-card:hover .metric-visual-ring {
-  transform: rotate(8deg) scale(1.06);
 }
 
 .metric-visual-pulse {
@@ -3234,6 +3230,43 @@ svg {
 
   .invite-card .table-actions {
     justify-content: flex-start;
+  }
+}
+
+/* Metric motion only communicates a changing service state. */
+.metric-visual-pulse.is-active .metric-pulse-line {
+  animation: metric-activity-pulse 1.8s ease-in-out infinite;
+}
+
+.metric-visual-pulse.is-idle .metric-live-label {
+  color: var(--ink-faint);
+}
+
+.metric-visual-pulse.is-idle .metric-live-label i {
+  background: var(--ink-faint);
+  box-shadow: none;
+  animation: none;
+}
+
+.metric-visual-pulse.is-idle .metric-pulse-line {
+  stroke-dasharray: none;
+  opacity: 0.3;
+  animation: none;
+}
+
+.metric-visual-nodes i,
+.metric-visual-nodes i.is-active {
+  animation: none;
+}
+
+@keyframes metric-activity-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 1;
   }
 }
 
