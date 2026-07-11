@@ -84,49 +84,45 @@ args = [
           description: "旧版教程覆盖 Cursor、Claude Code 与 Codex CLI。选择对应客户端，并在保存配置后重新加载 MCP 工具。",
           content: `
             <div class="guide-config-grid">
-              <div class="guide-config-column">
-                ${renderClientCard({
-                  icon: "code",
-                  title: "Cursor",
-                  subtitle: "全局或项目级 mcp.json",
-                  steps: [
-                    "全局配置打开 ~/.cursor/mcp.json，项目配置打开 .cursor/mcp.json。",
-                    "加入下面的服务器配置，并在本地替换 YOUR_MCP_API_KEY。",
-                    "重启 Cursor，或重新加载 MCP 工具。"
-                  ],
-                  codeBlocks: [{ label: "JSON", value: cursorConfiguration }],
-                  note: "不要将真实密钥写入配置后提交到版本控制。"
-                })}
-                ${renderClientCard({
-                  icon: "code",
-                  title: "Claude Code",
-                  subtitle: "命令行注册 HTTP MCP",
-                  steps: [
-                    "在需要使用此服务的项目终端中执行命令。",
-                    "确保 GROK_MCP_API_KEY 已设置为完整的客户端 API Key。",
-                    "注册后列出 MCP 服务并确认连接状态。"
-                  ],
-                  codeBlocks: [{ label: "Terminal", value: `${claudeCodeCommand}\n\nclaude mcp list` }],
-                  note: "也可以在 Claude Code 会话中执行 /mcp 查看连接和工具。"
-                })}
-              </div>
-              <div class="guide-config-column">
-                ${renderClientCard({
-                  icon: "layers",
-                  title: "Codex CLI",
-                  subtitle: "Streamable HTTP 或 stdio 桥接",
-                  steps: [
-                    "打开 ~/.codex/config.toml。",
-                    "如果当前 Codex 版本支持远程 MCP，优先使用 Streamable HTTP 直连。",
-                    "替换 YOUR_MCP_API_KEY；如果不支持远程 HTTP，则使用 mcp-remote 作为 stdio 桥接。"
-                  ],
-                  codeBlocks: [
-                    { label: "TOML · Direct HTTP", value: codexDirectConfiguration },
-                    { label: "TOML · mcp-remote fallback", value: codexBridgeConfiguration }
-                  ],
-                  note: "桥接方式需要本机可通过 npx 启动 mcp-remote。"
-                })}
-              </div>
+              ${renderClientCard({
+                icon: "code",
+                title: "Cursor",
+                subtitle: "全局或项目级 mcp.json",
+                steps: [
+                  "全局配置打开 ~/.cursor/mcp.json，项目配置打开 .cursor/mcp.json。",
+                  "加入下面的服务器配置，并在本地替换 YOUR_MCP_API_KEY。",
+                  "重启 Cursor，或重新加载 MCP 工具。"
+                ],
+                codeBlocks: [{ label: "JSON", value: cursorConfiguration }],
+                note: "不要将真实密钥写入配置后提交到版本控制。"
+              })}
+              ${renderClientCard({
+                icon: "code",
+                title: "Claude Code",
+                subtitle: "命令行注册 HTTP MCP",
+                steps: [
+                  "在需要使用此服务的项目终端中执行命令。",
+                  "确保 GROK_MCP_API_KEY 已设置为完整的客户端 API Key。",
+                  "注册后列出 MCP 服务并确认连接状态。"
+                ],
+                codeBlocks: [{ label: "Terminal", value: `${claudeCodeCommand}\n\nclaude mcp list` }],
+                note: "也可以在 Claude Code 会话中执行 /mcp 查看连接和工具。"
+              })}
+              ${renderClientCard({
+                icon: "layers",
+                title: "Codex CLI",
+                subtitle: "Streamable HTTP 或 stdio 桥接",
+                steps: [
+                  "打开 ~/.codex/config.toml。",
+                  "如果当前 Codex 版本支持远程 MCP，优先使用 Streamable HTTP 直连。",
+                  "替换 YOUR_MCP_API_KEY；如果不支持远程 HTTP，则使用 mcp-remote 作为 stdio 桥接。"
+                ],
+                codeBlocks: [
+                  { label: "TOML · Direct HTTP", value: codexDirectConfiguration },
+                  { label: "TOML · mcp-remote fallback", value: codexBridgeConfiguration }
+                ],
+                note: "桥接方式需要本机可通过 npx 启动 mcp-remote。"
+              })}
             </div>
           `
         })}
