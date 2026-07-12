@@ -3112,14 +3112,47 @@ svg {
 }
 
 .modal-card {
+  display: flex;
   width: min(100%, 520px);
   max-height: calc(100vh - 48px);
-  overflow-y: auto;
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 20px;
   background: var(--surface);
   box-shadow: 0 34px 90px rgba(5, 13, 8, 0.28);
   animation: modal-enter 320ms var(--transition-smooth) both;
+}
+
+.modal-body,
+.debug-json-code {
+  scrollbar-color: rgba(31, 53, 40, 0.24) transparent;
+  scrollbar-width: thin;
+}
+
+.modal-body::-webkit-scrollbar,
+.debug-json-code::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.modal-body::-webkit-scrollbar-track,
+.debug-json-code::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal-body::-webkit-scrollbar-thumb,
+.debug-json-code::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(31, 53, 40, 0.24);
+  background-clip: padding-box;
+}
+
+.modal-body::-webkit-scrollbar-thumb:hover,
+.debug-json-code::-webkit-scrollbar-thumb:hover {
+  background: rgba(31, 53, 40, 0.38);
+  background-clip: padding-box;
 }
 
 .modal-card.is-wide {
@@ -3132,18 +3165,9 @@ svg {
 
 .debug-json-modal .modal-header,
 .debug-json-modal .modal-footer {
-  position: sticky;
   z-index: 2;
   background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(16px);
-}
-
-.debug-json-modal .modal-header {
-  top: 0;
-}
-
-.debug-json-modal .modal-footer {
-  bottom: 0;
 }
 
 .usage-debug-column {
@@ -3448,7 +3472,11 @@ svg {
 }
 
 .modal-body {
+  min-height: 0;
+  overflow-y: auto;
   padding: 22px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
 }
 
 .modal-footer {
