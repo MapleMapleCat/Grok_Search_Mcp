@@ -19,15 +19,17 @@ RUN go mod download
 COPY . .
 
 # modernc.org/sqlite is pure Go, so CGO can stay disabled and the runtime image
-# does not need a compiler toolchain or libc compatibility packages.
-ARG VERSION=docker
+# does not need a compiler toolchain or libc compatibility packages. The image
+# version comes directly from internal/version.Version in the copied source.
 RUN CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
-        -ldflags "-s -w -X github.com/grok-mcp/internal/version.Version=${VERSION}" \
+        -ldflags "-s -w" \
         -o /out/grok-mcp ./cmd/grok-mcp
 
 # ---- runtime stage ----
 FROM ${RUNTIME_IMG}
+
+LABEL org.opencontainers.image.title="grok-mcp"
 
 RUN apk add --no-cache ca-certificates tzdata wget \
         && addgroup -S app \

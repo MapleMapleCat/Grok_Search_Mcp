@@ -7,6 +7,7 @@ import (
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/grok"
 	"github.com/grok-mcp/internal/store"
+	"github.com/grok-mcp/internal/version"
 )
 
 type RegisterRequest struct {
@@ -104,6 +105,7 @@ type UpdateTierRequest struct {
 }
 
 type ServerSettingsResponse struct {
+	Version          string                 `json:"version"`
 	CPABaseURL       string                 `json:"cpa_base_url"`
 	CPAAPIKeySet     bool                   `json:"cpa_api_key_set"`
 	CPAAPIKeyPreview string                 `json:"cpa_api_key_preview,omitempty"`
@@ -240,6 +242,7 @@ func toServerSettingsResponse(settings config.ServerSettings, updatedAt *time.Ti
 		apiKeyPreview = maskSecret(settings.CPAAPIKey)
 	}
 	return ServerSettingsResponse{
+		Version:          version.Version,
 		CPABaseURL:       settings.CPABaseURL,
 		CPAAPIKeySet:     settings.CPAAPIKey != "",
 		CPAAPIKeyPreview: apiKeyPreview,

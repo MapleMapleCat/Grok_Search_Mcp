@@ -14,7 +14,6 @@ export function renderShell(state, currentMetadata, currentPageHTML) {
             <span class="breadcrumb">${escapeHTML(currentMetadata.section)} / <strong>${escapeHTML(currentMetadata.title)}</strong></span>
           </div>
           <div class="topbar-actions">
-            <span class="system-status"><span class="status-dot"></span>服务已连接</span>
             <button class="icon-button ${state.refreshing ? "is-spinning" : ""}" type="button" data-action="refresh-page" aria-label="刷新当前页面" ${state.refreshing ? "disabled" : ""}>${renderIcon("refresh")}</button>
           </div>
         </header>

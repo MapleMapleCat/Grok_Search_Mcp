@@ -3,6 +3,7 @@ package panel
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/store"
+	"github.com/grok-mcp/internal/version"
 )
 
 type recordingSettingsApplier struct {
@@ -56,6 +58,13 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 
 	if responseRecorder.Code != http.StatusOK {
 		t.Fatalf("update settings status = %d, body = %s", responseRecorder.Code, responseRecorder.Body.String())
+	}
+	var response ServerSettingsResponse
+	if err := json.NewDecoder(responseRecorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode updated settings response: %v", err)
+	}
+	if response.Version != version.Version {
+		t.Fatalf("response version = %q, want %q", response.Version, version.Version)
 	}
 	if handler.InitialServerSettings != initialSettings {
 		t.Fatalf("initial settings mutated: before=%+v after=%+v", initialSettings, handler.InitialServerSettings)

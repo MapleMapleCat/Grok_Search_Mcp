@@ -59,6 +59,7 @@ export function renderSettingsPage(state) {
       <aside class="info-card">
         <div class="info-card-top"><span class="info-card-icon">${renderIcon("shield")}</span><h3>运行时热更新</h3><p>这些设置保存后会立即应用到上游客户端，无需重启 grok-mcp 服务。</p></div>
         <div class="info-list">
+          <div class="info-row"><span>服务版本</span><strong>${escapeHTML(settings.version || "未知")}</strong></div>
           <div class="info-row"><span>当前模型</span><strong>${escapeHTML(settings.model || "未配置")}</strong></div>
           <div class="info-row"><span>API Key</span><strong>${settings.cpa_api_key_set ? "已安全配置" : "未配置"}</strong></div>
           <div class="info-row"><span>代理</span><strong>${settings.proxy_enabled ? "已启用" : "直连"}</strong></div>
