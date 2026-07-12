@@ -1,69 +1,92 @@
 # grok-mcp
 
-`grok-mcp` 是一个 HTTP-only 的 MCP（Model Context Protocol）服务端。它把 Grok 的实时联网搜索与模型列举能力封装成 MCP 工具：
+[简体中文](./README_CN.md)
 
-- `grok_web_search`：实时网页搜索
-- `grok_x_search`：实时 X / Twitter 搜索
-- `grok_list_models`：列举上游 CPA 可用的 Grok 模型（过滤 `imagine` / `video`）
+`grok-mcp` is an HTTP-only [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that exposes Grok-powered real-time web search, X/Twitter search, and model discovery to MCP clients.
 
-本项目不直接对接 xAI 官方 API，而是作为已部署的 CLIProxyAPI（CPA）客户端工作：搜索请求转发到 CPA 的 `POST /v1/responses`，模型列表来自 CPA 的 `GET /v1/models`；CPA 负责到 xAI 的认证。
+It does **not** call the official xAI API directly. Instead, it connects to an existing [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) deployment. CPA owns the upstream xAI authentication, while `grok-mcp` provides MCP transport, client API keys, quotas, usage tracking, and an administration panel.
+
+> [!IMPORTANT]
+> This project supports **Streamable HTTP only**. It does not provide a stdio transport or built-in TLS termination.
+
+## Features
+
+- Streamable HTTP MCP endpoint at `/mcp`
+- Three read-only MCP tools:
+  - `grok_web_search`
+  - `grok_x_search`
+  - `grok_list_models`
+- Grok response streaming through CPA `/v1/responses`
+- MCP progress notifications for upstream search rounds
+- Per-user client API keys with enable/disable controls
+- Tier-based RPM and monthly successful-call quotas
+- Pre-authentication source-IP rate limiting for `/mcp`
+- SQLite persistence for users, keys, tiers, usage, invite codes, and server settings
+- Embedded administration panel with no separate frontend build step
+- Runtime updates for upstream settings, proxy settings, registration mode, and debug mode
+- Docker Compose deployment with a non-root runtime image
+
+## Architecture
 
 ```text
-支持 Streamable HTTP 的 MCP 客户端
+Streamable HTTP MCP client
         |
         |  POST /mcp
-        |  Authorization: Bearer <grok-mcp 客户端 API Key>
+        |  Authorization: Bearer <MCP client API key>
         v
-grok-mcp  (cmd/grok-mcp → internal/app 组合根)
-        |
-        |  POST /v1/responses  ·  GET /v1/models
-        |  Authorization: Bearer <CPA_API_KEY>
-        v
+grok-mcp
+  |     |
+  |     +---- /panel/ and /panel/v1/* ---- administrators and users
+  |
+  +---------- SQLite -------------------- users, keys, tiers, usage, settings
+  |
+  |  POST /v1/responses
+  |  GET  /v1/models
+  |  Authorization: Bearer <CPA API key>
+  v
 CLIProxyAPI
-        |
-        v
+  |
+  v
 xAI / Grok
 ```
 
-项目只保留 HTTP 模式（Streamable HTTP），运行时不再提供传输模式开关。
+### Credentials are not interchangeable
 
-## 功能
+| Credential | Used between | Purpose |
+|---|---|---|
+| CPA API key | `grok-mcp` -> CPA | Authenticates upstream `/v1/responses` and `/v1/models` requests. |
+| MCP client API key | MCP client -> `/mcp` | Created in the panel and shown only once. Stored as a hash. |
+| Panel JWT | Browser/API client -> `/panel/v1` | Returned by panel login. It cannot authenticate `/mcp`. |
 
-- Streamable HTTP MCP 端点：`/mcp`
-- 管理面板前端：`/panel/`；REST API：`/panel/v1/*`
-  - 空库启动自动创建 `admin`（日志输出一次性随机密码）
-  - 注册/登录开放；其余接口需面板 JWT；`/panel/v1/admin/*` 需 `role=admin`
-- 客户端 API Key 鉴权（Key 归属用户；支持短 TTL 缓存，用户/tier 限额每次重新加载）
-- 用户限额以 **tier** 为唯一来源（RPM、当月 success limit）；请求链路上为 `auth.AuthenticatedUser` 运行时视图
-- SQLite 持久化用户、Key、tier、用量明细与可热更的上游服务器设置
-- 仅统计真实 `tools/call`：握手 / `tools/list` 等不计入 RPM、配额与用量
-- 上游 SSE 流式解析；搜索轮次可转成 MCP progress 通知
-- `/mcp` 链路中间件顺序（由外到内生效）：  
-  `MaxBody → IP RPM → API Key → ExtractToolName → User RPM → Quota → Usage → MCP handler`
+## Requirements
 
-## Linux 快速开始
+- Linux is the currently documented local runtime target
+- Go 1.25.0 or later for local builds
+- A reachable CPA deployment with compatible `/v1/responses` and `/v1/models` endpoints
+- Docker and Docker Compose for the container workflow, if preferred
+- An MCP client that supports Streamable HTTP and custom Bearer headers
 
-### 1. 构建
+The application uses pure-Go SQLite (`modernc.org/sqlite`) and does not require CGO.
+
+## Quick start
+
+### 1. Build
 
 ```bash
 go build -o grok-mcp ./cmd/grok-mcp
 ```
 
-可选：构建时注入版本号。
+Optionally inject a version at build time:
 
 ```bash
-go build -ldflags "-X github.com/grok-mcp/internal/version.Version=1.2.3" -o grok-mcp ./cmd/grok-mcp
-```
+go build \
+  -ldflags "-X github.com/grok-mcp/internal/version.Version=1.2.3" \
+  -o grok-mcp ./cmd/grok-mcp
 
-查看版本：
-
-```bash
 ./grok-mcp -version
 ```
 
-### 2. 配置并启动
-
-复制配置模板并填入真实值：
+### 2. Configure
 
 ```bash
 cp .env.example .env
@@ -71,7 +94,14 @@ mkdir -p data
 ${EDITOR:-vi} .env
 ```
 
-启动服务：
+At minimum, a new installation requires:
+
+```dotenv
+CPA_API_KEY=replace-with-your-cpa-api-key
+GROK_JWT_SECRET=replace-with-a-strong-random-secret-of-at-least-32-bytes
+```
+
+Load the environment and start the server:
 
 ```bash
 set -a
@@ -81,15 +111,17 @@ set +a
 ./grok-mcp
 ```
 
-启动后：
+Default endpoints:
 
-- MCP 端点：`http://127.0.0.1:8080/mcp`
-- 管理面板前端：`http://127.0.0.1:8080/panel/`
-- 面板 API：`http://127.0.0.1:8080/panel/v1/*`
+| Service | URL |
+|---|---|
+| MCP | `http://127.0.0.1:8080/mcp` |
+| Administration panel | `http://127.0.0.1:8080/panel/` |
+| Panel REST API | `http://127.0.0.1:8080/panel/v1/` |
 
-### 3. 获取自动初始化管理员、登录并创建客户端 API Key
+### 3. Sign in and create an MCP client key
 
-空库首次启动时，服务会自动创建用户名为 `admin` 的管理员账号，并在控制台 / Docker 日志中输出一次性随机 12 位密码。请首次登录后尽快在面板中创建新的管理员或轮换凭据。
+When no enabled administrator exists, the server bootstraps an `admin` account and writes its one-time random password to the startup log. Sign in, rotate the credentials as soon as possible, and create an MCP client API key.
 
 ```bash
 login_token="$(curl -sS -X POST "http://127.0.0.1:8080/panel/v1/auth/login" \
@@ -102,19 +134,11 @@ curl -sS -X POST "http://127.0.0.1:8080/panel/v1/keys" \
   -d '{"name":"local-client"}'
 ```
 
-上面的示例使用 `jq` 提取登录 token；如果环境没有 `jq`，可从登录响应中手动复制 `token` 字段。
+The `api_key` in the response is returned only once. Store it securely.
 
-响应里的 `api_key` 只返回一次。后续 MCP 客户端访问 `/mcp` 时使用：
+### 4. Connect Claude Code
 
-```text
-Authorization: Bearer <api_key>
-Accept: application/json, text/event-stream
-Content-Type: application/json
-```
-
-### 4. Claude Code 客户端示例
-
-Claude Code 连接的是 MCP 端点 `/mcp`，使用的是上一步创建的客户端 `api_key`，不是面板登录返回的 JWT。
+Claude Code is the client with a repository-documented setup example:
 
 ```bash
 export GROK_MCP_API_KEY="grok_xxx"
@@ -123,31 +147,7 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
   --header "Authorization: Bearer ${GROK_MCP_API_KEY}"
 ```
 
-添加后在 Claude Code 会话中执行：
-
-```text
-/mcp
-```
-
-确认 `grok-mcp` 已连接，并能看到工具：
-
-- `grok_web_search`
-- `grok_x_search`
-- `grok_list_models`
-
-实际使用时可以直接在 Claude Code 中提出搜索需求，Claude Code 会按需调用对应 MCP 工具。例如：
-
-```text
-使用 grok-mcp 搜索今天 OpenAI API 的最新发布，并列出来源。
-```
-
-```text
-用 X 搜索最近 24 小时里关于 Grok 的主要讨论，给出摘要和链接。
-```
-
-如果需要明确指定工具，可以在提示词里写出工具名：`grok_web_search` 用于网页搜索，`grok_x_search` 用于 X / Twitter 搜索。
-
-项目级共享配置也可以写入仓库根目录的 `.mcp.json`。不要把真实 `api_key` 提交进仓库，推荐使用环境变量展开：
+A project-level `.mcp.json` can use environment expansion:
 
 ```json
 {
@@ -163,151 +163,55 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 }
 ```
 
-如果 `grok-mcp` 部署在远程服务器，建议通过 HTTPS 反向代理暴露 `/mcp`，并把 URL 改成公网地址，例如 `https://mcp.example.com/mcp`。
+Do not commit a real API key. Other MCP clients can connect when they support Streamable HTTP with a custom `Authorization: Bearer ...` header, but client-specific configurations not documented in this repository should be treated as unverified.
 
-### 5. 反向代理安全建议
+## MCP tools
 
-服务端内置了面板登录/注册的内存限流、登录失败短期锁定，以及 `/mcp` 鉴权前来源 IP 限流；公网部署时仍建议在 Nginx、Caddy、Traefik 等反向代理层额外启用 IP 级 rate limit，尤其是：
-
-- `POST /panel/v1/auth/login`
-- `POST /panel/v1/auth/register`
-- 对外开放的 `/mcp` 端点
-
-Nginx 示例：
-
-```nginx
-limit_req_zone $binary_remote_addr zone=grok_panel_auth:10m rate=10r/m;
-limit_req_zone $binary_remote_addr zone=grok_mcp:10m rate=60r/m;
-
-location = /panel/v1/auth/login {
-    limit_req zone=grok_panel_auth burst=5 nodelay;
-    proxy_pass http://127.0.0.1:8080;
-}
-
-location = /panel/v1/auth/register {
-    limit_req zone=grok_panel_auth burst=3 nodelay;
-    proxy_pass http://127.0.0.1:8080;
-}
-
-location = /mcp {
-    limit_req zone=grok_mcp burst=30 nodelay;
-    proxy_pass http://127.0.0.1:8080;
-}
-```
-
-如果反向代理与应用不在同一信任边界内，请在代理层完成限流，不要直接信任客户端伪造的 `X-Forwarded-For`。内置 IP 限流默认按 TCP 连接的 `RemoteAddr` 识别 IP；仅当设置了 `GROK_TRUSTED_PROXIES` 且对端命中时，才解析 `X-Forwarded-For` / `X-Real-IP`。
-
-## Docker Compose
-
-Docker 构建默认使用官方原生源：
-
-- 构建镜像：`golang:1.25-alpine`
-- 运行镜像：`alpine:3.20`
-- Go module proxy：`https://proxy.golang.org,direct`
-
-复制配置模板并填入真实值：
-
-```bash
-cp .env.example .env
-${EDITOR:-vi} .env
-```
-
-如果 CPA 服务运行在宿主机而不是容器内，请把 `.env` 里的 `CPA_BASE_URL` 改为：
-
-```bash
-CPA_BASE_URL=http://host.docker.internal:8317
-```
-
-启动：
-
-```bash
-docker compose up -d --build
-```
-
-空数据库首次启动时，`.env` 至少需要设置：
-
-- `CPA_API_KEY`
-- `GROK_JWT_SECRET`
-
-如果命名卷中的数据库已经保存了完整 Server Settings，`CPA_API_KEY` 可不再通过环境变量提供；`GROK_JWT_SECRET` 始终必须由环境变量提供。
-
-容器内默认监听 `:8080`，Compose 示例默认映射宿主机 `8080`。如需公网访问，请通过 HTTPS 反向代理暴露服务。SQLite 数据保存到命名卷 `grok-mcp-data`。
-
-## 配置项
-
-| 环境变量 | 必填 | 默认值 | 说明 |
-|---|:---:|---|---|
-| `CPA_API_KEY` | 是* | 无 | 调用 CPA 的 Bearer Key（*启动时可由 DB 中已保存的服务器设置覆盖/补全） |
-| `GROK_JWT_SECRET` | 是 | 无 | 面板 JWT HS256 签名密钥（至少 32 字节） |
-| `CPA_BASE_URL` | 否 | `http://127.0.0.1:8317` | CPA 根地址，不含尾部 `/` |
-| `GROK_MODEL` | 否 | `grok-4.3` | 默认模型，可被工具参数 `model` 覆盖 |
-| `GROK_HTTP_TIMEOUT` | 否 | `120` | 上游 HTTP 超时，单位秒 |
-| `GROK_MCP_DEBUG` | 否 | 无 | 设为 `1`、`true` 或 `yes` 时输出调试日志，并可能在用量记录中捕获 debug 上下文 |
-| `GROK_HTTP_ADDR` | 否 | `:8080` | HTTP 监听地址；直接公网暴露明文 HTTP 会泄露 JWT/API key |
-| `GROK_DB_PATH` | 否 | `./grok-mcp.db` | SQLite 数据库路径 |
-| `GROK_MCP_IP_RPM` | 否 | `300` | `/mcp` 在 API Key 鉴权前按来源 IP 限流的 RPM |
-| `GROK_TRUSTED_PROXIES` | 否 | 空 | 可信反向代理 CIDR/IP（逗号分隔）；命中时才解析转发头 |
-| `GROK_PROXY_URL` | 否 | 空 | 上游请求显式 HTTP(S) 代理 |
-| `GROK_PROXY_ENABLED` | 否 | 见说明 | 是否启用 `GROK_PROXY_URL`；未设显式代理时仍可回退 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` |
-
-说明：
-
-- 用户限额（RPM / 当月 success limit）**只**由 tier 决定，在面板 Tier Management 维护。
-- CPA URL/Key、模型、超时、代理、debug 等可在管理员面板 **Server Settings** 中热更新并写回 SQLite；监听地址、DB 路径、JWT 密钥仍需改环境变量后重启。
-- （已移除 `GROK_ADMIN_TOKEN` 与 `/admin/v1`；请使用 `/panel/v1`。）
-
-## MCP 工具
+All tools are read-only. Search failures are returned as MCP tool results with `isError=true`, so a normal tool error does not terminate the MCP session.
 
 ### `grok_web_search`
 
-参数：
+Performs real-time public web search through Grok.
 
-| 参数 | 类型 | 必填 | 说明 |
+| Argument | Type | Required | Description |
 |---|---|:---:|---|
-| `query` | string | 是 | 搜索问题 |
-| `model` | string | 否 | 覆盖默认模型 |
-| `allowed_domains` | string[] | 否 | 仅搜索指定域名，最多 5 个 |
-| `excluded_domains` | string[] | 否 | 排除指定域名，最多 5 个 |
-| `enable_image_understanding` | bool | 否 | 启用网页图片理解 |
-| `enable_image_search` | bool | 否 | 启用图片搜索结果 |
+| `query` | string | Yes | Non-empty search request. |
+| `model` | string | No | Overrides the configured default; the value must contain `grok`. |
+| `allowed_domains` | string[] | No | Searches only these domains; maximum 5. |
+| `excluded_domains` | string[] | No | Excludes these domains; maximum 5. |
+| `enable_image_understanding` | boolean | No | Enables image understanding for web search. |
+| `enable_image_search` | boolean | No | Enables image search results. |
 
-`allowed_domains` 和 `excluded_domains` 不能同时使用。
+`allowed_domains` and `excluded_domains` are mutually exclusive. Entries must be plain domain names, not URLs. Wildcards, IP literals, ports, paths, `localhost`, and `.local` domains are rejected.
 
 ### `grok_x_search`
 
-参数：
+Searches real-time posts on X/Twitter through Grok.
 
-| 参数 | 类型 | 必填 | 说明 |
+| Argument | Type | Required | Description |
 |---|---|:---:|---|
-| `query` | string | 是 | 搜索问题 |
-| `model` | string | 否 | 覆盖默认模型 |
+| `query` | string | Yes | Non-empty search request. |
+| `model` | string | No | Overrides the configured default; the value must contain `grok`. |
+
+Domain filters and image-related arguments apply only to `grok_web_search`.
 
 ### `grok_list_models`
 
-无入参。从上游 CPA `GET /v1/models` 拉取模型列表，服务端只保留 ID 中包含 `grok`、且不包含 `imagine` / `video` 的模型。
+Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs, keeps IDs containing `grok`, and excludes IDs containing `imagine` or `video`.
 
-成功时大致结构：
-
-```json
-{
-  "models": [
-    {"id": "grok-4.3"}
-  ]
-}
-```
-
-## 返回结构（搜索类工具）
-
-`grok_web_search` 与 `grok_x_search` 返回同一类结构：
+### Search result shape
 
 ```json
 {
-  "answer": "Grok 综合检索后给出的答案文本",
+  "answer": "Answer synthesized by Grok",
   "citations": [
-    "https://example.com/source-1"
+    "https://example.com/source"
   ],
   "sources": [
-    {"url": "https://example.com/source-1", "title": "Source One"}
+    {
+      "url": "https://example.com/source",
+      "title": "Example source"
+    }
   ],
   "usage": {
     "input_tokens": 120,
@@ -318,29 +222,92 @@ docker compose up -d --build
 }
 ```
 
-搜索失败时以 MCP 工具结果 `isError=true` 返回错误文案，会话保持连接（不作为传输层 Go error 断开）。
+`citations`, `sources`, and `usage` may be omitted when the upstream response does not provide them. JSON-RPC batch requests are intentionally rejected because batching could bypass per-call quota reservation and usage accounting.
 
-## 面板 API（`/panel/v1`）
+## Configuration
 
-后端内置无构建步骤的管理面板前端，访问：
+### Startup environment
+
+| Variable | Default | Description |
+|---|---|---|
+| `GROK_JWT_SECRET` | None | Required HS256 panel signing secret; must be at least 32 bytes. Always supplied through the environment. |
+| `CPA_API_KEY` | None | Required for a new database. Existing persisted server settings may provide it on later starts. |
+| `CPA_BASE_URL` | `http://127.0.0.1:8317` | CPA root URL. |
+| `GROK_MODEL` | `grok-4.3` | Default Grok model. |
+| `GROK_HTTP_TIMEOUT` | `120` | Upstream timeout in seconds. |
+| `GROK_HTTP_ADDR` | `:8080` | HTTP listen address. Requires restart to change. |
+| `GROK_DB_PATH` | `./grok-mcp.db` | SQLite database path. Requires restart to change. |
+| `GROK_MCP_IP_RPM` | `300` | Source-IP RPM applied before MCP API-key authentication. |
+| `GROK_TRUSTED_PROXIES` | Empty | Comma-separated trusted proxy IPs/CIDRs. Forwarded IP headers are ignored unless the direct peer is trusted. |
+| `GROK_MCP_DEBUG` | `false` | Accepts `1`, `true`, or `yes`. May capture debug request/response context in usage records. |
+| `GROK_PROXY_URL` | Empty | Explicit upstream HTTP(S) proxy URL. |
+| `GROK_PROXY_ENABLED` | Inferred | Explicit proxy switch. When unset, a non-empty `GROK_PROXY_URL` enables it. |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | Go defaults | Used by the standard transport when an explicit proxy is not enabled. |
+
+### Persistence and live updates
+
+On startup, environment variables are loaded first. If SQLite already contains server settings, the persisted upstream settings take precedence. Administrators can update the following values from **Server Settings** without restarting:
+
+- CPA base URL and API key
+- Default model and timeout
+- Explicit proxy URL and enabled state
+- Registration mode
+- Debug mode
+
+The listen address, database path, JWT secret, source-IP RPM, and trusted proxies remain startup-only settings.
+
+> [!WARNING]
+> The CPA API key is persisted in SQLite. Protect and back up the database as sensitive data. The panel only returns a masked preview of this key.
+
+## Users, registration, tiers, and quotas
+
+Registration can be changed at runtime:
+
+| Mode | Behavior |
+|---|---|
+| `free` | Public self-registration is allowed. |
+| `invite` | A valid, enabled, non-exhausted invite code is required. |
+| `disabled` | Public registration is disabled. |
+
+Administrators can create, disable, and delete invite codes and set their registration limits.
+
+Each user belongs to a tier. All of a user's API keys share that tier's RPM and monthly successful-call allowance. Only actual `tools/call` requests are metered; initialization, ping, and tool-list requests are not.
+
+Default tiers for a new database:
+
+| Tier | RPM | Monthly successful calls |
+|---|---:|---:|
+| `tier0` | 10 | 800 |
+| `tier1` | 20 | 4,000 |
+| `tier2` | 40 | 16,000 |
+| `tier3` | 60 | 40,000 |
+| `tier4` | 120 | 160,000 |
+| `tier5` | 300 | 800,000 |
+| `tier6` | Unlimited | Unlimited |
+
+Successful-call periods use UTC calendar months. A call reserves quota before tool execution; failed calls roll the reservation back. Tier values can be customized in the panel.
+
+The `/mcp` middleware order is:
 
 ```text
-GET /panel/
+MaxBody -> IP RPM -> API Key -> ExtractToolName -> User RPM -> Quota -> Usage -> MCP handler
 ```
 
-前端在浏览器本地保存登录 JWT，用于调用 `/panel/v1`。
+## Administration API overview
 
-除注册/登录外，请求需携带：
+The embedded panel is served from `/panel/`. Its API is under `/panel/v1`.
+
+Public authentication routes:
 
 ```text
-Authorization: Bearer <JWT>
+GET  /panel/v1/auth/registration-settings
+POST /panel/v1/auth/register
+POST /panel/v1/auth/login
 ```
 
-认证与用户 Key：
+Authenticated user routes cover profile information, API-key management, and usage:
 
 ```text
-POST   /panel/v1/auth/register
-POST   /panel/v1/auth/login
 GET    /panel/v1/me
 GET    /panel/v1/keys
 POST   /panel/v1/keys
@@ -350,81 +317,106 @@ GET    /panel/v1/keys/{id}/usage
 GET    /panel/v1/usage
 ```
 
-管理员（`role=admin`）：
+Administrator routes under `/panel/v1/admin/` manage users, tiers, server settings, invite codes, models, and usage. All non-public panel requests require:
 
 ```text
-GET    /panel/v1/admin/users
-GET    /panel/v1/admin/users/{id}
-PATCH  /panel/v1/admin/users/{id}
-DELETE /panel/v1/admin/users/{id}
-GET    /panel/v1/admin/users/{id}/usage
-GET    /panel/v1/admin/tiers
-POST   /panel/v1/admin/tiers
-PATCH  /panel/v1/admin/tiers/{id}
-DELETE /panel/v1/admin/tiers/{id}
-GET    /panel/v1/admin/settings
-PATCH  /panel/v1/admin/settings
-GET    /panel/v1/admin/models
+Authorization: Bearer <panel JWT>
 ```
 
-空库启动时会自动创建 `admin` 管理员并在启动日志输出一次性随机 12 位密码；自助注册始终创建普通用户。用户限额（`rpm`、当月 `success_limit`）以 tier 为唯一来源：管理员在 Tier Management 维护预设，在用户编辑页为用户指定 tier。当月成功调用额度在 `tools/call` 前原子预留，失败时回滚。
+## Docker Compose
 
-## 代码结构
-
-```text
-cmd/grok-mcp/
-  main.go                 薄入口：配置、版本、信号、调用 app.Run
-
-internal/app/             组合根：DB/运行时设置、Grok/MCP、bootstrap、HTTP 与优雅退出
-internal/config/          环境变量加载、校验、ServerSettings 与 store 映射
-internal/auth/            API Key / 面板 JWT；AuthenticatedUser（含 tier 生效限额）
-internal/panel/           面板 REST API（/panel/v1）
-internal/panelui/         面板前端静态资源（embed）
-internal/quota/           tools/call 成功额度预留（小接口 SuccessQuotaReserver）
-internal/ratelimit/       用户 RPM 与来源 IP RPM（令牌桶）
-internal/usage/           tools/call 用量、debug 捕获、失败时 success 回滚
-internal/store/           SQLite、迁移、用户/Key/tier/设置、异步用量写入
-internal/grok/            上游 CPA 客户端、SSE、模型列表过滤
-internal/mcp/             MCP 工具注册与 ServerInstructions
-internal/keyhash/         API Key 哈希
-internal/logx/            调试日志
-internal/version/         构建时注入的版本号
-
-test/http/                HTTP 集成与防护测试
-test/grok/                上游集成测试（需显式开关）
+```bash
+cp .env.example .env
+${EDITOR:-vi} .env
+docker compose up -d --build
 ```
 
-设计要点（近期结构调整）：
+If CPA runs directly on the Docker host, use:
 
-- **`cmd` 薄、`app` 厚**：进程入口与 HTTP 装配分离，便于测试 bootstrap / 安全头等组合逻辑。
-- **持久化用户 vs 运行时用户**：`store.User` 不含 RPM/SuccessLimit；鉴权后写入 `auth.AuthenticatedUser`。
-- **消费方小接口**：`auth` / `quota` / `usage` 只依赖各自需要的 store 方法，而不是处处绑定完整 `store.Store`。
-- **ServerSettings 单一映射**：`config.ServerSettingsFromStore` / `StoreServerSettings` 集中转换，避免字段拷贝散落。
+```dotenv
+CPA_BASE_URL=http://host.docker.internal:8317
+```
 
-## 测试
+The supplied container:
 
-默认测试不触发真实上游调用：
+- Builds with `CGO_ENABLED=0`
+- Runs as a non-root `app` user
+- Listens on port 8080
+- Stores SQLite data in `/app/data`
+- Uses the `grok-mcp-data` named volume in Compose
+- Health-checks `/panel/`
+
+The Compose file does not forward every optional proxy or trusted-proxy variable by default. Extend its `environment` section if your deployment needs `GROK_TRUSTED_PROXIES`, `GROK_PROXY_URL`, `GROK_PROXY_ENABLED`, or the standard proxy variables.
+
+## Production and security notes
+
+- Put the service behind an HTTPS reverse proxy before exposing it publicly. The server does not provide TLS.
+- Never expose panel JWTs, MCP client API keys, CPA keys, invite codes, or a real `.env` file.
+- Rotate the bootstrap administrator credentials immediately.
+- Restrict access to the SQLite file and include it in secure backups.
+- Configure `GROK_TRUSTED_PROXIES` only for proxies within your trust boundary.
+- Add reverse-proxy rate limits for `/mcp`, panel login, and panel registration.
+- Keep debug mode disabled unless troubleshooting. Debug context may retain request or response content even though authentication headers are redacted.
+- MCP client API keys are shown once and stored only as hashes; losing the plaintext key requires creating a replacement.
+
+## Development and testing
+
+Run the default test suite:
 
 ```bash
 go test ./...
 ```
 
-构建验证：
+Verify the executable builds:
 
 ```bash
 go build ./cmd/grok-mcp
 ```
 
-真实 CPA / xAI 集成测试需要显式打开：
+Live CPA/xAI integration tests are opt-in:
 
 ```bash
 export GROK_INTEGRATION_TEST="1"
 export CPA_API_KEY="replace-with-your-cpa-api-key"
 export CPA_BASE_URL="http://127.0.0.1:8317"
+
 go test ./test/grok -run TestIntegrationSearchLiveCPA -v
 ```
 
-## 许可证
+The panel frontend is embedded static HTML, CSS, and JavaScript; no Node.js build is required. The repository currently has no Makefile, task runner, or published CI/release pipeline. Use standard Go tooling such as `gofmt` and `go vet` when contributing.
 
-本项目采用 [Creative Commons Attribution-NonCommercial 4.0 International](./LICENSE)
-许可证（CC BY-NC 4.0）。你可以在非商业用途下复制、分发和修改本项目，但未经版权持有人书面许可，不得用于商业用途。
+### Project layout
+
+```text
+cmd/grok-mcp/       Process entry point and version flag
+internal/app/       Application composition, bootstrap, HTTP server, shutdown
+internal/auth/      MCP API-key authentication and panel JWTs
+internal/config/    Environment loading and persisted settings mapping
+internal/grok/      CPA requests, SSE parsing, model listing
+internal/mcp/       MCP server instructions and tool registration
+internal/panel/     Panel REST API
+internal/panelui/   Embedded administration frontend
+internal/quota/     Monthly successful-call reservation
+internal/ratelimit/ Source-IP and per-user rate limiting
+internal/store/     SQLite schema and persistence
+internal/usage/     Tool-call usage and optional debug capture
+test/http/          HTTP integration and protection tests
+test/grok/          Opt-in live upstream integration tests
+```
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| `GROK_JWT_SECRET is required` | Set a secret of at least 32 bytes in the service environment. |
+| Startup fails on a new database | Set a valid `CPA_API_KEY` and verify the database directory is writable. |
+| MCP returns `401` or `403` | Use an MCP client API key, not the panel JWT; verify the key and user are enabled. |
+| MCP returns `429` | Check source-IP RPM, the user's tier RPM, and the monthly successful-call allowance. |
+| Upstream timeout or HTTP error | Verify CPA URL, CPA key, proxy settings, and CPA health. |
+| Docker cannot reach host CPA | Use `http://host.docker.internal:<port>` with the supplied Compose configuration. |
+| Model list is empty | Confirm CPA returns Grok model IDs; `imagine` and `video` IDs are intentionally filtered. |
+| Client cannot connect | Confirm it supports Streamable HTTP and sends the Bearer header to the exact `/mcp` URL. |
+
+## License
+
+This project is licensed under [CC BY-NC 4.0](./LICENSE). Copying, distribution, and modification are permitted for non-commercial purposes with attribution and compliance with the license terms. Commercial use requires prior written permission from the copyright holder.
