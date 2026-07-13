@@ -28,7 +28,7 @@ export function renderSettingsPage(state) {
         </section>
         <section class="settings-section">
           <div class="settings-section-copy"><h3>模型与超时</h3><p>选择默认 Grok 模型，并设置单次上游请求的超时时间。</p></div>
-          <div class="form-grid">
+          <div class="form-grid form-grid-align-fields">
             <label class="field-group"><span class="field-label"><span>默认模型</span><button class="button button-ghost button-sm" type="button" data-action="load-models">拉取模型</button></span>
               ${modelChoices.length > 0 ? `<select class="select-input" name="model" required>${modelChoices.map((model) => `<option value="${escapeHTML(model.id)}" ${model.id === settings.model ? "selected" : ""}>${escapeHTML(model.id)}</option>`).join("")}</select>` : `<input class="text-input" name="model" type="text" value="${escapeHTML(settings.model || "")}" placeholder="grok-4.3" required>`}
             </label>
