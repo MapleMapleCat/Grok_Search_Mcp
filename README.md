@@ -20,7 +20,7 @@ It does **not** call the official xAI API directly. Instead, it connects to an e
 - MCP progress notifications for upstream search rounds
 - Per-user client API keys with enable/disable controls
 - Tier-based RPM and monthly successful-call quotas
-- Pre-authentication source-IP rate limiting for `/mcp`
+- Forwarded-header-triggered source-IP protection for `/mcp` and panel authentication
 - SQLite persistence for users, keys, tiers, usage, invite codes, and server settings
 - Embedded administration panel with no separate frontend build step
 - Runtime updates for upstream settings, proxy settings, registration mode, and debug mode
@@ -240,12 +240,53 @@ Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs,
 | `GROK_HTTP_TIMEOUT` | `120` | Upstream timeout in seconds. |
 | `GROK_HTTP_ADDR` | `:8080` | HTTP listen address. Requires restart to change. |
 | `GROK_DB_PATH` | `./grok-mcp.db` | SQLite database path. Requires restart to change. |
-| `GROK_MCP_IP_RPM` | `300` | Source-IP RPM applied before MCP API-key authentication. |
-| `GROK_TRUSTED_PROXIES` | Empty | Comma-separated trusted proxy IPs/CIDRs. Forwarded IP headers are ignored unless the direct peer is trusted. |
+| `GROK_MCP_IP_RPM` | `300` | Source-IP RPM applied before MCP API-key authentication only when `X-Real-IP` or `X-Forwarded-For` is present. |
+| `GROK_TRUSTED_PROXIES` | Empty | Comma-separated trusted proxy IPs/CIDRs. A forwarded client-IP header enables IP protection, but its value is used only when the direct peer is trusted. |
 | `GROK_MCP_DEBUG` | `false` | Accepts `1`, `true`, or `yes`. May capture debug request/response context in usage records. |
 | `GROK_PROXY_URL` | Empty | Explicit upstream HTTP(S) proxy URL. |
 | `GROK_PROXY_ENABLED` | Inferred | Explicit proxy switch. When unset, a non-empty `GROK_PROXY_URL` enables it. |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | Go defaults | Used by the standard transport when an explicit proxy is not enabled. |
+
+### Forwarded client-IP protection
+
+Application-level IP protection is deliberately enabled by the **presence** of either `X-Real-IP` or `X-Forwarded-For`. The same policy is used for:
+
+- the `/mcp` token bucket that runs before API-key authentication;
+- the panel login and registration endpoint token buckets;
+- the panel username/IP failed-login lockout.
+
+The request behavior is:
+
+| Request state | IP-protection behavior |
+|---|---|
+| Neither forwarded client-IP header is present | Application-level IP rate limiting and login IP lockout are skipped. User-tier RPM and quota checks still apply after successful MCP authentication. |
+| A header is present, but the direct TCP peer is not trusted | IP protection runs, but the supplied header value is ignored. The bucket uses `RemoteAddr`, preventing a direct client from choosing arbitrary buckets. |
+| A header is present and the direct peer matches `GROK_TRUSTED_PROXIES` | IP protection runs using the resolved forwarded client IP. A valid `X-Real-IP` takes precedence; otherwise `X-Forwarded-For` is evaluated from right to left across trusted proxy hops. |
+| A header is present but empty or malformed | IP protection still runs and safely falls back to `RemoteAddr`. |
+
+> [!IMPORTANT]
+> Headerless requests are not protected by the application's IP limiter. A public deployment must use a reverse proxy that always injects at least one supported header on every forwarded request. If clients can reach `grok-mcp` directly, or the proxy conditionally omits both headers, they can bypass this application-level IP protection by sending a headerless request. Keep proxy-layer rate limits enabled for `/mcp`, `/panel/v1/auth/login`, and `/panel/v1/auth/register`.
+
+Every network in `GROK_TRUSTED_PROXIES` is a security boundary. A trusted proxy must overwrite client-supplied `X-Real-IP` and safely rebuild or append `X-Forwarded-For`. Do not use `0.0.0.0/0` or `::/0`, and do not list networks from which untrusted clients can connect directly.
+
+Example Nginx forwarding configuration:
+
+```nginx
+location / {
+    proxy_pass http://grok-mcp:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+Then configure the address or private CIDR from which the `grok-mcp` container actually sees Nginx:
+
+```dotenv
+GROK_TRUSTED_PROXIES=172.20.0.10
+```
+
+For a multi-container proxy network, a narrowly scoped CIDR may be used instead. Prefer the proxy container's fixed IP when practical.
 
 ### Persistence and live updates
 
@@ -308,7 +349,7 @@ Default tiers for a new database:
 
 Successful-call periods use UTC calendar months. A call reserves quota before tool execution; failed calls roll the reservation back. Tier values can be customized in the panel.
 
-The `/mcp` middleware order is:
+The `/mcp` middleware order is shown below. The `IP RPM` step immediately passes through when neither supported forwarded client-IP header is present:
 
 ```text
 MaxBody -> IP RPM -> API Key -> ExtractToolName -> User RPM -> Quota -> Usage -> MCP handler
@@ -368,7 +409,7 @@ The supplied container:
 - Uses the `grok-mcp-data` named volume in Compose
 - Health-checks `/panel/`
 
-The Compose file does not forward every optional proxy or trusted-proxy variable by default. Extend its `environment` section if your deployment needs `GROK_TRUSTED_PROXIES`, `GROK_PROXY_URL`, `GROK_PROXY_ENABLED`, or the standard proxy variables.
+The Compose file forwards `GROK_TRUSTED_PROXIES` from `.env` into the container. Set it to the proxy IP or CIDR as observed inside the container network. The Compose file still does not forward every optional outbound proxy variable; extend `environment` if the container needs `GROK_PROXY_URL`, `GROK_PROXY_ENABLED`, or the standard proxy variables.
 
 ## Production and security notes
 
@@ -376,8 +417,9 @@ The Compose file does not forward every optional proxy or trusted-proxy variable
 - Never expose panel JWTs, MCP client API keys, CPA keys, invite codes, or a real `.env` file.
 - Rotate the bootstrap administrator credentials immediately.
 - Restrict access to the SQLite file and include it in secure backups.
-- Configure `GROK_TRUSTED_PROXIES` only for proxies within your trust boundary.
-- Add reverse-proxy rate limits for `/mcp`, panel login, and panel registration.
+- Configure `GROK_TRUSTED_PROXIES` only for proxies within your trust boundary, and require those proxies to sanitize both supported forwarded client-IP headers.
+- Ensure the reverse proxy always adds `X-Real-IP` or `X-Forwarded-For`; otherwise application-level IP protection is intentionally skipped.
+- Prevent direct public access to the application port and add reverse-proxy rate limits for `/mcp`, panel login, and panel registration.
 - Keep debug mode disabled unless troubleshooting. Debug context may retain request or response content even though authentication headers are redacted.
 - MCP client API keys are shown once and stored only as hashes; losing the plaintext key requires creating a replacement.
 

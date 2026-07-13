@@ -12,6 +12,22 @@ type ClientIPResolver struct {
 	trustedProxies []*net.IPNet
 }
 
+// HasForwardedClientIPHeader reports whether a request carries either
+// supported reverse-proxy client-IP header. Header presence enables IP-based
+// protection; trust validation remains the resolver's responsibility.
+func HasForwardedClientIPHeader(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+
+	for headerName := range request.Header {
+		if strings.EqualFold(headerName, "X-Real-IP") || strings.EqualFold(headerName, "X-Forwarded-For") {
+			return true
+		}
+	}
+	return false
+}
+
 // NewClientIPResolver creates an immutable trusted-proxy-aware IP resolver.
 func NewClientIPResolver(trustedProxies []*net.IPNet) *ClientIPResolver {
 	return &ClientIPResolver{trustedProxies: cloneIPNetworks(trustedProxies)}

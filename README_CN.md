@@ -20,7 +20,7 @@
 - 将上游搜索轮次转换为 MCP progress 通知
 - 用户级客户端 API Key，可单独启用或禁用
 - 基于 tier 的 RPM 和每月成功调用额度
-- `/mcp` 鉴权前来源 IP 限流
+- 由转发 IP Header 触发的 `/mcp` 与面板认证 IP 防护
 - 使用 SQLite 持久化用户、Key、tier、用量、邀请码和服务设置
 - 内嵌管理面板，无独立前端构建步骤
 - 上游、代理、注册模式和 debug 设置支持运行时热更新
@@ -240,12 +240,53 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 | `GROK_HTTP_TIMEOUT` | `120` | 上游超时秒数。 |
 | `GROK_HTTP_ADDR` | `:8080` | HTTP 监听地址，修改后需要重启。 |
 | `GROK_DB_PATH` | `./grok-mcp.db` | SQLite 路径，修改后需要重启。 |
-| `GROK_MCP_IP_RPM` | `300` | MCP API Key 鉴权前的来源 IP RPM。 |
-| `GROK_TRUSTED_PROXIES` | 空 | 逗号分隔的可信代理 IP/CIDR；直连对端不可信时忽略转发 IP Header。 |
+| `GROK_MCP_IP_RPM` | `300` | 仅当存在 `X-Real-IP` 或 `X-Forwarded-For` 时，在 MCP API Key 鉴权前应用的来源 IP RPM。 |
+| `GROK_TRUSTED_PROXIES` | 空 | 逗号分隔的可信代理 IP/CIDR。转发 IP Header 会启用 IP 防护，但只有直连对端可信时才采用 Header 中的值。 |
 | `GROK_MCP_DEBUG` | `false` | `1`、`true` 或 `yes` 启用；可能在用量记录中捕获调试上下文。 |
 | `GROK_PROXY_URL` | 空 | 显式上游 HTTP(S) 代理。 |
 | `GROK_PROXY_ENABLED` | 自动判断 | 显式代理开关；未设置时，非空 `GROK_PROXY_URL` 会启用代理。 |
 | `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` | Go 默认行为 | 未启用显式代理时由标准 HTTP Transport 使用。 |
+
+### 转发客户端 IP 防护
+
+应用层 IP 防护由 `X-Real-IP` 或 `X-Forwarded-For` 中任意一个 Header 的**存在**触发。以下入口统一使用该规则：
+
+- `/mcp` API Key 鉴权前的 IP 令牌桶；
+- 面板登录和注册接口的 IP 令牌桶；
+- 面板“用户名 + IP”维度的登录失败锁定。
+
+具体行为如下：
+
+| 请求状态 | IP 防护行为 |
+|---|---|
+| 两个转发客户端 IP Header 都不存在 | 跳过应用层 IP 限流和登录 IP 锁定。MCP 鉴权成功后，用户 tier RPM 与配额检查仍然生效。 |
+| 存在 Header，但 TCP 直连对端不可信 | 启用 IP 防护，但忽略客户端提供的 Header 值，使用 `RemoteAddr` 作为桶键，防止直连客户端伪造不同 IP 绕过已启用的限流。 |
+| 存在 Header，且直连对端命中 `GROK_TRUSTED_PROXIES` | 使用解析后的转发客户端 IP。有效的 `X-Real-IP` 优先；否则从右向左解析 `X-Forwarded-For`，跳过可信代理节点。 |
+| Header 存在但为空或格式非法 | 仍然启用 IP 防护，并安全回退到 `RemoteAddr`。 |
+
+> [!IMPORTANT]
+> 不带上述两个 Header 的请求不会受到应用自身的 IP 限流保护。公网部署必须由反向代理为每个转发请求固定注入至少一个受支持的 Header。如果客户端可以直接访问 `grok-mcp`，或者反向代理可能同时省略这两个 Header，客户端就能通过发送无 Header 请求绕过应用层 IP 防护。请继续在代理层对 `/mcp`、`/panel/v1/auth/login` 和 `/panel/v1/auth/register` 配置限流。
+
+`GROK_TRUSTED_PROXIES` 中的每个网段都属于安全边界。可信代理必须覆盖客户端传入的 `X-Real-IP`，并安全重建或追加 `X-Forwarded-For`。不要配置 `0.0.0.0/0` 或 `::/0`，也不要信任允许不受信客户端直接接入的网段。
+
+Nginx 转发示例：
+
+```nginx
+location / {
+    proxy_pass http://grok-mcp:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+然后将 `grok-mcp` 容器实际看到的 Nginx 地址或私有网段配置为可信代理：
+
+```dotenv
+GROK_TRUSTED_PROXIES=172.20.0.10
+```
+
+如果多个容器共用独立的代理网络，也可以配置范围尽量小的 CIDR；条件允许时优先使用代理容器的固定 IP。
 
 ### 持久化与热更新
 
@@ -308,7 +349,7 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 
 月度周期按 UTC 自然月计算。工具执行前先预留成功调用额度；调用失败时回滚。管理员可以在面板修改 tier 参数。
 
-`/mcp` 中间件顺序：
+`/mcp` 中间件顺序如下；当两个受支持的转发客户端 IP Header 都不存在时，`IP RPM` 步骤会直接放行：
 
 ```text
 MaxBody -> IP RPM -> API Key -> ExtractToolName -> User RPM -> Quota -> Usage -> MCP handler
@@ -368,7 +409,7 @@ CPA_BASE_URL=http://host.docker.internal:8317
 - Compose 使用 `grok-mcp-data` 命名卷
 - 通过 `/panel/` 执行健康检查
 
-Compose 默认没有转发所有可选代理和可信代理变量。如需 `GROK_TRUSTED_PROXIES`、`GROK_PROXY_URL`、`GROK_PROXY_ENABLED` 或标准代理变量，请扩展 `environment` 配置。
+Compose 会把 `.env` 中的 `GROK_TRUSTED_PROXIES` 传入容器。该值应填写容器网络中应用实际看到的反向代理 IP 或 CIDR。Compose 仍未默认转发所有可选的上游代理变量；容器需要 `GROK_PROXY_URL`、`GROK_PROXY_ENABLED` 或标准代理变量时，请扩展 `environment` 配置。
 
 ## 生产部署与安全
 
@@ -376,8 +417,9 @@ Compose 默认没有转发所有可选代理和可信代理变量。如需 `GROK
 - 不要泄露面板 JWT、MCP 客户端 API Key、CPA Key、邀请码或真实 `.env`。
 - 初始化管理员登录后应立即轮换凭据。
 - 限制 SQLite 文件访问权限，并对其进行安全备份。
-- `GROK_TRUSTED_PROXIES` 只应包含信任边界内的反向代理。
-- 建议在代理层对 `/mcp`、面板登录和注册接口增加限流。
+- `GROK_TRUSTED_PROXIES` 只应包含信任边界内的反向代理，并要求这些代理清理两个受支持的转发客户端 IP Header。
+- 确保反向代理始终添加 `X-Real-IP` 或 `X-Forwarded-For`，否则应用层 IP 防护会按设计跳过。
+- 禁止公网直接访问应用端口，并在代理层对 `/mcp`、面板登录和注册接口增加限流。
 - 除排障外保持 debug 关闭。即使认证 Header 会脱敏，debug 上下文仍可能保留请求或响应正文。
 - MCP 客户端 API Key 的鉴权使用不可逆哈希；可复制内容以 AES-256-GCM 密文保存，并绑定密钥记录和所属用户。
 - 更换 `GROK_JWT_SECRET` 或升级旧版 hash-only 数据库时，无法解密的 API Key 会自动轮换；客户端需要从面板复制替代密钥并更新配置。

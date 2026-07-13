@@ -142,10 +142,17 @@ func (h *Handler) authProtector() *AuthProtector {
 	return h.AuthProtector
 }
 
-// RateLimitAuthEndpoint applies an IP-scoped token bucket to login/register.
+// RateLimitAuthEndpoint applies an IP-scoped token bucket to login/register
+// only when a supported reverse-proxy client-IP header is present.
 func (p *AuthProtector) RateLimitAuthEndpoint(endpoint authEndpoint, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		allowed, retryAfter := p.allowAuthRequest(endpoint, p.clientIP(r))
+		clientIP, shouldApplyIPProtection := p.clientIPForProtection(r)
+		if !shouldApplyIPProtection {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		allowed, retryAfter := p.allowAuthRequest(endpoint, clientIP)
 		if !allowed {
 			writeRetryAfter(w, retryAfter)
 			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
@@ -157,6 +164,13 @@ func (p *AuthProtector) RateLimitAuthEndpoint(endpoint authEndpoint, next http.H
 
 func (p *AuthProtector) clientIP(request *http.Request) string {
 	return p.clientIPResolver.Resolve(request)
+}
+
+func (p *AuthProtector) clientIPForProtection(request *http.Request) (string, bool) {
+	if !ratelimit.HasForwardedClientIPHeader(request) {
+		return "", false
+	}
+	return p.clientIP(request), true
 }
 
 func (p *AuthProtector) allowAuthRequest(endpoint authEndpoint, clientIP string) (bool, time.Duration) {

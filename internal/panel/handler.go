@@ -284,11 +284,13 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authProtector := h.authProtector()
-	clientIP := authProtector.clientIP(r)
-	if locked, retryAfter := authProtector.LoginLocked(username, clientIP); locked {
-		writeRetryAfter(w, retryAfter)
-		writeError(w, http.StatusTooManyRequests, "too many failed login attempts")
-		return
+	clientIP, shouldApplyIPProtection := authProtector.clientIPForProtection(r)
+	if shouldApplyIPProtection {
+		if locked, retryAfter := authProtector.LoginLocked(username, clientIP); locked {
+			writeRetryAfter(w, retryAfter)
+			writeError(w, http.StatusTooManyRequests, "too many failed login attempts")
+			return
+		}
 	}
 	user, err := h.Store.GetUserByUsername(r.Context(), username)
 	// 用户不存在时也执行一次 dummy bcrypt 比较，以拉平响应时间，避免通过时序差异枚举有效用户名。
@@ -299,21 +301,29 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	compareErr := bcrypt.CompareHashAndPassword(hashToCheck, []byte(req.Password))
 	if err != nil || user == nil {
 		// 用户不存在：上面已执行 dummy 比较，这里统一返回未授权，时序与存在用户分支一致。
-		authProtector.RecordLoginFailure(username, clientIP)
+		if shouldApplyIPProtection {
+			authProtector.RecordLoginFailure(username, clientIP)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	if compareErr != nil {
-		authProtector.RecordLoginFailure(username, clientIP)
+		if shouldApplyIPProtection {
+			authProtector.RecordLoginFailure(username, clientIP)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	if !user.Enabled {
-		authProtector.RecordLoginFailure(username, clientIP)
+		if shouldApplyIPProtection {
+			authProtector.RecordLoginFailure(username, clientIP)
+		}
 		writeError(w, http.StatusForbidden, "user disabled")
 		return
 	}
-	authProtector.RecordLoginSuccess(username, clientIP)
+	if shouldApplyIPProtection {
+		authProtector.RecordLoginSuccess(username, clientIP)
+	}
 	token, exp, err := auth.IssuePanelToken(h.JWTSecret, user, 0)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token issue failed")

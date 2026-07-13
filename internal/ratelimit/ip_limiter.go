@@ -15,9 +15,9 @@ type ipEntry struct {
 	lastSeen time.Time
 }
 
-// IPLimiter 按来源 IP 共享令牌桶，适合放在鉴权之前保护认证存储。
-// 默认仅使用 RemoteAddr，避免公网直连时伪造 X-Forwarded-For。
-// 当配置了可信反代 CIDR 且 RemoteAddr 落在其中时，才解析 X-Real-IP / X-Forwarded-For。
+// IPLimiter 对携带反向代理客户端 IP Header 的请求按来源 IP 共享令牌桶。
+// 不携带 X-Real-IP 或 X-Forwarded-For 的普通请求不会启用 IP 限流。
+// Header 仅负责启用限流；只有 RemoteAddr 命中可信反代 CIDR 时才会采用 Header 中的 IP。
 type IPLimiter struct {
 	requestsPerMinute int
 	clientIPResolver  *ClientIPResolver
@@ -97,11 +97,15 @@ func (limiter *IPLimiter) Close() {
 	limiter.closeOnce.Do(func() { close(limiter.stop) })
 }
 
-// Middleware 对请求按来源 IP 限流。
-// 未配置可信代理时只使用 RemoteAddr；配置后仅当直连对端在可信网段内才解析转发头。
+// Middleware 仅对携带 X-Real-IP 或 X-Forwarded-For 的请求按来源 IP 限流。
+// 直连对端不可信时仍以 RemoteAddr 为桶键，避免伪造 Header 绕过已启用的限流。
 func (limiter *IPLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !HasForwardedClientIPHeader(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if !limiter.allow(limiter.clientIP(r)) {
 				w.Header().Set("Retry-After", "60")
 				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)

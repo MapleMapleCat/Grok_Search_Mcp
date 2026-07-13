@@ -21,6 +21,7 @@ services:
       GROK_HTTP_ADDR: ":8080"
       GROK_DB_PATH: "/app/data/grok-mcp.db"
       GROK_MCP_IP_RPM: "${GROK_MCP_IP_RPM:-300}"
+      GROK_TRUSTED_PROXIES: "${GROK_TRUSTED_PROXIES:-}"
       GROK_MODEL: "${GROK_MODEL:-grok-4.3}"
       GROK_HTTP_TIMEOUT: "${GROK_HTTP_TIMEOUT:-120}"
       GROK_MCP_DEBUG: "${GROK_MCP_DEBUG:-}"

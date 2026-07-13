@@ -8,6 +8,33 @@ import (
 	"time"
 )
 
+func TestAuthProtectorBypassesHeaderlessRequests(t *testing.T) {
+	authProtector := NewAuthProtector(AuthProtectorConfig{
+		RegisterIPRequestsPerMinute: 1,
+		RegisterIPBurst:             1,
+	})
+
+	allowedRequestCount := 0
+	protectedHandler := authProtector.RateLimitAuthEndpoint(authEndpointRegister, http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		allowedRequestCount++
+		responseWriter.WriteHeader(http.StatusOK)
+	}))
+
+	for requestIndex := 0; requestIndex < 2; requestIndex++ {
+		request := httptest.NewRequest(http.MethodPost, "/panel/v1/auth/register", nil)
+		request.RemoteAddr = "198.51.100.10:8443"
+		responseRecorder := httptest.NewRecorder()
+		protectedHandler.ServeHTTP(responseRecorder, request)
+		if responseRecorder.Code != http.StatusOK {
+			t.Fatalf("headerless request %d status = %d, want %d", requestIndex+1, responseRecorder.Code, http.StatusOK)
+		}
+	}
+
+	if allowedRequestCount != 2 {
+		t.Fatalf("allowed request count = %d, want %d", allowedRequestCount, 2)
+	}
+}
+
 func TestHandlerAuthProtectorSeparatesTrustedProxyClientBuckets(t *testing.T) {
 	trustedProxyNetwork := mustParsePanelCIDR(t, "203.0.113.0/24")
 	handler := &Handler{TrustedProxies: []*net.IPNet{trustedProxyNetwork}}

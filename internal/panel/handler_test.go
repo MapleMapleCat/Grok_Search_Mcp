@@ -294,6 +294,7 @@ func TestAuthEndpointRateLimitByIP(t *testing.T) {
 
 	body := `{"username":"ratelimited","password":"short"}`
 	firstRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(body))
+	firstRequest.Header.Set("X-Forwarded-For", "198.51.100.10")
 	firstResponse, err := http.DefaultClient.Do(firstRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -304,6 +305,7 @@ func TestAuthEndpointRateLimitByIP(t *testing.T) {
 	}
 
 	secondRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(body))
+	secondRequest.Header.Set("X-Forwarded-For", "198.51.100.10")
 	secondResponse, err := http.DefaultClient.Do(secondRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -343,6 +345,7 @@ func TestLoginFailureLocksUsernameIPPair(t *testing.T) {
 
 	badLoginBody := `{"username":"lockuser","password":"wrongpass"}`
 	badLoginRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/login", bytes.NewBufferString(badLoginBody))
+	badLoginRequest.Header.Set("X-Forwarded-For", "198.51.100.10")
 	badLoginResponse, err := http.DefaultClient.Do(badLoginRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -354,6 +357,7 @@ func TestLoginFailureLocksUsernameIPPair(t *testing.T) {
 
 	goodLoginBody := `{"username":"lockuser","password":"password123"}`
 	goodLoginRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/login", bytes.NewBufferString(goodLoginBody))
+	goodLoginRequest.Header.Set("X-Forwarded-For", "198.51.100.10")
 	goodLoginResponse, err := http.DefaultClient.Do(goodLoginRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -364,6 +368,53 @@ func TestLoginFailureLocksUsernameIPPair(t *testing.T) {
 	}
 	if goodLoginResponse.Header.Get("Retry-After") == "" {
 		t.Fatalf("expected Retry-After header on lockout response")
+	}
+}
+
+func TestHeaderlessLoginFailureDoesNotCreateIPLockout(t *testing.T) {
+	authProtector := NewAuthProtector(AuthProtectorConfig{
+		LoginIPRequestsPerMinute:    1,
+		LoginIPBurst:                1,
+		RegisterIPRequestsPerMinute: 1,
+		RegisterIPBurst:             1,
+		LoginFailureThreshold:       1,
+		LoginBaseLockout:            time.Minute,
+		LoginMaxLockout:             time.Minute,
+	})
+	testServer, _, _ := panelTestServerWithAuthProtector(t, authProtector)
+	defer testServer.Close()
+
+	registerBody := `{"username":"directuser","password":"password123"}`
+	registerRequest, _ := http.NewRequest(http.MethodPost, testServer.URL+"/panel/v1/auth/register", bytes.NewBufferString(registerBody))
+	registerResponse, err := http.DefaultClient.Do(registerRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerResponse.Body.Close()
+	if registerResponse.StatusCode != http.StatusCreated {
+		t.Fatalf("expected headerless registration to succeed, got %d", registerResponse.StatusCode)
+	}
+
+	badLoginBody := `{"username":"directuser","password":"wrongpass"}`
+	badLoginRequest, _ := http.NewRequest(http.MethodPost, testServer.URL+"/panel/v1/auth/login", bytes.NewBufferString(badLoginBody))
+	badLoginResponse, err := http.DefaultClient.Do(badLoginRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badLoginResponse.Body.Close()
+	if badLoginResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected headerless bad login to fail credentials, got %d", badLoginResponse.StatusCode)
+	}
+
+	goodLoginBody := `{"username":"directuser","password":"password123"}`
+	goodLoginRequest, _ := http.NewRequest(http.MethodPost, testServer.URL+"/panel/v1/auth/login", bytes.NewBufferString(goodLoginBody))
+	goodLoginResponse, err := http.DefaultClient.Do(goodLoginRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer goodLoginResponse.Body.Close()
+	if goodLoginResponse.StatusCode != http.StatusOK {
+		t.Fatalf("expected headerless valid login to bypass IP lockout, got %d", goodLoginResponse.StatusCode)
 	}
 }
 

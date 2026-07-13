@@ -20,7 +20,7 @@ const (
 	defaultTimeout          = 120 * time.Second
 	defaultHTTPAddr         = ":8080"
 	defaultDBPath           = "./grok-mcp.db"
-	// defaultMCPIPRPM 在 API key 鉴权前按来源 IP 限制 /mcp 请求，保护认证存储免受暴力探测和 DoS。
+	// defaultMCPIPRPM 在请求携带反向代理客户端 IP Header 时，于 API key 鉴权前限制 /mcp 请求。
 	defaultMCPIPRPM = 300
 )
 
@@ -46,8 +46,8 @@ type Config struct {
 	DBPath           string
 	JWTSecret        string
 	MCPIPRPM         int
-	// TrustedProxies 为可信反向代理 CIDR；仅当 RemoteAddr 命中时才解析 X-Forwarded-For / X-Real-IP。
-	// 空表示永不信任转发头（公网直连安全默认）。
+	// TrustedProxies 为可信反向代理 CIDR；转发 Header 会启用 IP 保护，但仅当 RemoteAddr
+	// 命中可信网段时才采用 Header 中的客户端 IP。空表示始终以 RemoteAddr 作为桶键。
 	TrustedProxies   []*net.IPNet
 	ProxyURL         string
 	ProxyEnabled     bool
@@ -104,7 +104,7 @@ func Load() (*Config, error) {
 	}
 
 	// GROK_TRUSTED_PROXIES: 逗号分隔 CIDR 或单 IP（自动补 /32 或 /128）。
-	// 仅列出边缘反代地址；空则 IP 限流只用 RemoteAddr。
+	// 仅列出会覆盖 X-Real-IP / X-Forwarded-For 的边缘反代地址。
 	if raw := strings.TrimSpace(os.Getenv("GROK_TRUSTED_PROXIES")); raw != "" {
 		networks, err := parseTrustedProxyCIDRs(raw)
 		if err != nil {

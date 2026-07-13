@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestIPLimiterLimitsRequestsByRemoteHost(t *testing.T) {
+func TestIPLimiterBypassesRequestsWithoutForwardedClientIPHeaders(t *testing.T) {
 	limiter := NewIPLimiter(1)
 	defer limiter.Close()
 
@@ -29,22 +29,37 @@ func TestIPLimiterLimitsRequestsByRemoteHost(t *testing.T) {
 	secondRequest.RemoteAddr = "198.51.100.10:10002"
 	secondRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(secondRecorder, secondRequest)
-	if secondRecorder.Code != http.StatusTooManyRequests {
-		t.Fatalf("second same-host request status = %d, want %d", secondRecorder.Code, http.StatusTooManyRequests)
-	}
-	if secondRecorder.Header().Get("Retry-After") == "" {
-		t.Fatalf("expected Retry-After header for rate limited request")
+	if secondRecorder.Code != http.StatusOK {
+		t.Fatalf("second headerless request status = %d, want %d", secondRecorder.Code, http.StatusOK)
 	}
 
-	thirdRequest := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-	thirdRequest.RemoteAddr = "198.51.100.11:10003"
-	thirdRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(thirdRecorder, thirdRequest)
-	if thirdRecorder.Code != http.StatusOK {
-		t.Fatalf("different-host request status = %d, want %d", thirdRecorder.Code, http.StatusOK)
-	}
 	if allowedRequests != 2 {
 		t.Fatalf("allowed request count = %d, want %d", allowedRequests, 2)
+	}
+}
+
+func TestIPLimiterTreatsPresentEmptyForwardedHeaderAsProtectionSignal(t *testing.T) {
+	limiter := NewIPLimiter(1)
+	defer limiter.Close()
+
+	handler := limiter.Middleware()(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		responseWriter.WriteHeader(http.StatusOK)
+	}))
+
+	performRequest := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		request.RemoteAddr = "198.51.100.10:10001"
+		request.Header["X-Real-Ip"] = []string{""}
+		responseRecorder := httptest.NewRecorder()
+		handler.ServeHTTP(responseRecorder, request)
+		return responseRecorder
+	}
+
+	if responseRecorder := performRequest(); responseRecorder.Code != http.StatusOK {
+		t.Fatalf("first empty-header request status = %d, want %d", responseRecorder.Code, http.StatusOK)
+	}
+	if responseRecorder := performRequest(); responseRecorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("second empty-header request status = %d, want %d", responseRecorder.Code, http.StatusTooManyRequests)
 	}
 }
 
