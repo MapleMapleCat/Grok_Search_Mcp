@@ -1,7 +1,6 @@
 package panel
 
 import (
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,9 +34,36 @@ func TestAuthProtectorBypassesHeaderlessRequests(t *testing.T) {
 	}
 }
 
-func TestHandlerAuthProtectorSeparatesTrustedProxyClientBuckets(t *testing.T) {
-	trustedProxyNetwork := mustParsePanelCIDR(t, "203.0.113.0/24")
-	handler := &Handler{TrustedProxies: []*net.IPNet{trustedProxyNetwork}}
+func TestAuthProtectorBypassesInvalidForwardedClientIPHeaders(t *testing.T) {
+	authProtector := NewAuthProtector(AuthProtectorConfig{
+		RegisterIPRequestsPerMinute: 1,
+		RegisterIPBurst:             1,
+	})
+
+	allowedRequestCount := 0
+	protectedHandler := authProtector.RateLimitAuthEndpoint(authEndpointRegister, http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		allowedRequestCount++
+		responseWriter.WriteHeader(http.StatusOK)
+	}))
+
+	for requestIndex := 0; requestIndex < 2; requestIndex++ {
+		request := httptest.NewRequest(http.MethodPost, "/panel/v1/auth/register", nil)
+		request.Header.Set("X-Real-IP", "not-an-ip")
+		request.Header.Set("X-Forwarded-For", "unknown, invalid")
+		responseRecorder := httptest.NewRecorder()
+		protectedHandler.ServeHTTP(responseRecorder, request)
+		if responseRecorder.Code != http.StatusOK {
+			t.Fatalf("invalid-header request %d status = %d, want %d", requestIndex+1, responseRecorder.Code, http.StatusOK)
+		}
+	}
+
+	if allowedRequestCount != 2 {
+		t.Fatalf("allowed request count = %d, want %d", allowedRequestCount, 2)
+	}
+}
+
+func TestHandlerAuthProtectorSeparatesForwardedClientBuckets(t *testing.T) {
+	handler := &Handler{}
 	authProtector := handler.authProtector()
 
 	allowedRequestCount := 0
@@ -76,9 +102,8 @@ func TestHandlerAuthProtectorSeparatesTrustedProxyClientBuckets(t *testing.T) {
 	}
 }
 
-func TestAuthProtectorSeparatesLoginLockoutsByTrustedProxyClientIP(t *testing.T) {
+func TestAuthProtectorSeparatesLoginLockoutsByForwardedClientIP(t *testing.T) {
 	authProtector := NewAuthProtector(AuthProtectorConfig{
-		TrustedProxies:        []*net.IPNet{mustParsePanelCIDR(t, "203.0.113.0/24")},
 		LoginFailureThreshold: 1,
 		LoginBaseLockout:      time.Minute,
 		LoginMaxLockout:       time.Minute,
@@ -94,7 +119,7 @@ func TestAuthProtectorSeparatesLoginLockoutsByTrustedProxyClientIP(t *testing.T)
 	clientAIP := authProtector.clientIP(clientARequest)
 	clientBIP := authProtector.clientIP(clientBRequest)
 	if clientAIP == clientBIP {
-		t.Fatalf("trusted proxy clients resolved to the same IP %q", clientAIP)
+		t.Fatalf("forwarded clients resolved to the same IP %q", clientAIP)
 	}
 
 	authProtector.RecordLoginFailure("alice", clientAIP)
@@ -104,13 +129,4 @@ func TestAuthProtectorSeparatesLoginLockoutsByTrustedProxyClientIP(t *testing.T)
 	if locked, _ := authProtector.LoginLocked("alice", clientBIP); locked {
 		t.Fatalf("client B must not inherit client A's login lockout")
 	}
-}
-
-func mustParsePanelCIDR(t *testing.T, rawCIDR string) *net.IPNet {
-	t.Helper()
-	_, network, err := net.ParseCIDR(rawCIDR)
-	if err != nil {
-		t.Fatalf("parse CIDR %q: %v", rawCIDR, err)
-	}
-	return network
 }

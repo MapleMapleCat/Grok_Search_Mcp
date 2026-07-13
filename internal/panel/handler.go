@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"mime"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -22,7 +21,6 @@ import (
 type Handler struct {
 	Store                 store.Store
 	JWTSecret             string
-	TrustedProxies        []*net.IPNet
 	InitialServerSettings config.ServerSettings
 	SettingsApplier       ServerSettingsApplier // 可选；保存服务器设置后热更新上游客户端
 	ModelLister           ModelLister           // 可选；管理员面板通过它从上游拉取可用 Grok 模型

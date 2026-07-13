@@ -1,7 +1,6 @@
 package ratelimit
 
 import (
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,9 +14,9 @@ type ipEntry struct {
 	lastSeen time.Time
 }
 
-// IPLimiter 对携带反向代理客户端 IP Header 的请求按来源 IP 共享令牌桶。
-// 不携带 X-Real-IP 或 X-Forwarded-For 的普通请求不会启用 IP 限流。
-// Header 仅负责启用限流；只有 RemoteAddr 命中可信反代 CIDR 时才会采用 Header 中的 IP。
+// IPLimiter 对能够解析出有效反向代理客户端 IP 的请求按来源 IP 共享令牌桶。
+// 无有效 X-Real-IP 或 X-Forwarded-For 的请求不会启用 IP 限流。
+// 部署必须确保应用仅能由会清理并覆盖这些 Header 的可信反向代理访问。
 type IPLimiter struct {
 	requestsPerMinute int
 	clientIPResolver  *ClientIPResolver
@@ -34,19 +33,12 @@ func NewIPLimiter(requestsPerMinute int) *IPLimiter {
 	}
 	limiter := &IPLimiter{
 		requestsPerMinute: requestsPerMinute,
-		clientIPResolver:  NewClientIPResolver(nil),
+		clientIPResolver:  NewClientIPResolver(),
 		entries:           make(map[string]*ipEntry),
 		stop:              make(chan struct{}),
 	}
 	go limiter.cleanupLoop()
 	return limiter
-}
-
-// SetTrustedProxies 设置可信反向代理网段；nil/空表示永不信任转发头。
-func (limiter *IPLimiter) SetTrustedProxies(networks []*net.IPNet) {
-	limiter.mu.Lock()
-	defer limiter.mu.Unlock()
-	limiter.clientIPResolver = NewClientIPResolver(networks)
 }
 
 func (limiter *IPLimiter) allow(clientAddress string) bool {
@@ -97,16 +89,16 @@ func (limiter *IPLimiter) Close() {
 	limiter.closeOnce.Do(func() { close(limiter.stop) })
 }
 
-// Middleware 仅对携带 X-Real-IP 或 X-Forwarded-For 的请求按来源 IP 限流。
-// 直连对端不可信时仍以 RemoteAddr 为桶键，避免伪造 Header 绕过已启用的限流。
+// Middleware 仅对能够从 X-Real-IP 或 X-Forwarded-For 解析出有效 IP 的请求限流。
 func (limiter *IPLimiter) Middleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !HasForwardedClientIPHeader(r) {
+			clientIP := limiter.clientIP(r)
+			if clientIP == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
-			if !limiter.allow(limiter.clientIP(r)) {
+			if !limiter.allow(clientIP) {
 				w.Header().Set("Retry-After", "60")
 				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 				return
@@ -117,8 +109,5 @@ func (limiter *IPLimiter) Middleware() func(http.Handler) http.Handler {
 }
 
 func (limiter *IPLimiter) clientIP(r *http.Request) string {
-	limiter.mu.Lock()
-	resolver := limiter.clientIPResolver
-	limiter.mu.Unlock()
-	return resolver.Resolve(r)
+	return limiter.clientIPResolver.Resolve(r)
 }

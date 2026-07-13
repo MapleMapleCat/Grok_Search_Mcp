@@ -111,14 +111,12 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	userLimiter := ratelimit.NewUserLimiter()
 	defer userLimiter.Close()
 	mcpIPLimiter := ratelimit.NewIPLimiter(cfg.MCPIPRPM)
-	mcpIPLimiter.SetTrustedProxies(cfg.TrustedProxies)
 	defer mcpIPLimiter.Close()
 
 	authResolver := auth.NewCachedAPIKeyResolver(st, 30*time.Second)
 	panelHandler := &panel.Handler{
 		Store:                 st,
 		JWTSecret:             cfg.JWTSecret,
-		TrustedProxies:        cfg.TrustedProxies,
 		InitialServerSettings: serverSettings,
 		SettingsApplier:       grokClient,
 		ModelLister:           grokClient,

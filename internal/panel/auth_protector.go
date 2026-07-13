@@ -3,7 +3,6 @@ package panel
 import (
 	"errors"
 	"math"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,7 +52,6 @@ type AuthProtectorConfig struct {
 	LoginIPBurst                int
 	RegisterIPRequestsPerMinute int
 	RegisterIPBurst             int
-	TrustedProxies              []*net.IPNet
 	LoginFailureThreshold       int
 	LoginFailureWindow          time.Duration
 	LoginBaseLockout            time.Duration
@@ -113,7 +111,7 @@ func NewAuthProtector(config AuthProtectorConfig) *AuthProtector {
 	now := time.Now
 	return &AuthProtector{
 		now:              now,
-		clientIPResolver: ratelimit.NewClientIPResolver(config.TrustedProxies),
+		clientIPResolver: ratelimit.NewClientIPResolver(),
 		endpointLimits: map[authEndpoint]authEndpointLimit{
 			authEndpointLogin: {
 				requestsPerMinute: config.LoginIPRequestsPerMinute,
@@ -136,14 +134,13 @@ func NewAuthProtector(config AuthProtectorConfig) *AuthProtector {
 
 func (h *Handler) authProtector() *AuthProtector {
 	if h.AuthProtector == nil {
-		protectorConfig := AuthProtectorConfig{TrustedProxies: h.TrustedProxies}
-		h.AuthProtector = NewAuthProtector(protectorConfig)
+		h.AuthProtector = NewAuthProtector(AuthProtectorConfig{})
 	}
 	return h.AuthProtector
 }
 
 // RateLimitAuthEndpoint applies an IP-scoped token bucket to login/register
-// only when a supported reverse-proxy client-IP header is present.
+// only when a valid forwarded client IP can be resolved.
 func (p *AuthProtector) RateLimitAuthEndpoint(endpoint authEndpoint, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientIP, shouldApplyIPProtection := p.clientIPForProtection(r)
@@ -167,10 +164,11 @@ func (p *AuthProtector) clientIP(request *http.Request) string {
 }
 
 func (p *AuthProtector) clientIPForProtection(request *http.Request) (string, bool) {
-	if !ratelimit.HasForwardedClientIPHeader(request) {
+	clientIP := p.clientIP(request)
+	if clientIP == "" {
 		return "", false
 	}
-	return p.clientIP(request), true
+	return clientIP, true
 }
 
 func (p *AuthProtector) allowAuthRequest(endpoint authEndpoint, clientIP string) (bool, time.Duration) {

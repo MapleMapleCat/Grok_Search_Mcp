@@ -3,7 +3,6 @@ package config
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -46,9 +45,6 @@ type Config struct {
 	DBPath           string
 	JWTSecret        string
 	MCPIPRPM         int
-	// TrustedProxies 为可信反向代理 CIDR；转发 Header 会启用 IP 保护，但仅当 RemoteAddr
-	// 命中可信网段时才采用 Header 中的客户端 IP。空表示始终以 RemoteAddr 作为桶键。
-	TrustedProxies   []*net.IPNet
 	ProxyURL         string
 	ProxyEnabled     bool
 	RegistrationMode store.RegistrationMode
@@ -101,16 +97,6 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("GROK_MCP_IP_RPM must be a positive integer, got %q", raw)
 		}
 		cfg.MCPIPRPM = n
-	}
-
-	// GROK_TRUSTED_PROXIES: 逗号分隔 CIDR 或单 IP（自动补 /32 或 /128）。
-	// 仅列出会覆盖 X-Real-IP / X-Forwarded-For 的边缘反代地址。
-	if raw := strings.TrimSpace(os.Getenv("GROK_TRUSTED_PROXIES")); raw != "" {
-		networks, err := parseTrustedProxyCIDRs(raw)
-		if err != nil {
-			return nil, err
-		}
-		cfg.TrustedProxies = networks
 	}
 
 	// Validate and canonicalize environment defaults without requiring the CPA
@@ -277,36 +263,4 @@ func resolveProxyEnabledFromEnv(proxyURL string) bool {
 	// is absent, the HTTP client falls back to standard HTTP_PROXY/HTTPS_PROXY
 	// environment variables through net/http.
 	return strings.TrimSpace(proxyURL) != ""
-}
-
-// parseTrustedProxyCIDRs 解析逗号分隔的 CIDR 或单 IP 列表。
-func parseTrustedProxyCIDRs(raw string) ([]*net.IPNet, error) {
-	parts := strings.Split(raw, ",")
-	networks := make([]*net.IPNet, 0, len(parts))
-	for _, part := range parts {
-		entry := strings.TrimSpace(part)
-		if entry == "" {
-			continue
-		}
-		if !strings.Contains(entry, "/") {
-			ip := net.ParseIP(entry)
-			if ip == nil {
-				return nil, fmt.Errorf("GROK_TRUSTED_PROXIES entry %q is not a valid IP or CIDR", entry)
-			}
-			if ip.To4() != nil {
-				entry = entry + "/32"
-			} else {
-				entry = entry + "/128"
-			}
-		}
-		_, network, err := net.ParseCIDR(entry)
-		if err != nil {
-			return nil, fmt.Errorf("GROK_TRUSTED_PROXIES entry %q: %w", strings.TrimSpace(part), err)
-		}
-		networks = append(networks, network)
-	}
-	if len(networks) == 0 {
-		return nil, fmt.Errorf("GROK_TRUSTED_PROXIES must contain at least one IP or CIDR")
-	}
-	return networks, nil
 }

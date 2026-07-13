@@ -1,7 +1,6 @@
 package ratelimit
 
 import (
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -38,32 +37,37 @@ func TestIPLimiterBypassesRequestsWithoutForwardedClientIPHeaders(t *testing.T) 
 	}
 }
 
-func TestIPLimiterTreatsPresentEmptyForwardedHeaderAsProtectionSignal(t *testing.T) {
+func TestIPLimiterBypassesEmptyOrMalformedForwardedClientIPHeaders(t *testing.T) {
 	limiter := NewIPLimiter(1)
 	defer limiter.Close()
 
+	allowedRequestCount := 0
 	handler := limiter.Middleware()(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		allowedRequestCount++
 		responseWriter.WriteHeader(http.StatusOK)
 	}))
 
-	performRequest := func() *httptest.ResponseRecorder {
+	performRequest := func(realIP, forwardedFor string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
-		request.RemoteAddr = "198.51.100.10:10001"
-		request.Header["X-Real-Ip"] = []string{""}
+		request.Header["X-Real-Ip"] = []string{realIP}
+		request.Header["X-Forwarded-For"] = []string{forwardedFor}
 		responseRecorder := httptest.NewRecorder()
 		handler.ServeHTTP(responseRecorder, request)
 		return responseRecorder
 	}
 
-	if responseRecorder := performRequest(); responseRecorder.Code != http.StatusOK {
+	if responseRecorder := performRequest("", ""); responseRecorder.Code != http.StatusOK {
 		t.Fatalf("first empty-header request status = %d, want %d", responseRecorder.Code, http.StatusOK)
 	}
-	if responseRecorder := performRequest(); responseRecorder.Code != http.StatusTooManyRequests {
-		t.Fatalf("second empty-header request status = %d, want %d", responseRecorder.Code, http.StatusTooManyRequests)
+	if responseRecorder := performRequest("not-an-ip", "unknown, invalid"); responseRecorder.Code != http.StatusOK {
+		t.Fatalf("malformed-header request status = %d, want %d", responseRecorder.Code, http.StatusOK)
+	}
+	if allowedRequestCount != 2 {
+		t.Fatalf("allowed request count = %d, want %d", allowedRequestCount, 2)
 	}
 }
 
-func TestIPLimiterIgnoresForwardedHeadersWithoutTrustedProxy(t *testing.T) {
+func TestIPLimiterUsesForwardedClientIPWithoutProxyConfiguration(t *testing.T) {
 	limiter := NewIPLimiter(1)
 	defer limiter.Close()
 
@@ -85,15 +89,14 @@ func TestIPLimiterIgnoresForwardedHeadersWithoutTrustedProxy(t *testing.T) {
 	secondRequest.Header.Set("X-Forwarded-For", "198.51.100.11")
 	secondRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(secondRecorder, secondRequest)
-	if secondRecorder.Code != http.StatusTooManyRequests {
-		t.Fatalf("untrusted forwarded header must not split buckets, status = %d", secondRecorder.Code)
+	if secondRecorder.Code != http.StatusOK {
+		t.Fatalf("different forwarded clients should use separate buckets, status = %d", secondRecorder.Code)
 	}
 }
 
-func TestIPLimiterUsesForwardedHeadersFromTrustedProxy(t *testing.T) {
+func TestIPLimiterPrioritizesRealIPOverForwardedFor(t *testing.T) {
 	limiter := NewIPLimiter(1)
 	defer limiter.Close()
-	limiter.SetTrustedProxies([]*net.IPNet{mustParseCIDR(t, "203.0.113.0/24")})
 
 	handler := limiter.Middleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -101,7 +104,8 @@ func TestIPLimiterUsesForwardedHeadersFromTrustedProxy(t *testing.T) {
 
 	firstRequest := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	firstRequest.RemoteAddr = "203.0.113.10:10001"
-	firstRequest.Header.Set("X-Forwarded-For", "198.51.100.10")
+	firstRequest.Header.Set("X-Real-IP", "198.51.100.10")
+	firstRequest.Header.Set("X-Forwarded-For", "198.51.100.20, 203.0.113.20")
 	firstRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(firstRecorder, firstRequest)
 	if firstRecorder.Code != http.StatusOK {
@@ -110,11 +114,11 @@ func TestIPLimiterUsesForwardedHeadersFromTrustedProxy(t *testing.T) {
 
 	secondRequest := httptest.NewRequest(http.MethodPost, "/mcp", nil)
 	secondRequest.RemoteAddr = "203.0.113.10:10002"
-	secondRequest.Header.Set("X-Forwarded-For", "198.51.100.11")
+	secondRequest.Header.Set("X-Forwarded-For", "198.51.100.20, 203.0.113.20")
 	secondRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(secondRecorder, secondRequest)
 	if secondRecorder.Code != http.StatusOK {
-		t.Fatalf("different forwarded client should get a separate bucket, status = %d", secondRecorder.Code)
+		t.Fatalf("X-Forwarded-For client should get a separate bucket, status = %d", secondRecorder.Code)
 	}
 
 	thirdRequest := httptest.NewRequest(http.MethodPost, "/mcp", nil)
@@ -123,15 +127,6 @@ func TestIPLimiterUsesForwardedHeadersFromTrustedProxy(t *testing.T) {
 	thirdRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(thirdRecorder, thirdRequest)
 	if thirdRecorder.Code != http.StatusTooManyRequests {
-		t.Fatalf("same trusted forwarded client should share bucket, status = %d", thirdRecorder.Code)
+		t.Fatalf("X-Real-IP should take precedence and reuse the first bucket, status = %d", thirdRecorder.Code)
 	}
-}
-
-func mustParseCIDR(t *testing.T, rawCIDR string) *net.IPNet {
-	t.Helper()
-	_, network, err := net.ParseCIDR(rawCIDR)
-	if err != nil {
-		t.Fatalf("parse CIDR %q: %v", rawCIDR, err)
-	}
-	return network
 }
