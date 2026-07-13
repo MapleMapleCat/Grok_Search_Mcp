@@ -181,7 +181,34 @@ export function createApplicationEvents({
         break;
       case "copy-debug-json":
         if (state.modal?.type === "debugJSON") {
-          await copyValue(String(state.modal.record?.debug_json || ""));
+          const debugRecord = state.modal.record || {};
+          let completeDebugJSON = String(debugRecord.debug_json || "");
+          try {
+            const parsedDebugJSON = JSON.parse(completeDebugJSON);
+            const isObject = parsedDebugJSON !== null && typeof parsedDebugJSON === "object" && !Array.isArray(parsedDebugJSON);
+            if (isObject) {
+              if (typeof debugRecord.debug_request_body === "string") {
+                const requestMetadata = parsedDebugJSON.request !== null
+                  && typeof parsedDebugJSON.request === "object"
+                  && !Array.isArray(parsedDebugJSON.request)
+                  ? parsedDebugJSON.request
+                  : {};
+                parsedDebugJSON.request = { ...requestMetadata, body: debugRecord.debug_request_body };
+              }
+              if (typeof debugRecord.debug_response_body === "string") {
+                const responseMetadata = parsedDebugJSON.response !== null
+                  && typeof parsedDebugJSON.response === "object"
+                  && !Array.isArray(parsedDebugJSON.response)
+                  ? parsedDebugJSON.response
+                  : {};
+                parsedDebugJSON.response = { ...responseMetadata, body: debugRecord.debug_response_body };
+              }
+              completeDebugJSON = JSON.stringify(parsedDebugJSON, null, 2);
+            }
+          } catch {
+            // Preserve legacy behavior for malformed metadata.
+          }
+          await copyValue(completeDebugJSON);
         }
         break;
       case "execute-confirm":

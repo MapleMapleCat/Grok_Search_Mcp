@@ -29,6 +29,9 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sqliteStore.Close()
+	if err := sqliteStore.ConfigureAPIKeyEncryption("panel-settings-test-secret"); err != nil {
+		t.Fatal(err)
+	}
 
 	initialSettings := config.ServerSettings{
 		CPABaseURL:       "http://127.0.0.1:8317",
@@ -37,7 +40,7 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 		TimeoutSeconds:   120,
 		RegistrationMode: store.RegistrationModeFree,
 	}
-	if _, err := sqliteStore.UpsertServerSettings(context.Background(), config.StoreServerSettings(initialSettings)); err != nil {
+	if _, err := sqliteStore.UpsertServerSettings(context.Background(), store.ServerSettingsFromFields(config.SettingsFieldsFromConfig(initialSettings))); err != nil {
 		t.Fatal(err)
 	}
 

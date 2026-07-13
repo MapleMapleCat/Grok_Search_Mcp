@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -109,11 +110,15 @@ func TestSecurityHeadersAllowPanelExternalAssets(t *testing.T) {
 }
 
 func TestInitializeServerSettingsUsesEnvironmentDefaultsWithoutMutatingConfig(t *testing.T) {
-	sqliteStore, err := store.OpenSQLite(filepath.Join(t.TempDir(), "environment-settings.db"))
+	databasePath := filepath.Join(t.TempDir(), "environment-settings.db")
+	sqliteStore, err := store.OpenSQLite(databasePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sqliteStore.Close()
+	if err := sqliteStore.ConfigureAPIKeyEncryption("app-test-settings-encryption-secret-at-least-32-bytes"); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := &config.Config{
 		CPABaseURL:       " http://127.0.0.1:8317/ ",
@@ -148,6 +153,23 @@ func TestInitializeServerSettingsUsesEnvironmentDefaultsWithoutMutatingConfig(t 
 	if storedSettings == nil || storedSettings.CPAAPIKey != "environment-key" {
 		t.Fatalf("expected normalized settings to be persisted, got %+v", storedSettings)
 	}
+
+	rawDatabase, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDatabase.Close()
+	var plaintextAPIKey string
+	var ciphertextAPIKey string
+	if err := rawDatabase.QueryRow(`
+		SELECT cpa_api_key, cpa_api_key_ciphertext
+		FROM server_settings`,
+	).Scan(&plaintextAPIKey, &ciphertextAPIKey); err != nil {
+		t.Fatal(err)
+	}
+	if plaintextAPIKey != "" || ciphertextAPIKey == "" || ciphertextAPIKey == "environment-key" {
+		t.Fatalf("unexpected CPA API key storage: plaintext=%q ciphertext=%q", plaintextAPIKey, ciphertextAPIKey)
+	}
 }
 
 func TestInitializeServerSettingsPrefersDatabaseAndSuppliesMissingEnvironmentKey(t *testing.T) {
@@ -156,6 +178,9 @@ func TestInitializeServerSettingsPrefersDatabaseAndSuppliesMissingEnvironmentKey
 		t.Fatal(err)
 	}
 	defer sqliteStore.Close()
+	if err := sqliteStore.ConfigureAPIKeyEncryption("app-test-settings-encryption-secret-at-least-32-bytes"); err != nil {
+		t.Fatal(err)
+	}
 
 	databaseSettings := config.ServerSettings{
 		CPABaseURL:       "http://database-cpa.example",
@@ -166,7 +191,7 @@ func TestInitializeServerSettingsPrefersDatabaseAndSuppliesMissingEnvironmentKey
 		RegistrationMode: store.RegistrationModeInvite,
 		Debug:            true,
 	}
-	if _, err := sqliteStore.UpsertServerSettings(context.Background(), config.StoreServerSettings(databaseSettings)); err != nil {
+	if _, err := sqliteStore.UpsertServerSettings(context.Background(), store.ServerSettingsFromFields(config.SettingsFieldsFromConfig(databaseSettings))); err != nil {
 		t.Fatal(err)
 	}
 
@@ -195,6 +220,9 @@ func TestInitializeServerSettingsRejectsMissingAPIKeyWithoutDatabaseFallback(t *
 		t.Fatal(err)
 	}
 	defer sqliteStore.Close()
+	if err := sqliteStore.ConfigureAPIKeyEncryption("app-test-settings-encryption-secret-at-least-32-bytes"); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := &config.Config{
 		CPABaseURL: "http://127.0.0.1:8317",

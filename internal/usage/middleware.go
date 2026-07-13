@@ -68,33 +68,20 @@ func ExtractToolNameMiddleware() func(http.Handler) http.Handler {
 	}
 }
 
-// PeekToolName 解析 tools/call 工具名但不消费 Body；保留供未挂载 ExtractToolNameMiddleware 的旧链路使用。
-func PeekToolName(r *http.Request) string {
-	return inspectJSONRPCRequest(r).ToolName
-}
-
 func writeJSONRPCBatchUnsupported(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_, _ = w.Write([]byte(`{"jsonrpc":"2.0","error":{"code":-32600,"message":"JSON-RPC batch requests are not supported"},"id":null}`))
 }
 
-// responseRecorder 捕获 HTTP 状态码；SSE 流式响应仅保留最后一条 data 行用于判断 isError。
+// responseRecorder captures HTTP status, incrementally inspects a bounded
+// prefix for protocol-level failures, and streams debug bytes to disk.
 type responseRecorder struct {
 	http.ResponseWriter
-	status                 int
-	lastSSEData            []byte
-	jsonCapture            []byte
-	debugEnabled           bool
-	debugResponseBody      []byte
-	debugResponseTruncated bool
+	status           int
+	outcomeInspector responseOutcomeInspector
+	responseSpool    *debugBodySpool
 }
-
-const maxJSONCapture = 256 << 10
-
-// maxDebugResponseBody 限制 debug 模式下缓存的响应体大小（10 MiB），
-// 避免上游返回超大 SSE 流时内存无限增长。
-const maxDebugResponseBody = 10 << 20
 
 func (s *responseRecorder) WriteHeader(code int) {
 	s.status = code
@@ -105,49 +92,9 @@ func (s *responseRecorder) Write(p []byte) (int, error) {
 	if s.status == 0 {
 		s.status = http.StatusOK
 	}
-	s.captureSSEData(p)
-	s.captureDebugResponse(p)
-	if len(s.lastSSEData) == 0 {
-		room := maxJSONCapture - len(s.jsonCapture)
-		if room > 0 {
-			captureBytes := p
-			if len(captureBytes) > room {
-				captureBytes = captureBytes[:room]
-			}
-			s.jsonCapture = append(s.jsonCapture, captureBytes...)
-		}
-	}
+	s.outcomeInspector.inspect(p)
+	s.responseSpool.write(p)
 	return s.ResponseWriter.Write(p)
-}
-
-func (s *responseRecorder) captureDebugResponse(p []byte) {
-	if !s.debugEnabled || len(p) == 0 {
-		return
-	}
-	room := maxDebugResponseBody - len(s.debugResponseBody)
-	if room <= 0 {
-		s.debugResponseTruncated = true
-		return
-	}
-	if len(p) > room {
-		s.debugResponseBody = append(s.debugResponseBody, p[:room]...)
-		s.debugResponseTruncated = true
-		return
-	}
-	s.debugResponseBody = append(s.debugResponseBody, p...)
-}
-
-func (s *responseRecorder) captureSSEData(p []byte) {
-	for line := range bytes.SplitSeq(p, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if len(data) > 0 {
-			s.lastSSEData = append([]byte(nil), data...)
-		}
-	}
 }
 
 func (s *responseRecorder) Flush() {
@@ -185,20 +132,31 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter) func(http.Hand
 			}
 
 			debugEnabled := serverDebugEnabled(r.Context(), st)
-			var debugRequestBody []byte
-			var debugRequestBodyTruncated bool
+			var debugCapture *debugCaptureSession
 			if debugEnabled {
-				debugRequestBody, debugRequestBodyTruncated = captureAndRestoreRequestBody(r)
+				debugCapture = startDebugCapture(r)
 			}
+			captureTransferred := false
 
 			user, hasUser := auth.UserFromContext(r.Context())
 			start := time.Now()
-			rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK, debugEnabled: debugEnabled}
+			outcomeContext, outcomeMarker := WithToolOutcomeMarker(r.Context())
+			r = r.WithContext(outcomeContext)
+			rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+			if debugCapture != nil {
+				rec.responseSpool = debugCapture.responseSpool
+			}
 
 			// recover 捕获 handler panic：将状态视为失败并执行 release 逻辑，
 			// 随后重新 panic 让 http.Server 在连接层处理（关闭连接）。
 			// success_calls 由 quota 中间件预留，此处必须回滚。
 			defer func() {
+				if debugCapture != nil {
+					debugCapture.finalize()
+					if !captureTransferred {
+						debugCapture.cleanup()
+					}
+				}
 				if rcv := recover(); rcv != nil {
 					if hasUser {
 						releaseReservedSuccessCall(st, r.Context(), user.ID)
@@ -209,13 +167,18 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter) func(http.Hand
 
 			next.ServeHTTP(rec, r)
 			dur := time.Since(start).Milliseconds()
-
-			body := rec.lastSSEData
-			if len(body) == 0 {
-				body = rec.jsonCapture
+			if debugCapture != nil {
+				debugCapture.finalize()
 			}
+
 			httpOK := rec.status >= 200 && rec.status < 300
-			mcpOK := httpOK && !mcpToolResultIsError(body)
+			semanticSuccess, semanticOutcomeKnown := outcomeMarker.Outcome()
+			mcpOK := httpOK
+			if semanticOutcomeKnown {
+				mcpOK = mcpOK && semanticSuccess
+			} else {
+				mcpOK = mcpOK && !rec.outcomeInspector.toolError()
+			}
 			success := mcpOK
 
 			if hasUser {
@@ -226,14 +189,21 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter) func(http.Hand
 			if writer != nil {
 				debugJSON := ""
 				if debugEnabled {
-					debugJSON = buildDebugJSON(r, key, user, hasUser, toolName, start, dur, success, rec, debugRequestBody, debugRequestBodyTruncated)
+					debugJSON = buildDebugJSON(r, key, user, hasUser, toolName, start, dur, success, rec, debugCapture)
 				}
 				writer.Enqueue(store.UsageRecord{KeyID: key.ID, TouchKey: true})
-				writer.Enqueue(store.UsageRecord{
+				usageRecord := store.UsageRecord{
 					KeyID: key.ID, ToolName: toolName,
 					Timestamp: time.Now().UTC(), DurationMs: dur,
 					Success: success, DebugJSON: debugJSON,
-				})
+				}
+				if debugCapture != nil {
+					usageRecord.DebugRequestBodyPath = debugCapture.requestPath()
+					usageRecord.DebugResponseBodyPath = debugCapture.responsePath()
+					usageRecord.Cleanup = debugCapture.cleanup
+					captureTransferred = true
+				}
+				writer.Enqueue(usageRecord)
 			}
 		})
 	}
@@ -279,9 +249,9 @@ func captureAndRestoreRequestBody(r *http.Request) ([]byte, bool) {
 	return body, false
 }
 
-func buildDebugJSON(r *http.Request, key *store.APIKey, user *auth.AuthenticatedUser, hasUser bool, toolName string, startedAt time.Time, durationMs int64, success bool, rec *responseRecorder, requestBody []byte, requestBodyTruncated bool) string {
+func buildDebugJSON(r *http.Request, key *store.APIKey, user *auth.AuthenticatedUser, hasUser bool, toolName string, startedAt time.Time, durationMs int64, success bool, rec *responseRecorder, capture *debugCaptureSession) string {
 	debugPayload := map[string]any{
-		"version":     1,
+		"version":     2,
 		"captured_at": time.Now().UTC().Format(time.RFC3339Nano),
 		"auth": map[string]any{
 			"key_id":     key.ID,
@@ -301,20 +271,23 @@ func buildDebugJSON(r *http.Request, key *store.APIKey, user *auth.Authenticated
 			"host":           r.Host,
 			"content_length": r.ContentLength,
 			"headers":        headerSnapshot(r.Header),
-			"body":           string(requestBody),
-			"body_truncated": requestBodyTruncated,
+			"body_bytes":     capture.requestBytes(),
+			"body_storage":   "sqlite_chunks",
 		},
 		"response": map[string]any{
-			"status":         rec.status,
-			"headers":        headerSnapshot(rec.Header()),
-			"body":           string(rec.debugResponseBody),
-			"body_truncated": rec.debugResponseTruncated,
+			"status":       rec.status,
+			"headers":      headerSnapshot(rec.Header()),
+			"body_bytes":   capture.responseBytes(),
+			"body_storage": "sqlite_chunks",
 		},
+	}
+	if captureError := capture.captureError(); captureError != "" {
+		debugPayload["capture_error"] = captureError
 	}
 	if hasUser {
 		debugPayload["auth"].(map[string]any)["user_id"] = user.ID
 	}
-	body, err := json.MarshalIndent(debugPayload, "", "  ")
+	body, err := json.Marshal(debugPayload)
 	if err != nil {
 		return "{\"error\":\"failed to marshal debug payload\"}"
 	}

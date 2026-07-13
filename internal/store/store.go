@@ -157,10 +157,24 @@ type UsageRecord struct {
 	Timestamp  time.Time
 	DurationMs int64
 	Success    bool
-	// DebugJSON 保存 debug 模式下捕获的完整调用上下文；为空表示该记录未开启 debug 捕获。
+	// DebugJSON stores compact debug metadata. Complete bodies are persisted
+	// separately so queued records never retain potentially huge strings.
 	DebugJSON string
+	// DebugRequestBodyPath and DebugResponseBodyPath are short-lived spool file
+	// references consumed transactionally by RecordUsage. They are never
+	// returned from usage-stat queries.
+	DebugRequestBodyPath  string
+	DebugResponseBodyPath string
+	// DebugRequestBody and DebugResponseBody are populated only when reading
+	// persisted usage stats. They remain empty on the asynchronous write path.
+	DebugRequestBody  string
+	DebugResponseBody string
 	// TouchKey 为 true 时异步执行 TouchKeyUsage，不写 usage_log。
 	TouchKey bool
+	// Cleanup releases resources owned by the queued record, such as temporary
+	// debug capture files. AsyncUsageWriter invokes it exactly once after the
+	// record is written or discarded.
+	Cleanup func()
 }
 
 // UsageBucket 表示流量图中的一个时间桶；Start 包含，End 除最后一个桶外不包含。

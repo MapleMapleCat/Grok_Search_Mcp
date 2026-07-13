@@ -28,12 +28,17 @@ func sse(payloads ...string) string {
 
 func newClientAt(t *testing.T, baseURL string) *grok.Client {
 	t.Helper()
-	return grok.NewClient(&config.Config{
+	configuration := &config.Config{
 		CPABaseURL: baseURL,
 		CPAAPIKey:  "test-key",
 		Model:      "grok-4.3",
 		Timeout:    5 * time.Second,
-	})
+	}
+	client, err := grok.NewClientWithServerSettings(configuration.ServerSettings(), nil)
+	if err != nil {
+		t.Fatalf("NewClientWithServerSettings failed: %v", err)
+	}
+	return client
 }
 
 func newNoCallServer(t *testing.T) *httptest.Server {

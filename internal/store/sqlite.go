@@ -2,11 +2,14 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -22,7 +25,7 @@ const timeLayout = "2006-01-02 15:04:05"
 // SQLiteStore 使用纯 Go 驱动 modernc.org/sqlite，MaxOpenConns=1 以配合 SQLite 写锁语义。
 type SQLiteStore struct {
 	db           *sql.DB
-	apiKeyCipher *keycrypt.Cipher
+	secretCipher *keycrypt.Cipher
 }
 
 // OpenSQLite 打开数据库、执行嵌入迁移并返回可用的 Store。
@@ -46,14 +49,17 @@ func (s *SQLiteStore) Close() error {
 }
 
 // ConfigureAPIKeyEncryption derives the at-rest encryption key used for
-// recoverable API key material. Call this before creating, rotating, or
-// revealing API keys.
+// recoverable API keys and other persisted secrets. The key derivation remains
+// unchanged so existing API key ciphertext stays compatible.
 func (s *SQLiteStore) ConfigureAPIKeyEncryption(applicationSecret string) error {
-	apiKeyCipher, err := keycrypt.New(applicationSecret)
+	secretCipher, err := keycrypt.New(applicationSecret)
 	if err != nil {
 		return err
 	}
-	s.apiKeyCipher = apiKeyCipher
+	s.secretCipher = secretCipher
+	if _, err := s.GetServerSettings(context.Background()); err != nil {
+		return fmt.Errorf("migrate server settings CPA API key: %w", err)
+	}
 	return nil
 }
 
@@ -156,7 +162,7 @@ func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string) (*APIK
 	if len(prefix) > 8 {
 		prefix = prefix[:8]
 	}
-	ciphertext, nonce, encryptionVersion, err := s.apiKeyCipher.Encrypt(raw, apiKeyRecordIdentity(id, userID))
+	ciphertext, nonce, encryptionVersion, err := s.secretCipher.Encrypt(raw, apiKeyRecordIdentity(id, userID))
 	if err != nil {
 		return nil, "", err
 	}
@@ -187,7 +193,7 @@ func (s *SQLiteStore) RevealKey(ctx context.Context, id string) (string, error) 
 	if apiKey.keyCiphertext == "" || apiKey.keyNonce == "" || apiKey.keyEncryptionVersion == 0 {
 		return "", fmt.Errorf("api key secret is unavailable")
 	}
-	return s.apiKeyCipher.Decrypt(
+	return s.secretCipher.Decrypt(
 		apiKey.keyCiphertext,
 		apiKey.keyNonce,
 		apiKeyRecordIdentity(apiKey.ID, apiKey.UserID),
@@ -227,7 +233,7 @@ func (s *SQLiteStore) RotateLegacyAPIKeys(ctx context.Context) (int, error) {
 		}
 		secretUnavailable := legacyKey.keyCiphertext == "" || legacyKey.keyNonce == "" || legacyKey.keyEncryptionVersion == 0
 		if !secretUnavailable {
-			_, decryptErr := s.apiKeyCipher.Decrypt(
+			_, decryptErr := s.secretCipher.Decrypt(
 				legacyKey.keyCiphertext,
 				legacyKey.keyNonce,
 				apiKeyRecordIdentity(legacyKey.id, legacyKey.userID),
@@ -265,7 +271,7 @@ func (s *SQLiteStore) RotateLegacyAPIKeys(ctx context.Context) (int, error) {
 		if len(keyPrefix) > 8 {
 			keyPrefix = keyPrefix[:8]
 		}
-		ciphertext, nonce, encryptionVersion, err := s.apiKeyCipher.Encrypt(
+		ciphertext, nonce, encryptionVersion, err := s.secretCipher.Encrypt(
 			rawKey,
 			apiKeyRecordIdentity(legacyKey.id, legacyKey.userID),
 		)
@@ -403,11 +409,64 @@ func (s *SQLiteStore) RecordUsage(ctx context.Context, record UsageRecord) error
 	if record.Success {
 		success = 1
 	}
-	_, err := s.db.ExecContext(ctx,
+
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+
+	result, err := transaction.ExecContext(ctx,
 		`INSERT INTO usage_log (key_id, tool_name, timestamp, duration_ms, success, debug_json) VALUES (?, ?, ?, ?, ?, ?)`,
 		record.KeyID, record.ToolName, formatTime(record.Timestamp.UTC()), record.DurationMs, success, record.DebugJSON,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	usageID, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("usage insert id: %w", err)
+	}
+	if err := persistUsageDebugBody(ctx, transaction, usageID, "request", record.DebugRequestBodyPath); err != nil {
+		return err
+	}
+	if err := persistUsageDebugBody(ctx, transaction, usageID, "response", record.DebugResponseBodyPath); err != nil {
+		return err
+	}
+	return transaction.Commit()
+}
+
+const usageDebugBodyChunkSize = 64 << 10
+
+func persistUsageDebugBody(ctx context.Context, transaction *sql.Tx, usageID int64, bodyKind, path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+
+	bodyFile, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open usage %s body spool: %w", bodyKind, err)
+	}
+	defer bodyFile.Close()
+
+	chunk := make([]byte, usageDebugBodyChunkSize)
+	for chunkIndex := 0; ; chunkIndex++ {
+		bytesRead, readErr := bodyFile.Read(chunk)
+		if bytesRead > 0 {
+			if _, err := transaction.ExecContext(ctx,
+				`INSERT INTO usage_log_debug_body_chunks (usage_id, body_kind, chunk_index, body_data) VALUES (?, ?, ?, ?)`,
+				usageID, bodyKind, chunkIndex, chunk[:bytesRead],
+			); err != nil {
+				return fmt.Errorf("persist usage %s body chunk %d: %w", bodyKind, chunkIndex, err)
+			}
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return fmt.Errorf("read usage %s body spool: %w", bodyKind, readErr)
+		}
+	}
 }
 
 // TouchKeyUsage 在 tools/call 后递增 total_calls 并刷新 last_used_at；
@@ -518,6 +577,11 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	if err := recRows.Close(); err != nil {
 		return nil, err
 	}
+	for recordIndex := range stats.Records {
+		if err := s.loadUsageDebugBodies(ctx, &stats.Records[recordIndex]); err != nil {
+			return nil, err
+		}
+	}
 
 	currentRPM, err := s.queryCurrentRPM(ctx, where, whereArgs, queryEnd)
 	if err != nil {
@@ -535,6 +599,39 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	}
 	stats.TrafficBuckets = trafficBuckets
 	return stats, nil
+}
+
+func (s *SQLiteStore) loadUsageDebugBodies(ctx context.Context, record *UsageRecord) error {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT body_kind, body_data FROM usage_log_debug_body_chunks WHERE usage_id = ? ORDER BY body_kind, chunk_index`,
+		record.ID,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var requestBody bytes.Buffer
+	var responseBody bytes.Buffer
+	for rows.Next() {
+		var bodyKind string
+		var bodyData []byte
+		if err := rows.Scan(&bodyKind, &bodyData); err != nil {
+			return err
+		}
+		switch bodyKind {
+		case "request":
+			_, _ = requestBody.Write(bodyData)
+		case "response":
+			_, _ = responseBody.Write(bodyData)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	record.DebugRequestBody = requestBody.String()
+	record.DebugResponseBody = responseBody.String()
+	return nil
 }
 
 func appendUsageStatsArgs(whereArgs []any, trailingArgs ...any) []any {
@@ -675,10 +772,18 @@ func divideCeiling(numerator int64, denominator int) int64 {
 
 const serverSettingsID = "default"
 
+type storedServerSettingsAPIKey struct {
+	plaintext         string
+	ciphertext        string
+	nonce             string
+	encryptionVersion int
+}
+
 func scanServerSettings(row interface {
 	Scan(dest ...any) error
-}) (*ServerSettings, error) {
+}) (*ServerSettings, storedServerSettingsAPIKey, error) {
 	var settings ServerSettings
+	var storedAPIKey storedServerSettingsAPIKey
 	var proxyEnabled int
 	var registrationMode string
 	var debug int
@@ -687,7 +792,10 @@ func scanServerSettings(row interface {
 	err := row.Scan(
 		&settings.ID,
 		&settings.CPABaseURL,
-		&settings.CPAAPIKey,
+		&storedAPIKey.plaintext,
+		&storedAPIKey.ciphertext,
+		&storedAPIKey.nonce,
+		&storedAPIKey.encryptionVersion,
 		&settings.UpstreamProtocol,
 		&settings.Model,
 		&settings.TimeoutSeconds,
@@ -699,36 +807,98 @@ func scanServerSettings(row interface {
 		&updatedAt,
 	)
 	if err != nil {
-		return nil, err
+		return nil, storedServerSettingsAPIKey{}, err
 	}
 	settings.ProxyEnabled = proxyEnabled != 0
 	var normalizeErr error
 	settings.RegistrationMode, normalizeErr = NormalizeRegistrationMode(RegistrationMode(registrationMode))
 	if normalizeErr != nil {
-		return nil, normalizeErr
+		return nil, storedServerSettingsAPIKey{}, normalizeErr
 	}
 	settings.Debug = debug != 0
 	var parseErr error
 	settings.CreatedAt, parseErr = parseTime(createdAt)
 	if parseErr != nil {
-		return nil, parseErr
+		return nil, storedServerSettingsAPIKey{}, parseErr
 	}
 	settings.UpdatedAt, parseErr = parseTime(updatedAt)
 	if parseErr != nil {
-		return nil, parseErr
+		return nil, storedServerSettingsAPIKey{}, parseErr
 	}
-	return &settings, nil
+	return &settings, storedAPIKey, nil
 }
 
-const serverSettingsColumns = `id, cpa_base_url, cpa_api_key, upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at`
+const serverSettingsColumns = `id, cpa_base_url, cpa_api_key, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version, upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at`
+
+func serverSettingsAPIKeyRecordIdentity(settingsID string) string {
+	return "server-settings:" + settingsID + ":cpa-api-key"
+}
 
 func (s *SQLiteStore) GetServerSettings(ctx context.Context) (*ServerSettings, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+serverSettingsColumns+` FROM server_settings WHERE id = ?`, serverSettingsID)
-	settings, err := scanServerSettings(row)
+	settings, storedAPIKey, err := scanServerSettings(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return settings, err
+	if err != nil {
+		return nil, err
+	}
+
+	plaintextAPIKey, err := s.readOrMigrateServerSettingsAPIKey(ctx, settings.ID, storedAPIKey)
+	if err != nil {
+		return nil, err
+	}
+	settings.CPAAPIKey = plaintextAPIKey
+	return settings, nil
+}
+
+func (s *SQLiteStore) readOrMigrateServerSettingsAPIKey(ctx context.Context, settingsID string, storedAPIKey storedServerSettingsAPIKey) (string, error) {
+	hasCompleteCiphertext := storedAPIKey.ciphertext != "" && storedAPIKey.nonce != "" && storedAPIKey.encryptionVersion != 0
+	if hasCompleteCiphertext {
+		plaintextAPIKey, err := s.secretCipher.Decrypt(
+			storedAPIKey.ciphertext,
+			storedAPIKey.nonce,
+			serverSettingsAPIKeyRecordIdentity(settingsID),
+			storedAPIKey.encryptionVersion,
+		)
+		if err != nil {
+			return "", fmt.Errorf("decrypt server settings CPA API key: %w", err)
+		}
+		if storedAPIKey.plaintext != "" {
+			if _, err := s.db.ExecContext(ctx, `UPDATE server_settings SET cpa_api_key = '' WHERE id = ?`, settingsID); err != nil {
+				return "", fmt.Errorf("clear plaintext server settings CPA API key: %w", err)
+			}
+		}
+		return plaintextAPIKey, nil
+	}
+
+	hasPartialCiphertext := storedAPIKey.ciphertext != "" || storedAPIKey.nonce != "" || storedAPIKey.encryptionVersion != 0
+	if storedAPIKey.plaintext == "" {
+		if hasPartialCiphertext {
+			return "", fmt.Errorf("server settings CPA API key ciphertext is incomplete")
+		}
+		return "", nil
+	}
+
+	ciphertext, nonce, encryptionVersion, err := s.secretCipher.Encrypt(
+		storedAPIKey.plaintext,
+		serverSettingsAPIKeyRecordIdentity(settingsID),
+	)
+	if err != nil {
+		return "", fmt.Errorf("encrypt legacy server settings CPA API key: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE server_settings
+		SET cpa_api_key = '', cpa_api_key_ciphertext = ?, cpa_api_key_nonce = ?, cpa_api_key_encryption_version = ?
+		WHERE id = ?`,
+		ciphertext,
+		nonce,
+		encryptionVersion,
+		settingsID,
+	); err != nil {
+		return "", fmt.Errorf("migrate legacy server settings CPA API key: %w", err)
+	}
+	return storedAPIKey.plaintext, nil
 }
 
 func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerSettings) (*ServerSettings, error) {
@@ -756,6 +926,13 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 	if err != nil {
 		return nil, err
 	}
+	ciphertext, nonce, encryptionVersion, err := s.secretCipher.Encrypt(
+		cpaAPIKey,
+		serverSettingsAPIKeyRecordIdentity(serverSettingsID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt server settings CPA API key: %w", err)
+	}
 
 	proxyEnabled := 0
 	if settings.ProxyEnabled {
@@ -768,11 +945,15 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 	now := formatTime(time.Now().UTC())
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO server_settings (
-			id, cpa_base_url, cpa_api_key, upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			id, cpa_base_url, cpa_api_key, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version,
+			upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
+		) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			cpa_base_url = excluded.cpa_base_url,
-			cpa_api_key = excluded.cpa_api_key,
+			cpa_api_key = '',
+			cpa_api_key_ciphertext = excluded.cpa_api_key_ciphertext,
+			cpa_api_key_nonce = excluded.cpa_api_key_nonce,
+			cpa_api_key_encryption_version = excluded.cpa_api_key_encryption_version,
 			upstream_protocol = excluded.upstream_protocol,
 			model = excluded.model,
 			timeout_seconds = excluded.timeout_seconds,
@@ -783,7 +964,9 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 			updated_at = excluded.updated_at`,
 		serverSettingsID,
 		cpaBaseURL,
-		cpaAPIKey,
+		ciphertext,
+		nonce,
+		encryptionVersion,
 		upstreamProtocol,
 		model,
 		settings.TimeoutSeconds,

@@ -211,14 +211,14 @@ func InitializeServerSettings(ctx context.Context, st store.Store, cfg *config.C
 
 	settings := cfg.ServerSettings()
 	if storedSettings != nil {
-		settings = config.ServerSettingsFromStore(storedSettings)
+		settings = config.ServerSettingsFromFields(store.SettingsFieldsFromStore(storedSettings))
 	}
 
 	normalizedSettings, err := config.NormalizeServerSettings(settings)
 	if err != nil {
 		return config.ServerSettings{}, err
 	}
-	if _, err := st.UpsertServerSettings(ctx, config.StoreServerSettings(normalizedSettings)); err != nil {
+	if _, err := st.UpsertServerSettings(ctx, store.ServerSettingsFromFields(config.SettingsFieldsFromConfig(normalizedSettings))); err != nil {
 		return config.ServerSettings{}, fmt.Errorf("persist settings: %w", err)
 	}
 	return normalizedSettings, nil

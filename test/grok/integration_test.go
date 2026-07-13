@@ -30,7 +30,10 @@ func TestIntegrationSearchLiveCPA(t *testing.T) {
 		t.Fatalf("config load failed: %v", err)
 	}
 
-	client := grok.NewClient(cfg)
+	client, err := grok.NewClientWithServerSettings(cfg.ServerSettings(), nil)
+	if err != nil {
+		t.Fatalf("create grok client: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 

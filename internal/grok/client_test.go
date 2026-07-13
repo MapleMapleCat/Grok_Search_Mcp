@@ -70,7 +70,10 @@ func TestApplyServerSettingsUpdatesSharedDebugState(t *testing.T) {
 		Debug:      false,
 	}
 	debugState := logx.NewDebugState(false)
-	client := NewClientWithDebugState(configuration, debugState)
+	client, err := NewClientWithServerSettings(configuration.ServerSettings(), debugState)
+	if err != nil {
+		t.Fatalf("NewClientWithServerSettings failed: %v", err)
+	}
 
 	settings := configuration.ServerSettings()
 	settings.Debug = true
@@ -99,6 +102,15 @@ func TestApplyServerSettingsUpdatesSharedDebugState(t *testing.T) {
 	if debugState.Enabled() {
 		t.Fatal("failed settings update must not change shared debug state")
 	}
+}
+
+func newTestClient(t *testing.T, configuration *config.Config) *Client {
+	t.Helper()
+	client, err := NewClientWithServerSettings(configuration.ServerSettings(), nil)
+	if err != nil {
+		t.Fatalf("NewClientWithServerSettings failed: %v", err)
+	}
+	return client
 }
 
 func mustParseURL(t *testing.T, rawURL string) *url.URL {

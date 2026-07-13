@@ -9,6 +9,7 @@ import (
 
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/grok"
+	"github.com/grok-mcp/internal/store"
 )
 
 // ModelLister fetches the currently available upstream Grok models.
@@ -46,7 +47,7 @@ func (h *Handler) adminUpdateServerSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	storedSettings, err := h.Store.UpsertServerSettings(r.Context(), config.StoreServerSettings(normalizedSettings))
+	storedSettings, err := h.Store.UpsertServerSettings(r.Context(), store.ServerSettingsFromFields(config.SettingsFieldsFromConfig(normalizedSettings)))
 	if err != nil {
 		log.Printf("admin persist server settings failed: %v", err)
 		writeError(w, http.StatusInternalServerError, "failed to save server settings")
@@ -91,7 +92,7 @@ func (h *Handler) loadEffectiveServerSettings(r *http.Request) (config.ServerSet
 	}
 	if storedSettings != nil {
 		updatedAt := storedSettings.UpdatedAt
-		return config.ServerSettingsFromStore(storedSettings), &updatedAt, nil
+		return config.ServerSettingsFromFields(store.SettingsFieldsFromStore(storedSettings)), &updatedAt, nil
 	}
 	if h.InitialServerSettings == (config.ServerSettings{}) {
 		return config.ServerSettings{}, nil, nil

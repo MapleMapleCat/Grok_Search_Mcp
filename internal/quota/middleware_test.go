@@ -9,7 +9,6 @@ package quota
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -183,21 +182,13 @@ func TestReserveUserNotFoundReturnsForbidden(t *testing.T) {
 	}
 }
 
-// TestFallbackToPeekWhenNoContextName 验证未挂载 ExtractToolNameMiddleware 的旧链路：
-// quota.MCPMiddleware 会回退到 usage.PeekToolName 解析一次。
-func TestFallbackToPeekWhenNoContextName(t *testing.T) {
+func TestMissingExtractedToolNameSkipsReserve(t *testing.T) {
 	st := &recordingStore{}
 	called := false
 	h := MCPMiddleware(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 下游应能读取完整 body
-		b, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(b), "grok_web_search") {
-			t.Fatalf("body not restored downstream: %q", b)
-		}
 		called = true
 	}))
 
-	// 不写入 context 工具名，模拟旧链路
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
 		strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"grok_web_search"}}`))
 	req = req.WithContext(auth.WithUser(req.Context(), &auth.AuthenticatedUser{User: store.User{ID: "u1"}}))
@@ -205,9 +196,9 @@ func TestFallbackToPeekWhenNoContextName(t *testing.T) {
 	h.ServeHTTP(rec, req)
 
 	if !called {
-		t.Fatal("handler should be called via fallback peek path")
+		t.Fatal("request without extracted tool name should pass through")
 	}
-	if st.reserveSuccessCalls != 1 {
-		t.Fatalf("fallback path must reserve success once, got %d", st.reserveSuccessCalls)
+	if st.reserveSuccessCalls != 0 {
+		t.Fatalf("request without extracted tool name must not reserve success, got %d", st.reserveSuccessCalls)
 	}
 }

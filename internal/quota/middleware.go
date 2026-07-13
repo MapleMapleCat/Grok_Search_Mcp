@@ -21,12 +21,9 @@ type SuccessQuotaReserver interface {
 func MCPMiddleware(reserver SuccessQuotaReserver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 优先复用链路前置 ExtractToolNameMiddleware 写入的工具名；
-			// 兼容未挂载该中间件的旧用法，回退到一次解析。
-			toolName, ok := usage.ToolNameFromContext(r.Context())
-			if !ok {
-				toolName = usage.PeekToolName(r)
-			}
+			// BuildHTTPHandler guarantees that ExtractToolNameMiddleware runs first,
+			// so quota checks consume the single canonical request inspection result.
+			toolName, _ := usage.ToolNameFromContext(r.Context())
 			if toolName == "" {
 				next.ServeHTTP(w, r)
 				return

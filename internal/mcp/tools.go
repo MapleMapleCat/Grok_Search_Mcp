@@ -8,6 +8,7 @@ import (
 
 	"github.com/grok-mcp/internal/grok"
 	"github.com/grok-mcp/internal/logx"
+	"github.com/grok-mcp/internal/usage"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -67,11 +68,6 @@ type SearchOutput struct {
 // ListModelsOutput 为模型列表工具成功时的结构化返回。
 type ListModelsOutput struct {
 	Models []grok.Model `json:"models,omitempty" jsonschema:"Available Grok model IDs filtered by the grok keyword while excluding imagine/video models"`
-}
-
-// RegisterTools 在 MCP Server 上注册模型列表、网页搜索与 X 搜索工具。
-func RegisterTools(server *mcp.Server, client *grok.Client, debug bool) {
-	RegisterToolsWithLogger(server, client, logx.New("mcp", debug))
 }
 
 // RegisterToolsWithLogger 使用可动态配置的日志器注册 MCP 工具。
@@ -142,6 +138,7 @@ func newSearchTool(name, title, description string) *mcp.Tool {
 // runListModels 调用上游模型列表接口，并在向 MCP 客户端返回前再次应用 Grok 关键词过滤。
 func runListModels(ctx context.Context, client *grok.Client, log *logx.Logger) (*mcp.CallToolResult, ListModelsOutput, error) {
 	if client == nil {
+		usage.MarkToolOutcome(ctx, false)
 		return toolError("model listing is not configured"), ListModelsOutput{}, nil
 	}
 
@@ -149,11 +146,13 @@ func runListModels(ctx context.Context, client *grok.Client, log *logx.Logger) (
 	models, err := client.ListModels(ctx)
 	if err != nil {
 		log.Debugf("list models failed: %v", err)
+		usage.MarkToolOutcome(ctx, false)
 		return toolError(classifyListModelsError(err)), ListModelsOutput{}, nil
 	}
 
 	filteredModels := grok.FilterGrokModels(models)
 	log.Debugf("list models done models=%d", len(filteredModels))
+	usage.MarkToolOutcome(ctx, true)
 	return nil, ListModelsOutput{Models: filteredModels}, nil
 }
 
@@ -161,6 +160,7 @@ func runListModels(ctx context.Context, client *grok.Client, log *logx.Logger) (
 func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Client, log *logx.Logger, searchReq grok.SearchRequest) (*mcp.CallToolResult, SearchOutput, error) {
 	query := strings.TrimSpace(searchReq.Query)
 	if query == "" {
+		usage.MarkToolOutcome(ctx, false)
 		return toolError("query is required"), SearchOutput{}, nil
 	}
 	searchReq.Query = query
@@ -190,6 +190,7 @@ func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Clien
 	})
 	if err != nil {
 		log.Debugf("search failed tool=%s: %v", toolType, err)
+		usage.MarkToolOutcome(ctx, false)
 		return toolError(classifySearchError(err)), SearchOutput{}, nil
 	}
 
@@ -200,6 +201,7 @@ func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Clien
 		Sources:   result.Sources,
 		Usage:     result.Usage,
 	}
+	usage.MarkToolOutcome(ctx, true)
 	return nil, output, nil
 }
 

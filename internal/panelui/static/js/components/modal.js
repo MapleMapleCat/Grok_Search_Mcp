@@ -60,6 +60,18 @@ function renderDebugJSONModal(modal) {
 
   try {
     parsedDebugJSON = JSON.parse(rawDebugJSON);
+    if (isDebugJSONObject(parsedDebugJSON)) {
+      if (typeof record.debug_request_body === "string") {
+        parsedDebugJSON.request = isDebugJSONObject(parsedDebugJSON.request)
+          ? { ...parsedDebugJSON.request, body: record.debug_request_body }
+          : { body: record.debug_request_body };
+      }
+      if (typeof record.debug_response_body === "string") {
+        parsedDebugJSON.response = isDebugJSONObject(parsedDebugJSON.response)
+          ? { ...parsedDebugJSON.response, body: record.debug_response_body }
+          : { body: record.debug_response_body };
+      }
+    }
   } catch (error) {
     parseError = error instanceof Error ? error.message : "无法解析调试数据";
   }

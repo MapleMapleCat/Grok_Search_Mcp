@@ -199,13 +199,15 @@ func TestCachedAPIKeyResolverReloadsAfterTTL(t *testing.T) {
 		key:  &store.APIKey{ID: "k1", UserID: "u1", Name: "before-expiry", Enabled: true},
 		user: &store.User{ID: "u1", Enabled: true},
 	}
-	resolver := NewCachedAPIKeyResolver(st, time.Nanosecond)
+	currentTime := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
+	resolver := NewCachedAPIKeyResolver(st, time.Second)
+	resolver.now = func() time.Time { return currentTime }
 
 	if _, _, err := resolver.Resolve(context.Background(), keyHash); err != nil {
 		t.Fatal(err)
 	}
 	st.key.Name = "after-expiry"
-	time.Sleep(time.Millisecond)
+	currentTime = currentTime.Add(time.Second)
 
 	key, _, err := resolver.Resolve(context.Background(), keyHash)
 	if err != nil {
@@ -274,7 +276,6 @@ func stringsForAuthTest(value string) string {
 	}
 	return builder.String()
 }
-
 
 func TestAPIKeyMiddlewareMissingTierReturnsInternalServerError(t *testing.T) {
 	raw := "grok_missing_tier"

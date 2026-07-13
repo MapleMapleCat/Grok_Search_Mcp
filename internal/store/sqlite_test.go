@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,6 +62,151 @@ func TestCreateAndGetKeyByHash(t *testing.T) {
 	}
 	if revealed != raw {
 		t.Fatalf("revealed API key does not match created key")
+	}
+}
+
+func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T) {
+	const encryptionSecret = "test-server-settings-encryption-secret-at-least-32-bytes"
+	const cpaAPIKey = "sensitive-cpa-api-key"
+	databasePath := filepath.Join(t.TempDir(), "encrypted-settings.db")
+	ctx := context.Background()
+
+	sqliteStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		t.Fatal(err)
+	}
+	userID := testUserID(t, sqliteStore)
+	apiKey, rawAPIKey, err := sqliteStore.CreateKey(ctx, userID, "compatibility-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	settings := ServerSettings{
+		CPABaseURL:       "http://127.0.0.1:8317",
+		CPAAPIKey:        cpaAPIKey,
+		UpstreamProtocol: "responses",
+		Model:            "grok-4.3",
+		TimeoutSeconds:   30,
+		RegistrationMode: RegistrationModeFree,
+	}
+	storedSettings, err := sqliteStore.UpsertServerSettings(ctx, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedSettings.CPAAPIKey != cpaAPIKey {
+		t.Fatalf("returned CPA API key = %q, want original value", storedSettings.CPAAPIKey)
+	}
+
+	var plaintext string
+	var ciphertext string
+	var nonce string
+	var encryptionVersion int
+	if err := sqliteStore.db.QueryRowContext(ctx, `
+		SELECT cpa_api_key, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version
+		FROM server_settings WHERE id = ?`, serverSettingsID,
+	).Scan(&plaintext, &ciphertext, &nonce, &encryptionVersion); err != nil {
+		t.Fatal(err)
+	}
+	if plaintext != "" {
+		t.Fatalf("plaintext CPA API key remained at rest: %q", plaintext)
+	}
+	if ciphertext == "" || ciphertext == cpaAPIKey || nonce == "" || encryptionVersion == 0 {
+		t.Fatalf("invalid encrypted CPA API key fields: ciphertext=%q nonce=%q version=%d", ciphertext, nonce, encryptionVersion)
+	}
+
+	if err := sqliteStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopenedStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopenedStore.Close()
+	if err := reopenedStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		t.Fatal(err)
+	}
+	reopenedSettings, err := reopenedStore.GetServerSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopenedSettings == nil || reopenedSettings.CPAAPIKey != cpaAPIKey {
+		t.Fatalf("reopened settings = %+v, want decrypted CPA API key", reopenedSettings)
+	}
+	revealedAPIKey, err := reopenedStore.RevealKey(ctx, apiKey.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revealedAPIKey != rawAPIKey {
+		t.Fatal("generalized encryption configuration broke existing API key ciphertext")
+	}
+}
+
+func TestConfigureAPIKeyEncryptionMigratesLegacyPlaintextServerSettings(t *testing.T) {
+	const encryptionSecret = "test-legacy-settings-encryption-secret-at-least-32-bytes"
+	const legacyCPAAPIKey = "legacy-plaintext-cpa-key"
+	databasePath := filepath.Join(t.TempDir(), "legacy-settings.db")
+	ctx := context.Background()
+
+	legacyStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := formatTime(time.Now().UTC())
+	if _, err := legacyStore.db.ExecContext(ctx, `
+		INSERT INTO server_settings (
+			id, cpa_base_url, cpa_api_key, upstream_protocol, model, timeout_seconds,
+			proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, '', 0, ?, 0, ?, ?)`,
+		serverSettingsID,
+		"http://127.0.0.1:8317",
+		legacyCPAAPIKey,
+		"responses",
+		"grok-4.3",
+		30,
+		string(RegistrationModeFree),
+		now,
+		now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacyStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migratedStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migratedStore.Close()
+	if err := migratedStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		t.Fatal(err)
+	}
+	migratedSettings, err := migratedStore.GetServerSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migratedSettings == nil || migratedSettings.CPAAPIKey != legacyCPAAPIKey {
+		t.Fatalf("migrated settings = %+v, want legacy CPA API key", migratedSettings)
+	}
+
+	var plaintext string
+	var ciphertext string
+	var nonce string
+	var encryptionVersion int
+	if err := migratedStore.db.QueryRowContext(ctx, `
+		SELECT cpa_api_key, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version
+		FROM server_settings WHERE id = ?`, serverSettingsID,
+	).Scan(&plaintext, &ciphertext, &nonce, &encryptionVersion); err != nil {
+		t.Fatal(err)
+	}
+	if plaintext != "" {
+		t.Fatalf("legacy plaintext CPA API key was not cleared: %q", plaintext)
+	}
+	if ciphertext == "" || ciphertext == legacyCPAAPIKey || nonce == "" || encryptionVersion == 0 {
+		t.Fatalf("legacy CPA API key was not migrated to ciphertext: ciphertext=%q nonce=%q version=%d", ciphertext, nonce, encryptionVersion)
 	}
 }
 
@@ -187,6 +333,118 @@ func TestUsageStats(t *testing.T) {
 	g, err := s.GetGlobalStats(ctx, now.Add(-time.Hour))
 	if err != nil || g.TotalCalls != 3 {
 		t.Fatalf("global stats: %+v err=%v", g, err)
+	}
+}
+
+func TestUsageDebugBodiesPersistAndLoadInBoundedChunks(t *testing.T) {
+	store := openTestDB(t)
+	ctx := context.Background()
+
+	key, _, err := store.CreateKey(ctx, testUserID(t, store), "debug-capture")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requestBody := strings.Repeat("request-body-segment|", 120000)
+	responseBody := strings.Repeat("response-body-segment|", 550000)
+	requestPath := filepath.Join(t.TempDir(), "request.body")
+	responsePath := filepath.Join(t.TempDir(), "response.body")
+	if err := os.WriteFile(requestPath, []byte(requestBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(responsePath, []byte(responseBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	debugJSON := `{"version":2,"request":{"body_storage":"sqlite_chunks"},"response":{"body_storage":"sqlite_chunks"}}`
+	recordTimestamp := time.Now().UTC()
+	if err := store.RecordUsage(ctx, UsageRecord{
+		KeyID:                 key.ID,
+		ToolName:              "grok_web_search",
+		Timestamp:             recordTimestamp,
+		DurationMs:            42,
+		Success:               true,
+		DebugJSON:             debugJSON,
+		DebugRequestBodyPath:  requestPath,
+		DebugResponseBodyPath: responsePath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := store.GetUsageStats(ctx, key.ID, recordTimestamp.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.Records) != 1 {
+		t.Fatalf("usage records = %d, want 1", len(stats.Records))
+	}
+	persistedRecord := stats.Records[0]
+	if persistedRecord.DebugJSON != debugJSON {
+		t.Fatalf("debug metadata changed: got %q want %q", persistedRecord.DebugJSON, debugJSON)
+	}
+	if persistedRecord.DebugRequestBody != requestBody {
+		t.Fatalf("request body length = %d, want %d", len(persistedRecord.DebugRequestBody), len(requestBody))
+	}
+	if persistedRecord.DebugResponseBody != responseBody {
+		t.Fatalf("response body length = %d, want %d", len(persistedRecord.DebugResponseBody), len(responseBody))
+	}
+	if persistedRecord.DebugRequestBodyPath != "" || persistedRecord.DebugResponseBodyPath != "" {
+		t.Fatalf("temporary paths must not be returned from stats: %+v", persistedRecord)
+	}
+
+	var chunkCount int
+	var maximumChunkBytes int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(length(body_data)), 0) FROM usage_log_debug_body_chunks WHERE usage_id = ?`,
+		persistedRecord.ID,
+	).Scan(&chunkCount, &maximumChunkBytes); err != nil {
+		t.Fatal(err)
+	}
+	if chunkCount < 3 {
+		t.Fatalf("chunk count = %d, want multiple bounded chunks", chunkCount)
+	}
+	if maximumChunkBytes > usageDebugBodyChunkSize {
+		t.Fatalf("maximum chunk size = %d, cap = %d", maximumChunkBytes, usageDebugBodyChunkSize)
+	}
+}
+
+func TestUsageDebugBodyPersistenceRollsBackTransactionOnSpoolFailure(t *testing.T) {
+	store := openTestDB(t)
+	ctx := context.Background()
+	key, _, err := store.CreateKey(ctx, testUserID(t, store), "debug-rollback")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requestPath := filepath.Join(t.TempDir(), "request.body")
+	if err := os.WriteFile(requestPath, []byte("request persisted before response failure"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missingResponsePath := filepath.Join(t.TempDir(), "missing-response.body")
+	err = store.RecordUsage(ctx, UsageRecord{
+		KeyID:                 key.ID,
+		ToolName:              "grok_web_search",
+		Timestamp:             time.Now().UTC(),
+		DebugRequestBodyPath:  requestPath,
+		DebugResponseBodyPath: missingResponsePath,
+	})
+	if err == nil {
+		t.Fatal("expected missing response spool to fail persistence")
+	}
+
+	var usageCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_log WHERE key_id = ?`, key.ID).Scan(&usageCount); err != nil {
+		t.Fatal(err)
+	}
+	if usageCount != 0 {
+		t.Fatalf("usage rows after rollback = %d, want 0", usageCount)
+	}
+	var bodyChunkCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_log_debug_body_chunks`).Scan(&bodyChunkCount); err != nil {
+		t.Fatal(err)
+	}
+	if bodyChunkCount != 0 {
+		t.Fatalf("body chunks after rollback = %d, want 0", bodyChunkCount)
 	}
 }
 

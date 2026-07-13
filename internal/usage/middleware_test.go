@@ -1,10 +1,12 @@
 package usage
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -197,6 +199,38 @@ func TestMCPToolResultIsError(t *testing.T) {
 	}
 }
 
+func TestResponseOutcomeInspectorHandlesFragmentedSSEAndLatchesError(t *testing.T) {
+	inspector := &responseOutcomeInspector{}
+	fragments := []string{
+		"event: message\r\nda",
+		"ta: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"isErr",
+		"or\":true}}\r\n\r\n",
+		"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"content\":[]}}\n\n",
+	}
+	for _, fragment := range fragments {
+		inspector.inspect([]byte(fragment))
+	}
+	if !inspector.toolError() {
+		t.Fatal("fragmented SSE error must remain latched after a later success event")
+	}
+}
+
+func TestResponseOutcomeInspectorEnforcesIndependentCap(t *testing.T) {
+	inspector := &responseOutcomeInspector{}
+	inspector.inspect(bytes.Repeat([]byte("x"), maxOutcomeInspectionBytes+1024))
+	inspector.inspect([]byte("\ndata: {\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603}}\n\n"))
+
+	if inspector.inspectedBytes != maxOutcomeInspectionBytes {
+		t.Fatalf("inspected bytes = %d, want cap %d", inspector.inspectedBytes, maxOutcomeInspectionBytes)
+	}
+	if len(inspector.jsonCapture) > maxOutcomeInspectionBytes || len(inspector.sseLineBuffer) > maxOutcomeInspectionBytes {
+		t.Fatalf("inspection buffers exceeded cap: json=%d line=%d", len(inspector.jsonCapture), len(inspector.sseLineBuffer))
+	}
+	if inspector.toolError() {
+		t.Fatal("error arriving after the inspection cap must not be parsed")
+	}
+}
+
 func TestResponseRecorderFlushDelegates(t *testing.T) {
 	var flushed bool
 	inner := &flushRecorder{flushed: &flushed}
@@ -244,6 +278,194 @@ type failureRecordingStore struct {
 	releaseSuccessCalls int
 	touchedKeys         []string
 	recordedUsage       []store.UsageRecord
+}
+
+type debugCaptureRecordingStore struct {
+	store.TestStore
+	mu                  sync.Mutex
+	recordedUsage       []store.UsageRecord
+	requestBody         []byte
+	responseBody        []byte
+	requestPermissions  os.FileMode
+	responsePermissions os.FileMode
+}
+
+func (s *debugCaptureRecordingStore) GetServerSettings(context.Context) (*store.ServerSettings, error) {
+	return &store.ServerSettings{Debug: true}, nil
+}
+
+func (s *debugCaptureRecordingStore) TouchKeyUsage(context.Context, string) error {
+	return nil
+}
+
+func (s *debugCaptureRecordingStore) RecordUsage(_ context.Context, record store.UsageRecord) error {
+	requestBody, err := os.ReadFile(record.DebugRequestBodyPath)
+	if err != nil {
+		return err
+	}
+	responseBody, err := os.ReadFile(record.DebugResponseBodyPath)
+	if err != nil {
+		return err
+	}
+	requestInfo, err := os.Stat(record.DebugRequestBodyPath)
+	if err != nil {
+		return err
+	}
+	responseInfo, err := os.Stat(record.DebugResponseBodyPath)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recordedUsage = append(s.recordedUsage, record)
+	s.requestBody = requestBody
+	s.responseBody = responseBody
+	s.requestPermissions = requestInfo.Mode().Perm()
+	s.responsePermissions = responseInfo.Mode().Perm()
+	return nil
+}
+
+func (s *debugCaptureRecordingStore) snapshot() (store.UsageRecord, []byte, []byte, os.FileMode, os.FileMode) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recordedUsage[0], s.requestBody, s.responseBody, s.requestPermissions, s.responsePermissions
+}
+
+func TestMCPMiddlewareSpoolsCompleteDebugBodiesWithoutQueueingBodyStrings(t *testing.T) {
+	requestBody := strings.Repeat("request-body-segment|", 120000)
+	responseBody := strings.Repeat("response-body-segment|", 550000)
+	debugStore := &debugCaptureRecordingStore{}
+	writer := store.NewAsyncUsageWriter(debugStore, 4)
+
+	handler := MCPMiddleware(debugStore, writer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		MarkToolOutcome(r.Context(), true)
+		_, _ = io.WriteString(w, responseBody)
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(requestBody))
+	requestContext := auth.WithAPIKey(request.Context(), &store.APIKey{ID: "debug-key", KeyPrefix: "grok_dbg"})
+	requestContext = WithToolName(requestContext, "grok_web_search")
+	request = request.WithContext(requestContext)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	writer.Close()
+
+	if len(debugStore.recordedUsage) != 1 {
+		t.Fatalf("recorded usage count = %d, want 1", len(debugStore.recordedUsage))
+	}
+	record, capturedRequest, capturedResponse, requestPermissions, responsePermissions := debugStore.snapshot()
+	if record.DebugRequestBody != "" || record.DebugResponseBody != "" {
+		t.Fatalf("queued usage record retained body strings: request=%d response=%d", len(record.DebugRequestBody), len(record.DebugResponseBody))
+	}
+	if len(record.DebugJSON) > 16<<10 {
+		t.Fatalf("debug metadata length = %d, want compact metadata", len(record.DebugJSON))
+	}
+	if strings.Contains(record.DebugJSON, "request-body-segment") || strings.Contains(record.DebugJSON, "response-body-segment") {
+		t.Fatal("debug metadata must not embed request or response bodies")
+	}
+	if !bytes.Equal(capturedRequest, []byte(requestBody)) {
+		t.Fatalf("captured request length = %d, want %d", len(capturedRequest), len(requestBody))
+	}
+	if !bytes.Equal(capturedResponse, []byte(responseBody)) {
+		t.Fatalf("captured response length = %d, want %d", len(capturedResponse), len(responseBody))
+	}
+	if requestPermissions != 0o600 || responsePermissions != 0o600 {
+		t.Fatalf("spool permissions request=%#o response=%#o, want 0600", requestPermissions, responsePermissions)
+	}
+	if _, err := os.Stat(record.DebugRequestBodyPath); !os.IsNotExist(err) {
+		t.Fatalf("request spool was not removed after persistence: %v", err)
+	}
+	if _, err := os.Stat(record.DebugResponseBodyPath); !os.IsNotExist(err) {
+		t.Fatalf("response spool was not removed after persistence: %v", err)
+	}
+}
+
+func TestMCPMiddlewarePrefersAuthoritativeSemanticOutcome(t *testing.T) {
+	testCases := []struct {
+		name                 string
+		semanticSuccess      bool
+		responseBody         string
+		expectedSuccess      bool
+		expectedQuotaRelease int
+	}{
+		{
+			name:                 "handler success overrides fallback error payload",
+			semanticSuccess:      true,
+			responseBody:         `{"jsonrpc":"2.0","id":1,"result":{"isError":true}}`,
+			expectedSuccess:      true,
+			expectedQuotaRelease: 0,
+		},
+		{
+			name:                 "handler error overrides fallback success payload",
+			semanticSuccess:      false,
+			responseBody:         `{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`,
+			expectedSuccess:      false,
+			expectedQuotaRelease: 1,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			usageStore := &failureRecordingStore{}
+			writer := store.NewAsyncUsageWriter(usageStore, 4)
+			handler := MCPMiddleware(usageStore, writer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				MarkToolOutcome(r.Context(), testCase.semanticSuccess)
+				_, _ = io.WriteString(w, testCase.responseBody)
+			}))
+
+			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+			requestContext := auth.WithAPIKey(request.Context(), &store.APIKey{ID: "k1"})
+			requestContext = auth.WithUser(requestContext, &auth.AuthenticatedUser{User: store.User{ID: "u1"}})
+			requestContext = WithToolName(requestContext, "grok_web_search")
+			request = request.WithContext(requestContext)
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+			writer.Close()
+
+			if len(usageStore.recordedUsage) != 1 {
+				t.Fatalf("recorded usage count = %d, want 1", len(usageStore.recordedUsage))
+			}
+			if usageStore.recordedUsage[0].Success != testCase.expectedSuccess {
+				t.Fatalf("recorded success = %t, want %t", usageStore.recordedUsage[0].Success, testCase.expectedSuccess)
+			}
+			if usageStore.releaseSuccessCalls != testCase.expectedQuotaRelease {
+				t.Fatalf("quota releases = %d, want %d", usageStore.releaseSuccessCalls, testCase.expectedQuotaRelease)
+			}
+		})
+	}
+}
+
+func TestMCPMiddlewareCleansDebugSpoolsOnPanic(t *testing.T) {
+	temporaryDirectory := t.TempDir()
+	t.Setenv("TMPDIR", temporaryDirectory)
+	debugStore := &debugCaptureRecordingStore{}
+	handler := MCPMiddleware(debugStore, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("handler failed")
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("panic request body"))
+	requestContext := auth.WithAPIKey(request.Context(), &store.APIKey{ID: "panic-key"})
+	requestContext = WithToolName(requestContext, "grok_web_search")
+	request = request.WithContext(requestContext)
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected downstream panic")
+			}
+		}()
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}()
+
+	entries, err := os.ReadDir(temporaryDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("debug spool files remained after panic: %+v", entries)
+	}
 }
 
 func (f *failureRecordingStore) TouchKeyUsage(_ context.Context, keyID string) error {

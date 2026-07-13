@@ -226,7 +226,7 @@ func TestSearchChatCompletionsContinuesIntermediateAnswer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(&config.Config{
+	client := newTestClient(t, &config.Config{
 		CPABaseURL:       server.URL,
 		CPAAPIKey:        "test-key",
 		UpstreamProtocol: config.UpstreamProtocolChatCompletions,
@@ -268,7 +268,7 @@ func TestSearchChatCompletionsRejectsPersistentIntermediateAnswer(t *testing.T) 
 	}))
 	defer server.Close()
 
-	client := NewClient(&config.Config{
+	client := newTestClient(t, &config.Config{
 		CPABaseURL:       server.URL,
 		CPAAPIKey:        "test-key",
 		UpstreamProtocol: config.UpstreamProtocolChatCompletions,
@@ -410,7 +410,7 @@ func TestClientUsesSelectedProtocolEndpointAndHeaders(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client := NewClient(&config.Config{
+			client := newTestClient(t, &config.Config{
 				CPABaseURL:       server.URL,
 				CPAAPIKey:        "test-key",
 				UpstreamProtocol: testCase.protocol,

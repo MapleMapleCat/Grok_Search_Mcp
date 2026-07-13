@@ -16,6 +16,7 @@ import (
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/grok"
 	"github.com/grok-mcp/internal/logx"
+	"github.com/grok-mcp/internal/usage"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -278,6 +279,42 @@ func TestRunSearchReturnsStructuredOutputFromUpstream(t *testing.T) {
 	}
 }
 
+func TestRunSearchMarksAuthoritativeSemanticOutcome(t *testing.T) {
+	t.Run("validation error", func(t *testing.T) {
+		ctx, marker := usage.WithToolOutcomeMarker(context.Background())
+		toolResult, _, err := runSearch(ctx, nil, nil, logx.New("mcp-test", false), grok.SearchRequest{})
+		if err != nil || toolResult == nil || !toolResult.IsError {
+			t.Fatalf("unexpected validation result: toolResult=%+v err=%v", toolResult, err)
+		}
+		semanticSuccess, known := marker.Outcome()
+		if !known || semanticSuccess {
+			t.Fatalf("semantic outcome = (%t, %t), want known error", semanticSuccess, known)
+		}
+	})
+
+	t.Run("successful search", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			responseJSON := `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: " + completedEventForMCPTest(responseJSON) + "\n\n"))
+		}))
+		defer server.Close()
+
+		ctx, marker := usage.WithToolOutcomeMarker(context.Background())
+		toolResult, output, err := runSearch(ctx, nil, newMCPTestClient(t, server.URL), logx.New("mcp-test", false), grok.SearchRequest{
+			Query:    "semantic outcome",
+			ToolType: grok.ToolTypeWebSearch,
+		})
+		if err != nil || toolResult != nil || output.Answer != "ok" {
+			t.Fatalf("unexpected success result: toolResult=%+v output=%+v err=%v", toolResult, output, err)
+		}
+		semanticSuccess, known := marker.Outcome()
+		if !known || !semanticSuccess {
+			t.Fatalf("semantic outcome = (%t, %t), want known success", semanticSuccess, known)
+		}
+	})
+}
+
 func TestRunSearchUsesRuntimeDebugState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		responseJSON := `{"output":[{"role":"assistant","content":[{"type":"output_text","text":"runtime debug answer"}]}]}`
@@ -294,7 +331,10 @@ func TestRunSearchUsesRuntimeDebugState(t *testing.T) {
 		Debug:      false,
 	}
 	debugState := logx.NewDebugState(false)
-	client := grok.NewClientWithDebugState(configuration, debugState)
+	client, err := grok.NewClientWithServerSettings(configuration.ServerSettings(), debugState)
+	if err != nil {
+		t.Fatalf("NewClientWithServerSettings failed: %v", err)
+	}
 	mcpLogger := logx.NewWithDebugState("mcp-test", debugState)
 
 	var logBuffer bytes.Buffer
@@ -483,12 +523,17 @@ func TestRunListModelsReturnsOnlyFilteredGrokModels(t *testing.T) {
 
 func newMCPTestClient(t *testing.T, baseURL string) *grok.Client {
 	t.Helper()
-	return grok.NewClient(&config.Config{
+	configuration := &config.Config{
 		CPABaseURL: baseURL,
 		CPAAPIKey:  "test-cpa-key",
 		Model:      "grok-4.3",
 		Timeout:    5 * time.Second,
-	})
+	}
+	client, err := grok.NewClientWithServerSettings(configuration.ServerSettings(), nil)
+	if err != nil {
+		t.Fatalf("NewClientWithServerSettings failed: %v", err)
+	}
+	return client
 }
 
 func completedEventForMCPTest(responseJSON string) string {

@@ -36,34 +36,6 @@ type clientSnapshot struct {
 	log          *logx.Logger
 }
 
-// NewClient 根据全局配置构造上游客户端。
-func NewClient(cfg *config.Config) *Client {
-	return NewClientWithDebugState(cfg, logx.NewDebugState(cfg.Debug))
-}
-
-// NewClientWithDebugState 使用可共享的运行时调试状态构造上游客户端。
-func NewClientWithDebugState(cfg *config.Config, debugState *logx.DebugState) *Client {
-	client, err := NewClientWithServerSettings(cfg.ServerSettings(), debugState)
-	if err == nil {
-		return client
-	}
-
-	if debugState == nil {
-		debugState = logx.NewDebugState(cfg.Debug)
-	}
-	client = &Client{
-		debugState: debugState,
-		log:        logx.NewWithDebugState("grok", debugState),
-	}
-	client.log.Debugf("failed to apply initial server settings: %v", err)
-	client.baseURL = cfg.CPABaseURL
-	client.apiKey = cfg.CPAAPIKey
-	client.protocol, _ = config.NormalizeUpstreamProtocol(cfg.UpstreamProtocol)
-	client.defaultModel = cfg.Model
-	client.httpClient = newHTTPClient(cfg.Timeout, "", false)
-	return client
-}
-
 // NewClientWithServerSettings constructs a client from validated runtime
 // settings. It returns configuration errors instead of silently falling back.
 func NewClientWithServerSettings(settings config.ServerSettings, debugState *logx.DebugState) (*Client, error) {
@@ -116,14 +88,6 @@ func (c *Client) snapshot() clientSnapshot {
 		httpClient:   c.httpClient,
 		log:          c.log,
 	}
-}
-
-func newHTTPClient(timeout time.Duration, proxyURL string, proxyEnabled bool) *http.Client {
-	client, err := newHTTPClientWithProxy(timeout, proxyURL, proxyEnabled)
-	if err != nil {
-		return newHTTPClient(defaultTimeoutFallback(), "", false)
-	}
-	return client
 }
 
 func newHTTPClientWithProxy(timeout time.Duration, proxyURL string, proxyEnabled bool) (*http.Client, error) {

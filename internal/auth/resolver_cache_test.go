@@ -11,14 +11,22 @@ import (
 type cachedResolverStore struct {
 	store.TestStore
 	key         *store.APIKey
+	keys        map[string]*store.APIKey
 	user        *store.User
 	tier        *store.Tier
 	getKeyCalls int
 }
 
-func (s *cachedResolverStore) GetKeyByHash(context.Context, string) (*store.APIKey, error) {
+func (s *cachedResolverStore) GetKeyByHash(_ context.Context, keyHash string) (*store.APIKey, error) {
 	s.getKeyCalls++
-	keyCopy := *s.key
+	key := s.key
+	if s.keys != nil {
+		key = s.keys[keyHash]
+	}
+	if key == nil {
+		return nil, nil
+	}
+	keyCopy := *key
 	return &keyCopy, nil
 }
 
@@ -59,5 +67,58 @@ func TestCachedAPIKeyResolverReloadsTierLimitsForCachedKey(t *testing.T) {
 	}
 	if fakeStore.getKeyCalls != 1 {
 		t.Fatalf("key lookup should still be cached, got %d lookups", fakeStore.getKeyCalls)
+	}
+}
+
+func TestCachedAPIKeyResolverReclaimsExpiredEntriesAtBoundedIntervals(t *testing.T) {
+	currentTime := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
+	tier := &store.Tier{ID: "tier-id", Name: "tier", RPM: 10, SuccessLimit: 10}
+	fakeStore := &cachedResolverStore{
+		keys: map[string]*store.APIKey{
+			"first-hash":  {ID: "first-key", UserID: "user-id", Enabled: true},
+			"second-hash": {ID: "second-key", UserID: "user-id", Enabled: true},
+			"third-hash":  {ID: "third-key", UserID: "user-id", Enabled: true},
+		},
+		user: &store.User{ID: "user-id", Enabled: true, TierID: tier.ID},
+		tier: tier,
+	}
+	resolver := NewCachedAPIKeyResolver(fakeStore, 10*time.Second)
+	resolver.now = func() time.Time { return currentTime }
+
+	if _, _, err := resolver.Resolve(context.Background(), "first-hash"); err != nil {
+		t.Fatal(err)
+	}
+	firstCleanupAt := currentTime.Add(authCacheCleanupInterval)
+	if !resolver.nextCleanupAt.Equal(firstCleanupAt) {
+		t.Fatalf("next cleanup = %s, want %s", resolver.nextCleanupAt, firstCleanupAt)
+	}
+
+	currentTime = currentTime.Add(11 * time.Second)
+	if _, _, err := resolver.Resolve(context.Background(), "second-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := resolver.byHash["first-hash"]; !exists {
+		t.Fatal("cleanup ran before the bounded cleanup interval")
+	}
+	if !resolver.nextCleanupAt.Equal(firstCleanupAt) {
+		t.Fatalf("early resolve changed next cleanup to %s, want %s", resolver.nextCleanupAt, firstCleanupAt)
+	}
+
+	currentTime = firstCleanupAt
+	if _, _, err := resolver.Resolve(context.Background(), "third-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := resolver.byHash["first-hash"]; exists {
+		t.Fatal("expired first entry was not reclaimed")
+	}
+	if _, exists := resolver.byHash["second-hash"]; exists {
+		t.Fatal("expired second entry was not reclaimed")
+	}
+	if _, exists := resolver.byHash["third-hash"]; !exists {
+		t.Fatal("current entry was not cached after cleanup")
+	}
+	wantedNextCleanupAt := currentTime.Add(authCacheCleanupInterval)
+	if !resolver.nextCleanupAt.Equal(wantedNextCleanupAt) {
+		t.Fatalf("next cleanup = %s, want %s", resolver.nextCleanupAt, wantedNextCleanupAt)
 	}
 }

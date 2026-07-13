@@ -17,6 +17,7 @@ import (
 	"github.com/grok-mcp/internal/auth"
 	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/grok"
+	"github.com/grok-mcp/internal/logx"
 	mcpserver "github.com/grok-mcp/internal/mcp"
 	"github.com/grok-mcp/internal/panel"
 	"github.com/grok-mcp/internal/ratelimit"
@@ -200,9 +201,12 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 	if err := st.ConfigureAPIKeyEncryption(cfg.JWTSecret); err != nil {
 		t.Fatal(err)
 	}
-	client := grok.NewClient(cfg)
+	client, err := grok.NewClientWithServerSettings(cfg.ServerSettings(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "grok-mcp", Version: version.Version}, nil)
-	mcpserver.RegisterTools(server, client, false)
+	mcpserver.RegisterToolsWithLogger(server, client, logx.New("mcp-test", false))
 
 	userLimiter := ratelimit.NewUserLimiter()
 	defer userLimiter.Close()
