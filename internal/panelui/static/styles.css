@@ -390,6 +390,10 @@ svg {
   align-items: end;
 }
 
+.form-grid-align-fields .field-label {
+  min-height: 34px;
+}
+
 .field-group {
   display: grid;
   gap: 8px;
