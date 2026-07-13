@@ -16,7 +16,7 @@ It does **not** call the official xAI API directly. Instead, it connects to an e
   - `grok_web_search`
   - `grok_x_search`
   - `grok_list_models`
-- Grok response streaming through CPA `/v1/responses`
+- Selectable CPA upstream protocol: OpenAI Responses, OpenAI Chat Completions, or Anthropic Messages
 - MCP progress notifications for upstream search rounds
 - Per-user client API keys with enable/disable controls
 - Tier-based RPM and monthly successful-call quotas
@@ -40,7 +40,7 @@ grok-mcp
   |
   +---------- SQLite -------------------- users, keys, tiers, usage, settings
   |
-  |  POST /v1/responses
+  |  POST /v1/responses, /v1/chat/completions, or /v1/messages
   |  GET  /v1/models
   |  Authorization: Bearer <CPA API key>
   v
@@ -54,7 +54,7 @@ xAI / Grok
 
 | Credential | Used between | Purpose |
 |---|---|---|
-| CPA API key | `grok-mcp` -> CPA | Authenticates upstream `/v1/responses` and `/v1/models` requests. |
+| CPA API key | `grok-mcp` -> CPA | Authenticates the selected upstream search endpoint and `/v1/models` requests. |
 | MCP client API key | MCP client -> `/mcp` | Created and copied on demand in the panel. The database stores an authentication hash plus recoverable ciphertext encrypted with a key derived from `GROK_JWT_SECRET`. |
 | Panel JWT | Browser/API client -> `/panel/v1` | Returned by panel login. It cannot authenticate `/mcp`. |
 
@@ -62,7 +62,7 @@ xAI / Grok
 
 - Linux is the currently documented local runtime target
 - Go 1.25.0 or later for local builds
-- A reachable CPA deployment with compatible `/v1/responses` and `/v1/models` endpoints
+- A reachable CPA deployment with `/v1/models` and at least one compatible search endpoint: `/v1/responses`, `/v1/chat/completions`, or `/v1/messages`
 - Docker and Docker Compose for the container workflow, if preferred
 - An MCP client that supports Streamable HTTP and custom Bearer headers
 
@@ -233,6 +233,7 @@ Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs,
 | `GROK_JWT_SECRET` | None | Required HS256 panel signing secret; must be at least 32 bytes. Always supplied through the environment. |
 | `CPA_API_KEY` | None | Required for a new database. Existing persisted server settings may provide it on later starts. |
 | `CPA_BASE_URL` | `http://127.0.0.1:8317` | CPA root URL. |
+| `GROK_UPSTREAM_PROTOCOL` | `responses` | Search protocol: `responses`, `chat_completions`, or `anthropic_messages`. |
 | `GROK_MODEL` | `grok-4.3` | Default Grok model. |
 | `GROK_HTTP_TIMEOUT` | `120` | Upstream timeout in seconds. |
 | `GROK_HTTP_ADDR` | `:8080` | HTTP listen address. Requires restart to change. |
@@ -249,6 +250,7 @@ Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs,
 On startup, environment variables are loaded first. If SQLite already contains server settings, the persisted upstream settings take precedence. Administrators can update the following values from **Server Settings** without restarting:
 
 - CPA base URL and API key
+- Upstream search protocol
 - Default model and timeout
 - Explicit proxy URL and enabled state
 - Registration mode
@@ -258,6 +260,16 @@ The listen address, database path, JWT secret, source-IP RPM, and trusted proxie
 
 > [!WARNING]
 > The CPA API key is persisted in SQLite. Protect and back up the database as sensitive data. The panel only returns a masked preview of this key.
+
+### Upstream protocol mapping
+
+| Setting | Endpoint | Search mapping |
+|---|---|---|
+| `responses` | `POST /v1/responses` | CPA Responses built-ins (`web_search` / `x_search`); this remains the backward-compatible default and provides search-round progress events. |
+| `chat_completions` | `POST /v1/chat/completions` | xAI-compatible `search_parameters`, with `web` or `x` sources and streamed Chat Completions chunks. |
+| `anthropic_messages` | `POST /v1/messages` | Anthropic server web-search tool and CPA-compatible `x_search` extension, with Messages SSE events. |
+
+Protocol support ultimately depends on the selected CPA version, provider, and model capabilities. Responses is the safest compatibility choice for existing Grok/CPA deployments. Image-search options are Responses-specific; other protocols ignore them when no equivalent wire option exists.
 
 ## Users, registration, tiers, and quotas
 

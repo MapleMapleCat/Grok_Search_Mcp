@@ -16,7 +16,7 @@
   - `grok_web_search`
   - `grok_x_search`
   - `grok_list_models`
-- 通过 CPA `/v1/responses` 流式接收 Grok 响应
+- 可选择 CPA 上游协议：OpenAI Responses、OpenAI Chat Completions 或 Anthropic Messages
 - 将上游搜索轮次转换为 MCP progress 通知
 - 用户级客户端 API Key，可单独启用或禁用
 - 基于 tier 的 RPM 和每月成功调用额度
@@ -40,7 +40,7 @@ grok-mcp
   |
   +---------- SQLite ------------------- 用户、Key、tier、用量、设置
   |
-  |  POST /v1/responses
+  |  POST /v1/responses、/v1/chat/completions 或 /v1/messages
   |  GET  /v1/models
   |  Authorization: Bearer <CPA API Key>
   v
@@ -54,7 +54,7 @@ xAI / Grok
 
 | 凭证 | 使用位置 | 用途 |
 |---|---|---|
-| CPA API Key | `grok-mcp` -> CPA | 认证上游 `/v1/responses` 和 `/v1/models` 请求。 |
+| CPA API Key | `grok-mcp` -> CPA | 认证所选上游搜索端点和 `/v1/models` 请求。 |
 | MCP 客户端 API Key | MCP 客户端 -> `/mcp` | 在面板创建并可按需复制；数据库保存鉴权哈希和由 `GROK_JWT_SECRET` 派生密钥加密的可恢复密文。 |
 | 面板 JWT | 浏览器/API 客户端 -> `/panel/v1` | 登录面板后返回，不能用于认证 `/mcp`。 |
 
@@ -62,7 +62,7 @@ xAI / Grok
 
 - 当前文档化的本地运行目标为 Linux
 - 本地构建需要 Go 1.25.0 或更高版本
-- 可访问且兼容 `/v1/responses`、`/v1/models` 的 CPA 服务
+- 可访问 `/v1/models`，并至少兼容 `/v1/responses`、`/v1/chat/completions`、`/v1/messages` 之一的 CPA 服务
 - 容器部署可选用 Docker 和 Docker Compose
 - MCP 客户端需要支持 Streamable HTTP 和自定义 Bearer Header
 
@@ -233,6 +233,7 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 | `GROK_JWT_SECRET` | 无 | 面板 HS256 签名密钥，必填且至少 32 字节，始终通过环境变量提供。 |
 | `CPA_API_KEY` | 无 | 新数据库必填；后续启动可以由 SQLite 中的服务设置提供。 |
 | `CPA_BASE_URL` | `http://127.0.0.1:8317` | CPA 根地址。 |
+| `GROK_UPSTREAM_PROTOCOL` | `responses` | 搜索协议：`responses`、`chat_completions` 或 `anthropic_messages`。 |
 | `GROK_MODEL` | `grok-4.3` | 默认 Grok 模型。 |
 | `GROK_HTTP_TIMEOUT` | `120` | 上游超时秒数。 |
 | `GROK_HTTP_ADDR` | `:8080` | HTTP 监听地址，修改后需要重启。 |
@@ -249,6 +250,7 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 服务启动时先加载环境变量；如果 SQLite 已保存服务设置，持久化的上游设置优先。管理员可以在 **Server Settings** 中热更新：
 
 - CPA 地址和 API Key
+- 上游搜索协议
 - 默认模型和超时
 - 显式代理地址及开关
 - 注册模式
@@ -258,6 +260,16 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 
 > [!WARNING]
 > CPA API Key 会持久化到 SQLite。请将数据库视为敏感数据进行权限控制和备份；面板响应只返回掩码预览。
+
+### 上游协议映射
+
+| 配置值 | 端点 | 搜索映射 |
+|---|---|---|
+| `responses` | `POST /v1/responses` | CPA Responses 内置工具（`web_search` / `x_search`）；这是向后兼容的默认值，并可提供搜索轮次进度。 |
+| `chat_completions` | `POST /v1/chat/completions` | xAI 兼容的 `search_parameters`，使用 `web` 或 `x` 来源并解析 Chat Completions 流。 |
+| `anthropic_messages` | `POST /v1/messages` | Anthropic 服务端网页搜索工具与 CPA 兼容的 `x_search` 扩展，并解析 Messages SSE。 |
+
+实际能力取决于所使用的 CPA 版本、提供方和模型。对于现有 Grok/CPA 部署，Responses 仍是兼容性最稳妥的选项。图片搜索选项仅在 Responses 协议存在对应字段时生效，其他协议没有等价字段时会忽略。
 
 ## 用户、注册、Tier 与配额
 

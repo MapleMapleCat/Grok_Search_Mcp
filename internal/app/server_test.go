@@ -160,6 +160,7 @@ func TestInitializeServerSettingsPrefersDatabaseAndSuppliesMissingEnvironmentKey
 	databaseSettings := config.ServerSettings{
 		CPABaseURL:       "http://database-cpa.example",
 		CPAAPIKey:        "database-key",
+		UpstreamProtocol: config.UpstreamProtocolAnthropicMessages,
 		Model:            "grok-database-model",
 		TimeoutSeconds:   90,
 		RegistrationMode: store.RegistrationModeInvite,
@@ -170,10 +171,11 @@ func TestInitializeServerSettingsPrefersDatabaseAndSuppliesMissingEnvironmentKey
 	}
 
 	cfg := &config.Config{
-		CPABaseURL: "http://environment-cpa.example",
-		CPAAPIKey:  "",
-		Model:      "grok-environment-model",
-		Timeout:    30 * time.Second,
+		CPABaseURL:       "http://environment-cpa.example",
+		CPAAPIKey:        "",
+		UpstreamProtocol: config.UpstreamProtocolChatCompletions,
+		Model:            "grok-environment-model",
+		Timeout:          30 * time.Second,
 	}
 	effectiveSettings, err := InitializeServerSettings(context.Background(), sqliteStore, cfg)
 	if err != nil {

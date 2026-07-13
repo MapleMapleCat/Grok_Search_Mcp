@@ -52,6 +52,7 @@ func TestLoadAllowsMissingAPIKeyForDatabaseFallback(t *testing.T) {
 func TestLoadDefaults(t *testing.T) {
 	panelEnv(t)
 	setEnv(t, "CPA_BASE_URL", "")
+	setEnv(t, "GROK_UPSTREAM_PROTOCOL", "")
 	setEnv(t, "GROK_MODEL", "")
 	setEnv(t, "GROK_HTTP_TIMEOUT", "")
 	setEnv(t, "GROK_MCP_DEBUG", "")
@@ -63,6 +64,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.CPABaseURL != "http://127.0.0.1:8317" {
 		t.Fatalf("unexpected base URL: %s", cfg.CPABaseURL)
 	}
+	if cfg.UpstreamProtocol != UpstreamProtocolResponses {
+		t.Fatalf("unexpected upstream protocol: %s", cfg.UpstreamProtocol)
+	}
 	if cfg.Model != "grok-4.3" {
 		t.Fatalf("unexpected model: %s", cfg.Model)
 	}
@@ -71,6 +75,38 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Debug {
 		t.Fatalf("expected debug disabled by default")
+	}
+}
+
+func TestNormalizeUpstreamProtocol(t *testing.T) {
+	testCases := []struct {
+		name         string
+		input        UpstreamProtocol
+		expected     UpstreamProtocol
+		expectsError bool
+	}{
+		{name: "empty defaults to responses", input: "", expected: UpstreamProtocolResponses},
+		{name: "trims and normalizes", input: " Chat_Completions ", expected: UpstreamProtocolChatCompletions},
+		{name: "anthropic messages", input: UpstreamProtocolAnthropicMessages, expected: UpstreamProtocolAnthropicMessages},
+		{name: "rejects unknown protocol", input: "legacy", expectsError: true},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			actual, err := NormalizeUpstreamProtocol(testCase.input)
+			if testCase.expectsError {
+				if err == nil {
+					t.Fatalf("expected protocol validation error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalize protocol: %v", err)
+			}
+			if actual != testCase.expected {
+				t.Fatalf("expected %q, got %q", testCase.expected, actual)
+			}
+		})
 	}
 }
 

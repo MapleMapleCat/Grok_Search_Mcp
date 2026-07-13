@@ -15,7 +15,7 @@ const (
 	webSearchToolName        = "grok_web_search"
 	webSearchToolTitle       = "Grok Web Search"
 	webSearchToolDescription = "Search the public web in real time via Grok web_search " +
-		"(through CPA /v1/responses). Use for fresh public web information and " +
+		"through the configured CPA upstream protocol. Use for fresh public web information and " +
 		"source-backed answers. query is required; model is optional and defaults " +
 		"to GROK_MODEL; allowed_domains and excluded_domains are mutually " +
 		"exclusive with a maximum of 5 domains each. enable_image_understanding " +
@@ -24,7 +24,7 @@ const (
 	xSearchToolName        = "grok_x_search"
 	xSearchToolTitle       = "Grok X Search"
 	xSearchToolDescription = "Search posts on X in real time via Grok x_search " +
-		"(through CPA /v1/responses). Use for current X/Twitter posts and " +
+		"through the configured CPA upstream protocol. Use for current X/Twitter posts and " +
 		"source-backed answers. query is required; model is optional and defaults " +
 		"to GROK_MODEL. This tool accepts only query and model; domain filters " +
 		"and image-related options belong to grok_web_search."

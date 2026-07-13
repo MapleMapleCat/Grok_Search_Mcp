@@ -14,26 +14,38 @@ import (
 )
 
 const (
-	defaultBaseURL  = "http://127.0.0.1:8317"
-	defaultModel    = "grok-4.3"
-	defaultTimeout  = 120 * time.Second
-	defaultHTTPAddr = ":8080"
-	defaultDBPath   = "./grok-mcp.db"
+	defaultBaseURL          = "http://127.0.0.1:8317"
+	defaultModel            = "grok-4.3"
+	defaultUpstreamProtocol = UpstreamProtocolResponses
+	defaultTimeout          = 120 * time.Second
+	defaultHTTPAddr         = ":8080"
+	defaultDBPath           = "./grok-mcp.db"
 	// defaultMCPIPRPM 在 API key 鉴权前按来源 IP 限制 /mcp 请求，保护认证存储免受暴力探测和 DoS。
 	defaultMCPIPRPM = 300
 )
 
+// UpstreamProtocol identifies the CPA-compatible HTTP protocol used for
+// search requests. Existing deployments default to the Responses API.
+type UpstreamProtocol string
+
+const (
+	UpstreamProtocolResponses         UpstreamProtocol = "responses"
+	UpstreamProtocolChatCompletions   UpstreamProtocol = "chat_completions"
+	UpstreamProtocolAnthropicMessages UpstreamProtocol = "anthropic_messages"
+)
+
 // Config 保存进程启动所需的全部配置项。
 type Config struct {
-	CPABaseURL string
-	CPAAPIKey  string
-	Model      string
-	Timeout    time.Duration
-	Debug      bool
-	HTTPAddr   string
-	DBPath     string
-	JWTSecret  string
-	MCPIPRPM   int
+	CPABaseURL       string
+	CPAAPIKey        string
+	UpstreamProtocol UpstreamProtocol
+	Model            string
+	Timeout          time.Duration
+	Debug            bool
+	HTTPAddr         string
+	DBPath           string
+	JWTSecret        string
+	MCPIPRPM         int
 	// TrustedProxies 为可信反向代理 CIDR；仅当 RemoteAddr 命中时才解析 X-Forwarded-For / X-Real-IP。
 	// 空表示永不信任转发头（公网直连安全默认）。
 	TrustedProxies   []*net.IPNet
@@ -48,6 +60,7 @@ type Config struct {
 type ServerSettings struct {
 	CPABaseURL       string
 	CPAAPIKey        string
+	UpstreamProtocol UpstreamProtocol
 	Model            string
 	TimeoutSeconds   int
 	ProxyURL         string
@@ -60,17 +73,18 @@ type ServerSettings struct {
 func Load() (*Config, error) {
 	proxyURL := strings.TrimSpace(os.Getenv("GROK_PROXY_URL"))
 	cfg := &Config{
-		CPABaseURL:   strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
-		CPAAPIKey:    strings.TrimSpace(os.Getenv("CPA_API_KEY")),
-		Model:        envOrDefault("GROK_MODEL", defaultModel),
-		Timeout:      defaultTimeout,
-		Debug:        parseBoolEnv("GROK_MCP_DEBUG"),
-		HTTPAddr:     envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
-		DBPath:       envOrDefault("GROK_DB_PATH", defaultDBPath),
-		JWTSecret:    strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
-		MCPIPRPM:     defaultMCPIPRPM,
-		ProxyURL:     proxyURL,
-		ProxyEnabled: resolveProxyEnabledFromEnv(proxyURL),
+		CPABaseURL:       strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
+		CPAAPIKey:        strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		UpstreamProtocol: UpstreamProtocol(envOrDefault("GROK_UPSTREAM_PROTOCOL", string(defaultUpstreamProtocol))),
+		Model:            envOrDefault("GROK_MODEL", defaultModel),
+		Timeout:          defaultTimeout,
+		Debug:            parseBoolEnv("GROK_MCP_DEBUG"),
+		HTTPAddr:         envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
+		DBPath:           envOrDefault("GROK_DB_PATH", defaultDBPath),
+		JWTSecret:        strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
+		MCPIPRPM:         defaultMCPIPRPM,
+		ProxyURL:         proxyURL,
+		ProxyEnabled:     resolveProxyEnabledFromEnv(proxyURL),
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("GROK_HTTP_TIMEOUT")); raw != "" {
@@ -107,6 +121,7 @@ func Load() (*Config, error) {
 	}
 	cfg.CPABaseURL = environmentSettings.CPABaseURL
 	cfg.CPAAPIKey = environmentSettings.CPAAPIKey
+	cfg.UpstreamProtocol = environmentSettings.UpstreamProtocol
 	cfg.Model = environmentSettings.Model
 	cfg.Timeout = time.Duration(environmentSettings.TimeoutSeconds) * time.Second
 	cfg.ProxyURL = environmentSettings.ProxyURL
@@ -136,6 +151,7 @@ func (c *Config) ServerSettings() ServerSettings {
 	return ServerSettings{
 		CPABaseURL:       c.CPABaseURL,
 		CPAAPIKey:        c.CPAAPIKey,
+		UpstreamProtocol: c.UpstreamProtocol,
 		Model:            c.Model,
 		TimeoutSeconds:   timeoutSeconds,
 		ProxyURL:         c.ProxyURL,
@@ -154,6 +170,11 @@ func NormalizeServerSettings(settings ServerSettings) (ServerSettings, error) {
 func normalizeServerSettings(settings ServerSettings, requireAPIKey bool) (ServerSettings, error) {
 	settings.CPABaseURL = strings.TrimRight(strings.TrimSpace(settings.CPABaseURL), "/")
 	settings.CPAAPIKey = strings.TrimSpace(settings.CPAAPIKey)
+	upstreamProtocol, err := NormalizeUpstreamProtocol(settings.UpstreamProtocol)
+	if err != nil {
+		return settings, err
+	}
+	settings.UpstreamProtocol = upstreamProtocol
 	settings.Model = strings.TrimSpace(settings.Model)
 	settings.ProxyURL = strings.TrimSpace(settings.ProxyURL)
 	registrationMode, err := store.NormalizeRegistrationMode(settings.RegistrationMode)
@@ -190,6 +211,27 @@ func normalizeServerSettings(settings ServerSettings, requireAPIKey bool) (Serve
 	}
 
 	return settings, nil
+}
+
+// NormalizeUpstreamProtocol canonicalizes the configured protocol while
+// preserving Responses as the backward-compatible default for empty values.
+func NormalizeUpstreamProtocol(protocol UpstreamProtocol) (UpstreamProtocol, error) {
+	normalizedProtocol := UpstreamProtocol(strings.ToLower(strings.TrimSpace(string(protocol))))
+	switch normalizedProtocol {
+	case "", UpstreamProtocolResponses:
+		return UpstreamProtocolResponses, nil
+	case UpstreamProtocolChatCompletions:
+		return UpstreamProtocolChatCompletions, nil
+	case UpstreamProtocolAnthropicMessages:
+		return UpstreamProtocolAnthropicMessages, nil
+	default:
+		return "", fmt.Errorf(
+			"upstream_protocol must be one of %q, %q, or %q",
+			UpstreamProtocolResponses,
+			UpstreamProtocolChatCompletions,
+			UpstreamProtocolAnthropicMessages,
+		)
+	}
 }
 
 // ValidateModel 校验模型名是否合法：只需包含 "grok"（不区分大小写）即可。

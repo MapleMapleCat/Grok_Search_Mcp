@@ -9,6 +9,7 @@ export function renderSettingsPage(state) {
   }
 
   const settings = state.data.settings || {};
+  const upstreamProtocol = settings.upstream_protocol || "responses";
   const modelOptions = state.data.models || [];
   const knownModels = new Set(modelOptions.map((model) => model.id));
   const modelChoices = settings.model && !knownModels.has(settings.model)
@@ -20,8 +21,13 @@ export function renderSettingsPage(state) {
     <div class="settings-layout">
       <form class="data-card" data-form="settings">
         <section class="settings-section">
-          <div class="settings-section-copy"><h3>上游连接</h3><p>配置 CPA 服务地址和访问凭证。留空 API Key 将保留当前值。</p></div>
+          <div class="settings-section-copy"><h3>上游连接</h3><p>配置 CPA 服务地址、访问凭证与请求协议。留空 API Key 将保留当前值。</p></div>
           <div class="form-grid">
+            <label class="field-group is-full"><span class="field-label">上游协议</span><select class="select-input" name="upstream_protocol" required>
+              <option value="responses" ${upstreamProtocol === "responses" ? "selected" : ""}>OpenAI Responses（/v1/responses）</option>
+              <option value="chat_completions" ${upstreamProtocol === "chat_completions" ? "selected" : ""}>OpenAI Chat Completions（/v1/chat/completions）</option>
+              <option value="anthropic_messages" ${upstreamProtocol === "anthropic_messages" ? "selected" : ""}>Anthropic Messages（/v1/messages）</option>
+            </select><span class="field-hint">协议切换会立即应用到同一套 CPA 连接配置。</span></label>
             <label class="field-group is-full"><span class="field-label">CPA Base URL</span><input class="text-input" name="cpa_base_url" type="url" value="${escapeHTML(settings.cpa_base_url || "")}" placeholder="http://127.0.0.1:8317" required></label>
             <label class="field-group is-full"><span class="field-label"><span>CPA API Key</span><span class="field-hint">${settings.cpa_api_key_set ? `已配置 ${escapeHTML(settings.cpa_api_key_preview || "")}` : "尚未配置"}</span></span><input class="text-input" name="cpa_api_key" type="password" autocomplete="new-password" placeholder="留空以保留现有密钥"></label>
           </div>
@@ -60,6 +66,7 @@ export function renderSettingsPage(state) {
         <div class="info-card-top"><span class="info-card-icon">${renderIcon("shield")}</span><h3>运行时热更新</h3><p>这些设置保存后会立即应用到上游客户端，无需重启 grok-mcp 服务。</p></div>
         <div class="info-list">
           <div class="info-row"><span>服务版本</span><strong>${escapeHTML(settings.version || "未知")}</strong></div>
+          <div class="info-row"><span>上游协议</span><strong>${escapeHTML(getUpstreamProtocolLabel(upstreamProtocol))}</strong></div>
           <div class="info-row"><span>当前模型</span><strong>${escapeHTML(settings.model || "未配置")}</strong></div>
           <div class="info-row"><span>API Key</span><strong>${settings.cpa_api_key_set ? "已安全配置" : "未配置"}</strong></div>
           <div class="info-row"><span>代理</span><strong>${settings.proxy_enabled ? "已启用" : "直连"}</strong></div>
@@ -74,4 +81,13 @@ export function renderSettingsPage(state) {
 function getRegistrationModeLabel(mode) {
   const labels = { free: "自由注册", invite: "邀请注册", disabled: "关闭注册" };
   return labels[mode] || "未知";
+}
+
+function getUpstreamProtocolLabel(protocol) {
+  const labels = {
+    responses: "OpenAI Responses",
+    chat_completions: "OpenAI Chat Completions",
+    anthropic_messages: "Anthropic Messages"
+  };
+  return labels[protocol] || "未知";
 }

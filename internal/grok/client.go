@@ -20,6 +20,7 @@ type Client struct {
 	mu           sync.RWMutex
 	baseURL      string
 	apiKey       string
+	protocol     config.UpstreamProtocol
 	defaultModel string
 	httpClient   *http.Client
 	debugState   *logx.DebugState
@@ -29,6 +30,7 @@ type Client struct {
 type clientSnapshot struct {
 	baseURL      string
 	apiKey       string
+	protocol     config.UpstreamProtocol
 	defaultModel string
 	httpClient   *http.Client
 	log          *logx.Logger
@@ -56,6 +58,7 @@ func NewClientWithDebugState(cfg *config.Config, debugState *logx.DebugState) *C
 	client.log.Debugf("failed to apply initial server settings: %v", err)
 	client.baseURL = cfg.CPABaseURL
 	client.apiKey = cfg.CPAAPIKey
+	client.protocol, _ = config.NormalizeUpstreamProtocol(cfg.UpstreamProtocol)
 	client.defaultModel = cfg.Model
 	client.httpClient = newHTTPClient(cfg.Timeout, "", false)
 	return client
@@ -81,6 +84,10 @@ func NewClientWithServerSettings(settings config.ServerSettings, debugState *log
 // subsequent search requests. In-flight searches keep their connection snapshot,
 // while the shared debug switch takes effect immediately for every logger.
 func (c *Client) ApplyServerSettings(settings config.ServerSettings) error {
+	protocol, err := config.NormalizeUpstreamProtocol(settings.UpstreamProtocol)
+	if err != nil {
+		return err
+	}
 	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
 	httpClient, err := newHTTPClientWithProxy(timeout, settings.ProxyURL, settings.ProxyEnabled)
 	if err != nil {
@@ -91,6 +98,7 @@ func (c *Client) ApplyServerSettings(settings config.ServerSettings) error {
 	defer c.mu.Unlock()
 	c.baseURL = settings.CPABaseURL
 	c.apiKey = settings.CPAAPIKey
+	c.protocol = protocol
 	c.defaultModel = settings.Model
 	c.httpClient = httpClient
 	c.debugState.SetEnabled(settings.Debug)
@@ -103,6 +111,7 @@ func (c *Client) snapshot() clientSnapshot {
 	return clientSnapshot{
 		baseURL:      c.baseURL,
 		apiKey:       c.apiKey,
+		protocol:     c.protocol,
 		defaultModel: c.defaultModel,
 		httpClient:   c.httpClient,
 		log:          c.log,
@@ -160,23 +169,17 @@ func (c *Client) SearchStream(ctx context.Context, req SearchRequest, onRound fu
 	}
 	req = validatedRequest
 
-	model, body, err := buildSearchRequestBody(req, snapshot.defaultModel)
-	if err != nil {
-		return nil, err
+	var result *SearchResult
+	switch snapshot.protocol {
+	case config.UpstreamProtocolResponses:
+		result, err = snapshot.searchResponses(ctx, req, onRound)
+	case config.UpstreamProtocolChatCompletions:
+		result, err = snapshot.searchChatCompletions(ctx, req)
+	case config.UpstreamProtocolAnthropicMessages:
+		result, err = snapshot.searchAnthropicMessages(ctx, req)
+	default:
+		return nil, fmt.Errorf("unsupported upstream protocol: %q", snapshot.protocol)
 	}
-	snapshot.log.Debugf("SearchStream start model=%s tool=%s query=%q", model, req.ToolType, logx.Truncate(req.Query, 80))
-
-	resp, err := snapshot.post(ctx, body)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, snapshot.httpError(resp)
-	}
-
-	result, err := parseSearchStream(resp.Body, onRound, snapshot.log)
 	if err != nil {
 		return nil, err
 	}
@@ -186,14 +189,41 @@ func (c *Client) SearchStream(ctx context.Context, req SearchRequest, onRound fu
 	return result, nil
 }
 
+func (s clientSnapshot) searchResponses(ctx context.Context, req SearchRequest, onRound func(SearchRound)) (*SearchResult, error) {
+	model, body, err := buildSearchRequestBody(req, s.defaultModel)
+	if err != nil {
+		return nil, err
+	}
+	s.log.Debugf("SearchStream start protocol=%s model=%s tool=%s query=%q", s.protocol, model, req.ToolType, logx.Truncate(req.Query, 80))
+
+	response, err := s.postJSON(ctx, "/v1/responses", body, false)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, s.httpError(response)
+	}
+	return parseSearchStream(response.Body, onRound, s.log)
+}
+
 // post 向上游发送 JSON 请求，Accept 为 text/event-stream 以接收 SSE。
-func (s clientSnapshot) post(ctx context.Context, body []byte) (*http.Response, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/v1/responses", bytes.NewReader(body))
+func (s clientSnapshot) postJSON(ctx context.Context, endpoint string, body []byte, anthropicHeaders bool) (*http.Response, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	if anthropicHeaders {
+		// CPA protects every /v1 route with its Bearer key while Anthropic-compatible
+		// clients conventionally send x-api-key. Supplying both keeps the request
+		// compatible with CPA and stricter Messages implementations.
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+		httpReq.Header.Set("x-api-key", s.apiKey)
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		httpReq.Header.Set("Authorization", "Bearer "+s.apiKey)
+	}
 	httpReq.Header.Set("Accept", "text/event-stream")
 
 	resp, err := s.httpClient.Do(httpReq)

@@ -18,6 +18,7 @@ func ServerSettingsFromFields(fields store.SettingsFields) ServerSettings {
 	return ServerSettings{
 		CPABaseURL:       fields.CPABaseURL,
 		CPAAPIKey:        fields.CPAAPIKey,
+		UpstreamProtocol: UpstreamProtocol(fields.UpstreamProtocol),
 		Model:            fields.Model,
 		TimeoutSeconds:   fields.TimeoutSeconds,
 		ProxyURL:         fields.ProxyURL,
@@ -32,6 +33,7 @@ func SettingsFieldsFromConfig(settings ServerSettings) store.SettingsFields {
 	return store.SettingsFields{
 		CPABaseURL:       settings.CPABaseURL,
 		CPAAPIKey:        settings.CPAAPIKey,
+		UpstreamProtocol: string(settings.UpstreamProtocol),
 		Model:            settings.Model,
 		TimeoutSeconds:   settings.TimeoutSeconds,
 		ProxyURL:         settings.ProxyURL,

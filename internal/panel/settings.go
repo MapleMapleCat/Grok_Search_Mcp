@@ -111,6 +111,9 @@ func mergeServerSettingsRequest(currentSettings config.ServerSettings, req Updat
 	if req.CPAAPIKey != nil && strings.TrimSpace(*req.CPAAPIKey) != "" {
 		mergedSettings.CPAAPIKey = *req.CPAAPIKey
 	}
+	if req.UpstreamProtocol != nil {
+		mergedSettings.UpstreamProtocol = *req.UpstreamProtocol
+	}
 	if req.Model != nil {
 		mergedSettings.Model = *req.Model
 	}

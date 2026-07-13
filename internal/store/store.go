@@ -189,6 +189,7 @@ type ServerSettings struct {
 	ID               string
 	CPABaseURL       string
 	CPAAPIKey        string
+	UpstreamProtocol string
 	Model            string
 	TimeoutSeconds   int
 	ProxyURL         string
@@ -289,6 +290,7 @@ type Store interface {
 type SettingsFields struct {
 	CPABaseURL       string
 	CPAAPIKey        string
+	UpstreamProtocol string
 	Model            string
 	TimeoutSeconds   int
 	ProxyURL         string
@@ -305,6 +307,7 @@ func SettingsFieldsFromStore(settings *ServerSettings) SettingsFields {
 	return SettingsFields{
 		CPABaseURL:       settings.CPABaseURL,
 		CPAAPIKey:        settings.CPAAPIKey,
+		UpstreamProtocol: settings.UpstreamProtocol,
 		Model:            settings.Model,
 		TimeoutSeconds:   settings.TimeoutSeconds,
 		ProxyURL:         settings.ProxyURL,
@@ -319,6 +322,7 @@ func ServerSettingsFromFields(fields SettingsFields) ServerSettings {
 	return ServerSettings{
 		CPABaseURL:       fields.CPABaseURL,
 		CPAAPIKey:        fields.CPAAPIKey,
+		UpstreamProtocol: fields.UpstreamProtocol,
 		Model:            fields.Model,
 		TimeoutSeconds:   fields.TimeoutSeconds,
 		ProxyURL:         fields.ProxyURL,

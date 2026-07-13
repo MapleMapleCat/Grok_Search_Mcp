@@ -688,6 +688,7 @@ func scanServerSettings(row interface {
 		&settings.ID,
 		&settings.CPABaseURL,
 		&settings.CPAAPIKey,
+		&settings.UpstreamProtocol,
 		&settings.Model,
 		&settings.TimeoutSeconds,
 		&settings.ProxyURL,
@@ -719,7 +720,7 @@ func scanServerSettings(row interface {
 	return &settings, nil
 }
 
-const serverSettingsColumns = `id, cpa_base_url, cpa_api_key, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at`
+const serverSettingsColumns = `id, cpa_base_url, cpa_api_key, upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at`
 
 func (s *SQLiteStore) GetServerSettings(ctx context.Context) (*ServerSettings, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+serverSettingsColumns+` FROM server_settings WHERE id = ?`, serverSettingsID)
@@ -733,6 +734,10 @@ func (s *SQLiteStore) GetServerSettings(ctx context.Context) (*ServerSettings, e
 func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerSettings) (*ServerSettings, error) {
 	cpaBaseURL := strings.TrimSpace(settings.CPABaseURL)
 	cpaAPIKey := strings.TrimSpace(settings.CPAAPIKey)
+	upstreamProtocol := strings.TrimSpace(settings.UpstreamProtocol)
+	if upstreamProtocol == "" {
+		upstreamProtocol = "responses"
+	}
 	model := strings.TrimSpace(settings.Model)
 	proxyURL := strings.TrimSpace(settings.ProxyURL)
 	if cpaBaseURL == "" {
@@ -763,11 +768,12 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 	now := formatTime(time.Now().UTC())
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO server_settings (
-			id, cpa_base_url, cpa_api_key, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			id, cpa_base_url, cpa_api_key, upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			cpa_base_url = excluded.cpa_base_url,
 			cpa_api_key = excluded.cpa_api_key,
+			upstream_protocol = excluded.upstream_protocol,
 			model = excluded.model,
 			timeout_seconds = excluded.timeout_seconds,
 			proxy_url = excluded.proxy_url,
@@ -778,6 +784,7 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 		serverSettingsID,
 		cpaBaseURL,
 		cpaAPIKey,
+		upstreamProtocol,
 		model,
 		settings.TimeoutSeconds,
 		proxyURL,
