@@ -322,8 +322,17 @@ func TestBuildAnthropicMessagesRequestBodyMapsProtocolTools(t *testing.T) {
 	if err := json.Unmarshal(xBody, &request); err != nil {
 		t.Fatalf("decode anthropic X request: %v", err)
 	}
-	if request.Tools[0].Type != "x_search" || request.Tools[0].Name != "x_search" {
+	if request.Tools[0].Type != "web_search_20250305" || request.Tools[0].Name != "web_search" {
 		t.Fatalf("unexpected X search tool: %+v", request.Tools[0])
+	}
+	if len(request.Tools[0].AllowedDomains) != 1 || request.Tools[0].AllowedDomains[0] != "x.com" {
+		t.Fatalf("Anthropic X search must be restricted to x.com: %+v", request.Tools[0])
+	}
+	if len(request.Messages) != 1 || !strings.Contains(request.Messages[0].Content, anthropicXSearchInstruction) {
+		t.Fatalf("Anthropic X search instruction is missing: %+v", request.Messages)
+	}
+	if !strings.Contains(request.Messages[0].Content, "User query: recent posts") {
+		t.Fatalf("Anthropic X search query is missing: %+v", request.Messages)
 	}
 }
 

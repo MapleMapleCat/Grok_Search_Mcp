@@ -11,6 +11,9 @@ import (
 
 const anthropicDefaultMaxTokens = 4096
 
+const anthropicXSearchInstruction = "Search public posts on X (x.com) only. " +
+	"Use the web search tool to find relevant posts, then return a final answer with direct X post URLs."
+
 type anthropicMessagesRequest struct {
 	Model     string             `json:"model"`
 	MaxTokens int                `json:"max_tokens"`
@@ -106,17 +109,12 @@ func buildAnthropicMessagesRequestBody(req SearchRequest, defaultModel string) (
 		return "", nil, err
 	}
 
+	messageContent := req.Query
 	tool := anthropicTool{
-		Type:        "x_search",
-		Name:        "x_search",
-		Description: "Search current public X posts and return a final answer with source URLs.",
-		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"query": map[string]any{"type": "string"},
-			},
-			"required": []string{"query"},
-		},
+		Type:           "web_search_20250305",
+		Name:           "web_search",
+		MaxUses:        8,
+		AllowedDomains: []string{"x.com"},
 	}
 	if req.ToolType == ToolTypeWebSearch {
 		tool = anthropicTool{
@@ -126,12 +124,14 @@ func buildAnthropicMessagesRequestBody(req SearchRequest, defaultModel string) (
 			AllowedDomains: req.AllowedDomains,
 			BlockedDomains: req.ExcludedDomains,
 		}
+	} else {
+		messageContent = anthropicXSearchInstruction + "\n\nUser query: " + req.Query
 	}
 
 	upstreamRequest := anthropicMessagesRequest{
 		Model:     model,
 		MaxTokens: anthropicDefaultMaxTokens,
-		Messages:  []anthropicMessage{{Role: "user", Content: req.Query}},
+		Messages:  []anthropicMessage{{Role: "user", Content: messageContent}},
 		Tools:     []anthropicTool{tool},
 		Stream:    true,
 	}
