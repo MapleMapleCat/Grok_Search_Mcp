@@ -170,6 +170,15 @@ export function createApplicationEvents({
       case "view-debug-json":
         openDebugJSONModal(actionElement.dataset.recordId);
         break;
+      case "view-user-usage-logs":
+        openUserUsageLogsModal();
+        break;
+      case "view-user-usage-summary":
+        openUserUsageSummaryModal();
+        break;
+      case "change-user-usage-page":
+        changeUserUsagePage(actionElement.dataset.page);
+        break;
       case "copy-debug-json":
         if (state.modal?.type === "debugJSON") {
           await copyValue(String(state.modal.record?.debug_json || ""));
@@ -532,7 +541,13 @@ export function createApplicationEvents({
 
   async function openUserUsageModal(userIdentifier) {
     const user = (state.data.users || []).find((candidateUser) => candidateUser.id === userIdentifier);
-    openModal({ type: "userUsage", username: user?.username || "用户", loading: true, usage: null });
+    openModal({
+      type: "userUsage",
+      userIdentifier,
+      username: user?.username || "用户",
+      loading: true,
+      usage: null
+    });
     try {
       const usage = await fetchAdminUserUsage(userIdentifier);
       if (state.modal?.type === "userUsage") {
@@ -546,6 +561,38 @@ export function createApplicationEvents({
         showToast("无法加载用户用量", getErrorMessage(error), "error");
       }
     }
+  }
+
+  function openUserUsageLogsModal() {
+    if (state.modal?.type !== "userUsage" || state.modal.loading || !state.modal.usage) {
+      return;
+    }
+
+    state.modal.type = "userUsageLogs";
+    state.modal.page = 1;
+    renderModalRegion();
+  }
+
+  function openUserUsageSummaryModal() {
+    if (state.modal?.type !== "userUsageLogs") {
+      return;
+    }
+
+    state.modal.type = "userUsage";
+    delete state.modal.page;
+    renderModalRegion();
+  }
+
+  function changeUserUsagePage(requestedPage) {
+    if (state.modal?.type !== "userUsageLogs") {
+      return;
+    }
+
+    const usageRecordCount = state.modal.usage?.records?.length || 0;
+    const totalPages = Math.max(1, Math.ceil(usageRecordCount / 20));
+    const normalizedPage = Math.min(Math.max(Number(requestedPage || 1), 1), totalPages);
+    state.modal.page = normalizedPage;
+    renderModalRegion();
   }
 
   function confirmDeleteUser(userIdentifier) {

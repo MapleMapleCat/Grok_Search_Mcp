@@ -23,6 +23,8 @@ export function renderModal(state) {
       return renderEditUserModal(modal, state.data.tiers || [], state.user);
     case "userUsage":
       return renderUserUsageModal(modal);
+    case "userUsageLogs":
+      return renderUserUsageLogsModal(modal);
     case "createTier":
       return renderTierModal(modal, false);
     case "editTier":
@@ -276,6 +278,7 @@ function renderEditUserModal(modal, tiers, currentUser) {
 
 function renderUserUsageModal(modal) {
   const usage = modal.usage;
+  const usageRecords = usage?.records || [];
   const body = modal.loading ? '<div class="skeleton" style="height:380px"></div>' : `
     <section class="metric-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
       ${renderMetricCard("总调用", formatNumber(usage?.total_calls), "全部密钥", "activity", "#eeeaff", "#7667f4", false, "trend", usage?.traffic_buckets)}
@@ -283,9 +286,47 @@ function renderUserUsageModal(modal) {
       ${renderMetricCard("当前 RPM", formatNumber(usage?.current_rpm), "最近一分钟", "chart", "#e8f1ff", "#3d83f6", false, "pulse", usage?.current_rpm)}
     </section>
     <div class="chart-wrap">${renderChart(usage?.traffic_buckets || [])}</div>
-    ${renderUsageRecords((usage?.records || []).slice(0, 8))}
+    ${renderUsageRecords(usageRecords.slice(0, 8))}
   `;
-  return renderModalFrame({ title: `${modal.username || "用户"} 的调用分析`, description: "聚合该用户全部 API 密钥的调用数据。", body, footer: '<button class="button button-secondary" type="button" data-action="close-modal">关闭</button>', wide: true });
+  const footer = `
+    <button class="button button-secondary" type="button" data-action="close-modal">关闭</button>
+    ${!modal.loading && usageRecords.length > 8 ? `<button class="button button-primary" type="button" data-action="view-user-usage-logs">${renderIcon("activity")} 查看全部调用记录（${escapeHTML(formatNumber(usageRecords.length))}）</button>` : ""}
+  `;
+  return renderModalFrame({ title: `${modal.username || "用户"} 的调用分析`, description: "聚合该用户全部 API 密钥的调用数据，最近活动仅展示前 8 条。", body, footer, wide: true });
+}
+
+function renderUserUsageLogsModal(modal) {
+  const usage = modal.usage;
+  const usageRecords = usage?.records || [];
+  const pageSize = 20;
+  const totalPages = Math.max(1, Math.ceil(usageRecords.length / pageSize));
+  const currentPage = Math.min(Math.max(Number(modal.page || 1), 1), totalPages);
+  const pageStartIndex = (currentPage - 1) * pageSize;
+  const visibleRecords = usageRecords.slice(pageStartIndex, pageStartIndex + pageSize);
+  const failedCalls = Math.max(0, Number(usage?.total_calls || 0) - Number(usage?.success_calls || 0));
+
+  const body = `
+    <section class="metric-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      ${renderMetricCard("总调用", formatNumber(usage?.total_calls), "全部密钥", "activity", "#eeeaff", "#7667f4")}
+      ${renderMetricCard("成功调用", formatNumber(usage?.success_calls), formatPercent(getSuccessRate(usage)), "shield", "#e8f8ef", "#238a54")}
+      ${renderMetricCard("失败调用", formatNumber(failedCalls), "不计入成功调用额度", "alert", "#fff1f0", "#d84a45")}
+    </section>
+    ${renderUsageRecords(visibleRecords)}
+  `;
+  const footer = `
+    <button class="button button-secondary" type="button" data-action="view-user-usage-summary">返回用量摘要</button>
+    <span class="muted" style="margin-right:auto;font-size:12px">第 ${escapeHTML(formatNumber(currentPage))} / ${escapeHTML(formatNumber(totalPages))} 页，共 ${escapeHTML(formatNumber(usageRecords.length))} 条记录</span>
+    <button class="button button-secondary" type="button" data-action="change-user-usage-page" data-page="${currentPage - 1}" ${currentPage <= 1 ? "disabled" : ""}>上一页</button>
+    <button class="button button-primary" type="button" data-action="change-user-usage-page" data-page="${currentPage + 1}" ${currentPage >= totalPages ? "disabled" : ""}>下一页</button>
+  `;
+
+  return renderModalFrame({
+    title: `${modal.username || "用户"} 的调用记录`,
+    description: "查看该用户全部 API 密钥的最近调用明细。",
+    body,
+    footer,
+    wide: true
+  });
 }
 
 function renderTierModal(modal, isEdit) {
