@@ -195,6 +195,8 @@ Searches real-time posts on X/Twitter through Grok.
 
 Domain filters and image-related arguments apply only to `grok_web_search`.
 
+The wire-level mapping depends on the selected upstream protocol. Responses uses CPA's native `x_search` tool, Chat Completions uses an `x` search source, and Anthropic Messages uses the supported server-side web-search tool restricted to `x.com`. The Anthropic mapping is necessary because a custom Anthropic `x_search` declaration is treated as a client-executed tool call by CPA and does not produce a final search answer on its own.
+
 ### `grok_list_models`
 
 Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs, keeps IDs containing `grok`, and excludes IDs containing `imagine` or `video`.
@@ -266,10 +268,17 @@ The listen address, database path, JWT secret, source-IP RPM, and trusted proxie
 | Setting | Endpoint | Search mapping |
 |---|---|---|
 | `responses` | `POST /v1/responses` | CPA Responses built-ins (`web_search` / `x_search`); this remains the backward-compatible default and provides search-round progress events. |
-| `chat_completions` | `POST /v1/chat/completions` | xAI-compatible `search_parameters`, with `web` or `x` sources and streamed Chat Completions chunks. |
-| `anthropic_messages` | `POST /v1/messages` | Anthropic server web-search tool and CPA-compatible `x_search` extension, with Messages SSE events. |
+| `chat_completions` | `POST /v1/chat/completions` | xAI-compatible `search_parameters`, with `web` or `x` sources and streamed Chat Completions chunks. Short status-only responses such as “searching...” are continued with bounded follow-up requests so MCP callers receive a final answer or an explicit error. |
+| `anthropic_messages` | `POST /v1/messages` | Anthropic server-side `web_search_20250305` with Messages SSE events. Web searches preserve configured domain filters; X searches use the same server tool restricted to `x.com` and add an instruction to return direct X post URLs. |
 
 Protocol support ultimately depends on the selected CPA version, provider, and model capabilities. Responses is the safest compatibility choice for existing Grok/CPA deployments. Image-search options are Responses-specific; other protocols ignore them when no equivalent wire option exists.
+
+The protocols can expose different metadata even when their answer text is equivalent:
+
+- Responses normally provides the richest search-round progress and structured citation data.
+- Chat Completions emits progress only when CPA includes compatible nonstandard search events. Standard Chat chunks may contain only final text and usage.
+- Anthropic Messages may include source URLs in the answer text without emitting structured citation blocks, depending on CPA's provider translation.
+- `usage` is normalized across all protocols when the upstream response includes token counts.
 
 ## Users, registration, tiers, and quotas
 

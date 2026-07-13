@@ -195,6 +195,8 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 
 域名筛选和图片相关参数只适用于 `grok_web_search`。
 
+具体的上游映射取决于所选协议：Responses 使用 CPA 原生的 `x_search` 工具，Chat Completions 使用 `x` 搜索来源，Anthropic Messages 使用 CPA 支持的服务端网页搜索工具并限制在 `x.com`。之所以不声明自定义 Anthropic `x_search` 工具，是因为 CPA 会将其视为需要客户端执行并回传结果的工具调用，单独使用不会产生最终搜索答案。
+
 ### `grok_list_models`
 
 无参数。工具读取 CPA `GET /v1/models`，清理并去重模型 ID，只保留包含 `grok` 且不包含 `imagine`、`video` 的项目。
@@ -266,10 +268,17 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 | 配置值 | 端点 | 搜索映射 |
 |---|---|---|
 | `responses` | `POST /v1/responses` | CPA Responses 内置工具（`web_search` / `x_search`）；这是向后兼容的默认值，并可提供搜索轮次进度。 |
-| `chat_completions` | `POST /v1/chat/completions` | xAI 兼容的 `search_parameters`，使用 `web` 或 `x` 来源并解析 Chat Completions 流。 |
-| `anthropic_messages` | `POST /v1/messages` | Anthropic 服务端网页搜索工具与 CPA 兼容的 `x_search` 扩展，并解析 Messages SSE。 |
+| `chat_completions` | `POST /v1/chat/completions` | xAI 兼容的 `search_parameters`，使用 `web` 或 `x` 来源并解析 Chat Completions 流。对于“正在搜索”等仅表示状态的短回复，会在有限次数内自动请求继续回答，确保 MCP 收到最终答案或明确错误。 |
+| `anthropic_messages` | `POST /v1/messages` | Anthropic 服务端 `web_search_20250305` 工具与 Messages SSE。网页搜索保留配置的域名筛选；X 搜索使用同一服务端工具并限制在 `x.com`，同时要求返回直接的 X 帖子链接。 |
 
 实际能力取决于所使用的 CPA 版本、提供方和模型。对于现有 Grok/CPA 部署，Responses 仍是兼容性最稳妥的选项。图片搜索选项仅在 Responses 协议存在对应字段时生效，其他协议没有等价字段时会忽略。
+
+即使答案正文相同，不同协议暴露的元数据也可能不同：
+
+- Responses 通常提供最完整的搜索轮次进度和结构化引用数据。
+- Chat Completions 只有在 CPA 返回兼容的非标准搜索事件时才会提供进度；标准 Chat 数据块可能只有最终文本和用量。
+- Anthropic Messages 可能在答案正文中包含来源 URL，但是否返回结构化 citation 数据块取决于 CPA 的提供方转换实现。
+- 只要上游提供 token 统计，服务会在不同协议之间统一规范化 `usage` 字段。
 
 ## 用户、注册、Tier 与配额
 
