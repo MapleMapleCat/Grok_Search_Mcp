@@ -68,7 +68,7 @@ func TestParseChatCompletionsResponseAggregatesTextCitationsAndUsage(t *testing.
 		"",
 	}, "\n")
 
-	result, err := parseChatCompletionsResponse(strings.NewReader(stream))
+	result, err := parseChatCompletionsResponse(strings.NewReader(stream), nil, nil)
 	if err != nil {
 		t.Fatalf("parse chat completions response: %v", err)
 	}
@@ -80,6 +80,210 @@ func TestParseChatCompletionsResponseAggregatesTextCitationsAndUsage(t *testing.
 	}
 	if result.Usage == nil || result.Usage.TotalTokens != 5 {
 		t.Fatalf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestParseChatCompletionsResponseSupportsCPAExtensions(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"response.output_item.done","item":{"id":"search_1","type":"web_search_call","action":{"query":"Go release notes"}}}`,
+		"",
+		`data: {"type":"web_search_call.completed","id":"search_1","action":{"query":"Go release notes"}}`,
+		"",
+		`data: {"type":"provider.status","status":"searching"}`,
+		"",
+		`data: {"choices":[{"delta":{"content":"Verified answer"}}]}`,
+		"",
+		`data: {"choices":[{"delta":{"annotations":[{"type":"url_citation","url_citation":{"url":"https://go.dev/doc/go1.25","title":"Go 1.25 Release Notes"}}]}}]}`,
+		"",
+		`data: {"choices":[],"sources":[{"source_url":"https://go.dev/blog/go1.25","name":"Go Blog"}],"usage":{"prompt_tokens":8,"completion_tokens":5,"total_tokens":13}}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+
+	var searchRounds []SearchRound
+	result, err := parseChatCompletionsResponse(strings.NewReader(stream), func(searchRound SearchRound) {
+		searchRounds = append(searchRounds, searchRound)
+	}, nil)
+	if err != nil {
+		t.Fatalf("parse extended chat completions response: %v", err)
+	}
+	if result.Answer != "Verified answer" {
+		t.Fatalf("unexpected answer: %q", result.Answer)
+	}
+	if len(searchRounds) != 1 || searchRounds[0].Query != "Go release notes" {
+		t.Fatalf("expected one deduplicated search round, got %+v", searchRounds)
+	}
+	if len(result.Sources) != 2 {
+		t.Fatalf("expected nested annotation and source aliases, got %+v", result.Sources)
+	}
+	if result.Sources[0].URL != "https://go.dev/doc/go1.25" || result.Sources[0].Title != "Go 1.25 Release Notes" {
+		t.Fatalf("unexpected nested citation: %+v", result.Sources[0])
+	}
+	if result.Sources[1].URL != "https://go.dev/blog/go1.25" || result.Sources[1].Title != "Go Blog" {
+		t.Fatalf("unexpected source alias: %+v", result.Sources[1])
+	}
+	if result.Usage == nil || result.Usage.TotalTokens != 13 {
+		t.Fatalf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestParseChatCompletionsResponseDoesNotMisclassifyJSONTextAsSSE(t *testing.T) {
+	responseBody := `{"choices":[{"message":{"content":"A literal data: prefix is ordinary text."}}]}`
+	result, err := parseChatCompletionsResponse(strings.NewReader(responseBody), nil, nil)
+	if err != nil {
+		t.Fatalf("parse non-streaming response: %v", err)
+	}
+	if result.Answer != "A literal data: prefix is ordinary text." {
+		t.Fatalf("unexpected answer: %q", result.Answer)
+	}
+}
+
+func TestIsChatIntermediateAnswer(t *testing.T) {
+	testCases := []struct {
+		name         string
+		answer       string
+		intermediate bool
+	}{
+		{
+			name:         "Chinese search status",
+			answer:       "正在检索 Go 1.24 与 Go 1.25 的官方发布说明与相关文档，以便交叉核验后再比较。",
+			intermediate: true,
+		},
+		{
+			name:         "Chinese documentation lookup status",
+			answer:       "正在查阅 go.dev 上 Go 1.24 与 Go 1.25 的官方发行说明，以便准确对比变化。",
+			intermediate: true,
+		},
+		{
+			name:         "English search status",
+			answer:       "Let me search the official documentation before answering.",
+			intermediate: true,
+		},
+		{
+			name:         "Final concise answer",
+			answer:       "Go 1.25 introduces the new experimental garbage collector, while Go 1.24 adds generic type aliases.",
+			intermediate: false,
+		},
+		{
+			name:         "Long answer containing status wording",
+			answer:       strings.Repeat("This is a complete comparison with evidence. ", 20) + "I will search no further.",
+			intermediate: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if actual := isChatIntermediateAnswer(testCase.answer); actual != testCase.intermediate {
+				t.Fatalf("isChatIntermediateAnswer() = %v, want %v", actual, testCase.intermediate)
+			}
+		})
+	}
+}
+
+func TestSearchChatCompletionsContinuesIntermediateAnswer(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		requestCount++
+		var upstreamRequest chatCompletionsRequest
+		if err := json.NewDecoder(request.Body).Decode(&upstreamRequest); err != nil {
+			t.Fatalf("decode request %d: %v", requestCount, err)
+		}
+
+		responseWriter.Header().Set("Content-Type", "text/event-stream")
+		if requestCount == 1 {
+			if len(upstreamRequest.Messages) != 1 {
+				t.Fatalf("first request messages = %+v", upstreamRequest.Messages)
+			}
+			_, _ = responseWriter.Write([]byte(strings.Join([]string{
+				`data: {"choices":[{"delta":{"content":"正在检索官方资料，以便交叉核验。"}}]}`,
+				"",
+				`data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`,
+				"",
+				"data: [DONE]",
+				"",
+			}, "\n")))
+			return
+		}
+
+		if len(upstreamRequest.Messages) != 3 {
+			t.Fatalf("continuation request messages = %+v", upstreamRequest.Messages)
+		}
+		if upstreamRequest.Messages[1].Role != "assistant" || !strings.Contains(upstreamRequest.Messages[1].Content, "正在检索") {
+			t.Fatalf("missing intermediate assistant message: %+v", upstreamRequest.Messages)
+		}
+		if upstreamRequest.Messages[2].Role != "user" || upstreamRequest.Messages[2].Content != chatFinalAnswerInstruction {
+			t.Fatalf("missing final-answer instruction: %+v", upstreamRequest.Messages)
+		}
+		_, _ = responseWriter.Write([]byte(strings.Join([]string{
+			`data: {"choices":[{"delta":{"content":"Go 1.25 的主要升级风险包括运行时行为变化和工具链兼容性。"}}]}`,
+			"",
+			`data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":12,"total_tokens":32}}`,
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client := NewClient(&config.Config{
+		CPABaseURL:       server.URL,
+		CPAAPIKey:        "test-key",
+		UpstreamProtocol: config.UpstreamProtocolChatCompletions,
+		Model:            "grok-4.5",
+		Timeout:          5 * time.Second,
+	})
+	result, err := client.SearchStream(context.Background(), SearchRequest{
+		Query:    "compare versions",
+		ToolType: ToolTypeWebSearch,
+	}, nil)
+	if err != nil {
+		t.Fatalf("SearchStream failed: %v", err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("request count = %d, want 2", requestCount)
+	}
+	if strings.Contains(result.Answer, "正在检索") {
+		t.Fatalf("intermediate answer escaped as final result: %q", result.Answer)
+	}
+	if !strings.Contains(result.Answer, "主要升级风险") {
+		t.Fatalf("unexpected final answer: %q", result.Answer)
+	}
+	if result.Usage == nil || result.Usage.TotalTokens != 47 {
+		t.Fatalf("accumulated usage = %+v, want total 47", result.Usage)
+	}
+}
+
+func TestSearchChatCompletionsRejectsPersistentIntermediateAnswer(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		responseWriter.Header().Set("Content-Type", "text/event-stream")
+		_, _ = responseWriter.Write([]byte(strings.Join([]string{
+			`data: {"choices":[{"delta":{"content":"正在查阅官方资料，请稍候。"}}]}`,
+			"",
+			"data: [DONE]",
+			"",
+		}, "\n")))
+	}))
+	defer server.Close()
+
+	client := NewClient(&config.Config{
+		CPABaseURL:       server.URL,
+		CPAAPIKey:        "test-key",
+		UpstreamProtocol: config.UpstreamProtocolChatCompletions,
+		Model:            "grok-4.5",
+		Timeout:          5 * time.Second,
+	})
+	_, err := client.SearchStream(context.Background(), SearchRequest{
+		Query:    "compare versions",
+		ToolType: ToolTypeWebSearch,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "did not return a final answer") {
+		t.Fatalf("expected persistent intermediate answer error, got %v", err)
+	}
+	if requestCount != maxChatContinuationAttempts+1 {
+		t.Fatalf("request count = %d, want %d", requestCount, maxChatContinuationAttempts+1)
 	}
 }
 

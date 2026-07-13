@@ -34,23 +34,64 @@ func (c *citationCollector) add(url, title string) {
 	})
 }
 
-// addRaw 兼容 citations 字段为字符串 URL 或 {url,title} 对象两种形态。
+// addRaw normalizes common OpenAI/CPA citation aliases and nested extension
+// shapes while requiring an explicit URL before exposing a source.
 func (c *citationCollector) addRaw(raw json.RawMessage) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return
 	}
-	if raw[0] == '"' {
-		var s string
-		if err := json.Unmarshal(raw, &s); err == nil {
-			c.add(s, "")
+	if raw[0] == '[' {
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err == nil {
+			for _, item := range items {
+				c.addRaw(item)
+			}
 		}
 		return
 	}
-	var ci citationItem
-	if err := json.Unmarshal(raw, &ci); err == nil {
-		c.add(ci.URL, ci.Title)
+	if raw[0] == '"' {
+		var url string
+		if err := json.Unmarshal(raw, &url); err == nil {
+			c.add(url, "")
+		}
+		return
 	}
+
+	type citationExtension struct {
+		URL         string          `json:"url"`
+		URI         string          `json:"uri"`
+		SourceURL   string          `json:"source_url"`
+		Title       string          `json:"title"`
+		Name        string          `json:"name"`
+		URLCitation json.RawMessage `json:"url_citation"`
+		Citation    json.RawMessage `json:"citation"`
+		Source      json.RawMessage `json:"source"`
+	}
+
+	var citation citationExtension
+	if err := json.Unmarshal(raw, &citation); err != nil {
+		return
+	}
+	url := firstNonEmptyString(citation.URL, citation.URI, citation.SourceURL)
+	title := firstNonEmptyString(citation.Title, citation.Name)
+	if url != "" {
+		c.add(url, title)
+	}
+	for _, nestedCitation := range []json.RawMessage{citation.URLCitation, citation.Citation, citation.Source} {
+		if len(bytes.TrimSpace(nestedCitation)) > 0 && string(bytes.TrimSpace(nestedCitation)) != "null" {
+			c.addRaw(nestedCitation)
+		}
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if normalizedValue := strings.TrimSpace(value); normalizedValue != "" {
+			return normalizedValue
+		}
+	}
+	return ""
 }
 
 // buildSearchResult 从 output 文本块、注解与顶层 citations 汇总答案与引用。

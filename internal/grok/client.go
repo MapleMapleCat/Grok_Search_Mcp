@@ -174,7 +174,7 @@ func (c *Client) SearchStream(ctx context.Context, req SearchRequest, onRound fu
 	case config.UpstreamProtocolResponses:
 		result, err = snapshot.searchResponses(ctx, req, onRound)
 	case config.UpstreamProtocolChatCompletions:
-		result, err = snapshot.searchChatCompletions(ctx, req)
+		result, err = snapshot.searchChatCompletions(ctx, req, onRound)
 	case config.UpstreamProtocolAnthropicMessages:
 		result, err = snapshot.searchAnthropicMessages(ctx, req)
 	default:
