@@ -143,7 +143,7 @@ func buildAnthropicMessagesRequestBody(req SearchRequest, defaultModel string) (
 }
 
 func parseAnthropicMessagesResponse(body io.Reader) (*SearchResult, error) {
-	rawBody, err := io.ReadAll(io.LimitReader(body, 8*1024*1024))
+	rawBody, err := readAllUpstreamResponse(body)
 	if err != nil {
 		return nil, fmt.Errorf("read anthropic messages response: %w", err)
 	}
@@ -156,19 +156,25 @@ func parseAnthropicMessagesResponse(body io.Reader) (*SearchResult, error) {
 			return fmt.Errorf("upstream stream error: %s", string(rawBody))
 		}
 		if response.Message != nil {
-			collectAnthropicContent(&answer, collector, response.Message.Content)
+			if err := collectAnthropicContent(&answer, collector, response.Message.Content); err != nil {
+				return err
+			}
 			mergeAnthropicUsage(&usage, response.Message.Usage)
 		}
-		collectAnthropicContent(&answer, collector, response.Content)
+		if err := collectAnthropicContent(&answer, collector, response.Content); err != nil {
+			return err
+		}
 		mergeAnthropicUsage(&usage, response.Usage)
 		if response.Delta.Type == "text_delta" {
-			answer.WriteString(response.Delta.Text)
+			if err := appendAnswerText(&answer, response.Delta.Text); err != nil {
+				return err
+			}
 		}
 		if response.Delta.Type == "citations_delta" {
 			collector.add(response.Delta.Citation.URL, response.Delta.Citation.Title)
 		}
 		mergeAnthropicUsage(&usage, response.Delta.Usage)
-		return nil
+		return collector.err
 	}
 
 	if bytes.Contains(rawBody, []byte("data:")) {
@@ -211,16 +217,22 @@ func parseAnthropicMessagesResponse(body io.Reader) (*SearchResult, error) {
 	}, nil
 }
 
-func collectAnthropicContent(answer *strings.Builder, collector *citationCollector, blocks []anthropicContentBlock) {
+func collectAnthropicContent(answer *strings.Builder, collector *citationCollector, blocks []anthropicContentBlock) error {
 	for _, block := range blocks {
-		answer.WriteString(block.Text)
+		if err := appendAnswerText(answer, block.Text); err != nil {
+			return err
+		}
 		for _, citation := range block.Citations {
 			collector.add(citation.URL, citation.Title)
 		}
 		for _, result := range block.Content {
 			collector.add(result.URL, result.Title)
 		}
+		if collector.err != nil {
+			return collector.err
+		}
 	}
+	return nil
 }
 
 func mergeAnthropicUsage(current *anthropicUsage, update anthropicUsage) {

@@ -75,6 +75,9 @@ func (t *searchRoundTracker) emitCompatibleSearchRound(payload string, onRound f
 	if _, alreadyEmitted := t.seen[deduplicationKey]; alreadyEmitted {
 		return nil
 	}
+	if t.nextRound >= maxSearchRoundCount {
+		return fmt.Errorf("upstream stream exceeded search round limit of %d", maxSearchRoundCount)
+	}
 	t.seen[deduplicationKey] = struct{}{}
 
 	t.nextRound++

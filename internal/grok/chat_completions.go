@@ -214,9 +214,13 @@ func isChatIntermediateAnswer(answer string) bool {
 }
 
 func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log *logx.Logger) (*SearchResult, error) {
-	bufferedBody := bufio.NewReader(io.LimitReader(body, 8*1024*1024))
+	limitedBody := &io.LimitedReader{R: body, N: maxUpstreamResponseBytes + 1}
+	bufferedBody := bufio.NewReader(limitedBody)
 	responseReader, isSSE, err := identifyChatCompletionsResponse(bufferedBody)
 	if err != nil {
+		if limitedBody.N == 0 {
+			return nil, fmt.Errorf("upstream response exceeded total byte limit of %d", maxUpstreamResponseBytes)
+		}
 		return nil, err
 	}
 
@@ -226,12 +230,16 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 	var answer strings.Builder
 	collector := newCitationCollector()
 	var normalizedUsage *Usage
-	consumeResponse := func(response chatCompletionsResponse) {
+	consumeResponse := func(response chatCompletionsResponse) error {
 		for _, choice := range response.Choices {
-			answer.WriteString(choice.Delta.Content)
+			if err := appendAnswerText(&answer, choice.Delta.Content); err != nil {
+				return err
+			}
 			collectChatMessageCitations(collector, choice.Delta)
 			if choice.Delta.Content == "" {
-				answer.WriteString(choice.Message.Content)
+				if err := appendAnswerText(&answer, choice.Message.Content); err != nil {
+					return err
+				}
 			}
 			collectChatMessageCitations(collector, choice.Message)
 			collectRawCitations(collector, choice.Citations)
@@ -249,6 +257,7 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 				TotalTokens:  response.Usage.TotalTokens,
 			}
 		}
+		return collector.err
 	}
 
 	if isSSE {
@@ -261,8 +270,7 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 			if decodeErr := json.Unmarshal([]byte(payload), &response); decodeErr != nil {
 				return fmt.Errorf("decode chat completions stream event: %w", decodeErr)
 			}
-			consumeResponse(response)
-			return nil
+			return consumeResponse(response)
 		})
 	} else {
 		responseBody, readErr := io.ReadAll(capturedBody)
@@ -272,8 +280,11 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 		var response chatCompletionsResponse
 		err = json.Unmarshal(responseBody, &response)
 		if err == nil {
-			consumeResponse(response)
+			err = consumeResponse(response)
 		}
+	}
+	if limitedBody.N == 0 {
+		return nil, fmt.Errorf("upstream response exceeded total byte limit of %d", maxUpstreamResponseBytes)
 	}
 	if err != nil {
 		return nil, err

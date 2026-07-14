@@ -9,9 +9,11 @@ import (
 
 // citationCollector 对 URL 去重，同时维护扁平 citations 列表与带标题的 sources。
 type citationCollector struct {
-	citations []string
-	sources   []Source
-	seen      map[string]struct{}
+	citations       []string
+	sources         []Source
+	seen            map[string]struct{}
+	aggregatedBytes int
+	err             error
 }
 
 func newCitationCollector() *citationCollector {
@@ -19,6 +21,9 @@ func newCitationCollector() *citationCollector {
 }
 
 func (c *citationCollector) add(url, title string) {
+	if c.err != nil {
+		return
+	}
 	url = strings.TrimSpace(url)
 	if url == "" {
 		return
@@ -26,17 +31,31 @@ func (c *citationCollector) add(url, title string) {
 	if _, ok := c.seen[url]; ok {
 		return
 	}
+	if len(c.citations) >= maxCitationCount {
+		c.err = fmt.Errorf("upstream response exceeded citation limit of %d", maxCitationCount)
+		return
+	}
+	title = strings.TrimSpace(title)
+	additionalBytes := len(url) + len(title)
+	if additionalBytes > maxAggregatedCitationBytes || c.aggregatedBytes > maxAggregatedCitationBytes-additionalBytes {
+		c.err = fmt.Errorf("upstream response exceeded aggregated citation byte limit of %d", maxAggregatedCitationBytes)
+		return
+	}
 	c.seen[url] = struct{}{}
+	c.aggregatedBytes += additionalBytes
 	c.citations = append(c.citations, url)
 	c.sources = append(c.sources, Source{
 		URL:   url,
-		Title: strings.TrimSpace(title),
+		Title: title,
 	})
 }
 
 // addRaw normalizes common OpenAI/CPA citation aliases and nested extension
 // shapes while requiring an explicit URL before exposing a source.
 func (c *citationCollector) addRaw(raw json.RawMessage) {
+	if c.err != nil {
+		return
+	}
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return
@@ -103,9 +122,12 @@ func buildSearchResult(parsed responsesResponse, rawBody []byte) (*SearchResult,
 		for _, block := range item.Content {
 			if text := strings.TrimSpace(block.Text); text != "" {
 				if answer.Len() > 0 {
-					answer.WriteByte('\n')
+					if err := appendAnswerText(&answer, "\n", text); err != nil {
+						return nil, err
+					}
+				} else if err := appendAnswerText(&answer, text); err != nil {
+					return nil, err
 				}
-				answer.WriteString(text)
 			}
 			for _, ann := range block.Annotations {
 				if ann.Type == "url_citation" {
@@ -122,6 +144,9 @@ func buildSearchResult(parsed responsesResponse, rawBody []byte) (*SearchResult,
 				collector.addRaw(rc)
 			}
 		}
+	}
+	if collector.err != nil {
+		return nil, collector.err
 	}
 
 	usage, err := parseUsage(parsed.Usage)
