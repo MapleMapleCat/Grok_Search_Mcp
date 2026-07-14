@@ -1,8 +1,8 @@
 # ---- build stage ----
-# Uses the official Docker Hub images by default. Override these build args only
-# when you explicitly want to pin or test a different official-compatible image.
-ARG GO_IMG=golang:1.25-alpine
-ARG RUNTIME_IMG=alpine:3.20
+# Production defaults use immutable multi-platform image-index digests. Override
+# these build arguments only when intentionally testing replacement images.
+ARG GO_IMG=golang:1.25.12-alpine@sha256:56961d79ea8129efddcc0b8643fd8a5416b4e6228cfd477e3fd61deb2672c587
+ARG RUNTIME_IMG=alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 
 FROM ${GO_IMG} AS builder
 
