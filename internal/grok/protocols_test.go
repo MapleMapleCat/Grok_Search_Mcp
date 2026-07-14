@@ -3,6 +3,7 @@ package grok
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -125,6 +126,68 @@ func TestParseChatCompletionsResponseSupportsCPAExtensions(t *testing.T) {
 	}
 	if result.Usage == nil || result.Usage.TotalTokens != 13 {
 		t.Fatalf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestParseChatCompletionsResponseEmitsProgressBeforeStreamCompletes(t *testing.T) {
+	streamReader, streamWriter := io.Pipe()
+	defer streamWriter.Close()
+
+	type parseResult struct {
+		result *SearchResult
+		err    error
+	}
+	searchRoundReceived := make(chan SearchRound, 1)
+	parseCompleted := make(chan parseResult, 1)
+	go func() {
+		result, err := parseChatCompletionsResponse(streamReader, func(searchRound SearchRound) {
+			searchRoundReceived <- searchRound
+		}, nil)
+		parseCompleted <- parseResult{result: result, err: err}
+	}()
+
+	firstEvent := strings.Join([]string{
+		`data: {"type":"response.output_item.done","item":{"id":"search_1","type":"web_search_call","action":{"query":"Go release notes"}}}`,
+		"",
+	}, "\n") + "\n"
+	if _, err := io.WriteString(streamWriter, firstEvent); err != nil {
+		t.Fatalf("write first stream event: %v", err)
+	}
+
+	select {
+	case searchRound := <-searchRoundReceived:
+		if searchRound.Query != "Go release notes" {
+			t.Fatalf("unexpected search round: %+v", searchRound)
+		}
+	case completed := <-parseCompleted:
+		t.Fatalf("parser completed before upstream stream ended: result=%+v err=%v", completed.result, completed.err)
+	case <-time.After(time.Second):
+		t.Fatal("search progress was not emitted while upstream stream remained open")
+	}
+
+	remainingEvents := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"Verified answer"}}]}`,
+		"",
+		"data: [DONE]",
+		"",
+	}, "\n")
+	if _, err := io.WriteString(streamWriter, remainingEvents); err != nil {
+		t.Fatalf("write remaining stream events: %v", err)
+	}
+	if err := streamWriter.Close(); err != nil {
+		t.Fatalf("close stream writer: %v", err)
+	}
+
+	select {
+	case completed := <-parseCompleted:
+		if completed.err != nil {
+			t.Fatalf("parse chat completions response: %v", completed.err)
+		}
+		if completed.result.Answer != "Verified answer" {
+			t.Fatalf("unexpected answer: %q", completed.result.Answer)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("parser did not complete after upstream stream closed")
 	}
 }
 

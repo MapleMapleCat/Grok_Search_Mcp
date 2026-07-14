@@ -1,6 +1,7 @@
 package grok
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -213,10 +214,14 @@ func isChatIntermediateAnswer(answer string) bool {
 }
 
 func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log *logx.Logger) (*SearchResult, error) {
-	rawBody, err := io.ReadAll(io.LimitReader(body, 8*1024*1024))
+	bufferedBody := bufio.NewReader(io.LimitReader(body, 8*1024*1024))
+	responseReader, isSSE, err := identifyChatCompletionsResponse(bufferedBody)
 	if err != nil {
-		return nil, fmt.Errorf("read chat completions response: %w", err)
+		return nil, err
 	}
+
+	var rawBody bytes.Buffer
+	capturedBody := io.TeeReader(responseReader, &rawBody)
 
 	var answer strings.Builder
 	collector := newCitationCollector()
@@ -246,9 +251,9 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 		}
 	}
 
-	if looksLikeSSE(rawBody) {
+	if isSSE {
 		searchRounds := newSearchRoundTracker()
-		err = forEachSSEEvent(bytes.NewReader(rawBody), func(payload string) error {
+		err = forEachSSEEvent(capturedBody, func(payload string) error {
 			if searchErr := searchRounds.emitCompatibleSearchRound(payload, onRound, log); searchErr != nil {
 				return searchErr
 			}
@@ -260,8 +265,12 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 			return nil
 		})
 	} else {
+		responseBody, readErr := io.ReadAll(capturedBody)
+		if readErr != nil {
+			return nil, fmt.Errorf("read chat completions response: %w", readErr)
+		}
 		var response chatCompletionsResponse
-		err = json.Unmarshal(rawBody, &response)
+		err = json.Unmarshal(responseBody, &response)
 		if err == nil {
 			consumeResponse(response)
 		}
@@ -279,7 +288,7 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 		Citations:   collector.citations,
 		Sources:     collector.sources,
 		Usage:       normalizedUsage,
-		RawResponse: json.RawMessage(rawBody),
+		RawResponse: json.RawMessage(rawBody.Bytes()),
 	}, nil
 }
 
@@ -295,12 +304,25 @@ func collectRawCitations(collector *citationCollector, rawCitations []json.RawMe
 	}
 }
 
-func looksLikeSSE(rawBody []byte) bool {
-	for _, line := range bytes.Split(rawBody, []byte("\n")) {
-		trimmedLine := bytes.TrimSpace(line)
-		if bytes.HasPrefix(trimmedLine, []byte("data:")) || bytes.HasPrefix(trimmedLine, []byte("event:")) {
-			return true
+func identifyChatCompletionsResponse(bufferedBody *bufio.Reader) (io.Reader, bool, error) {
+	var inspectedPrefix bytes.Buffer
+	for {
+		line, readErr := bufferedBody.ReadString('\n')
+		inspectedPrefix.WriteString(line)
+
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, "data:") || strings.HasPrefix(trimmedLine, "event:") {
+			return io.MultiReader(bytes.NewReader(inspectedPrefix.Bytes()), bufferedBody), true, nil
+		}
+		if strings.HasPrefix(trimmedLine, "{") || strings.HasPrefix(trimmedLine, "[") {
+			return io.MultiReader(bytes.NewReader(inspectedPrefix.Bytes()), bufferedBody), false, nil
+		}
+
+		if readErr == io.EOF {
+			return bytes.NewReader(inspectedPrefix.Bytes()), false, nil
+		}
+		if readErr != nil {
+			return nil, false, fmt.Errorf("inspect chat completions response: %w", readErr)
 		}
 	}
-	return false
 }
