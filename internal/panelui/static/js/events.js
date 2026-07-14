@@ -39,6 +39,7 @@ export function createApplicationEvents({
   renderApplication,
   renderModalRegion,
   loadCurrentPage,
+  abortCurrentPageLoad,
   normalizeCurrentPageForRole,
   handleSessionError
 }) {
@@ -80,6 +81,7 @@ export function createApplicationEvents({
         renderApplication();
         break;
       case "logout":
+        abortCurrentPageLoad();
         logout();
         break;
       case "refresh-page":

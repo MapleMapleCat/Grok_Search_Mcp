@@ -171,12 +171,12 @@ export function register(registrationData) {
   });
 }
 
-export function fetchCurrentUser() {
-  return panelAPI.request("/panel/v1/me");
+export function fetchCurrentUser(options = {}) {
+  return panelAPI.request("/panel/v1/me", options);
 }
 
-export function fetchKeys() {
-  return panelAPI.request("/panel/v1/keys");
+export function fetchKeys(options = {}) {
+  return panelAPI.request("/panel/v1/keys", options);
 }
 
 export function createKey(keyData) {
@@ -202,13 +202,13 @@ export function fetchKeyUsage(keyIdentifier) {
   return panelAPI.request(`/panel/v1/keys/${encodeURIComponent(keyIdentifier)}/usage`);
 }
 
-export function fetchUsage(since = "") {
+export function fetchUsage(since = "", options = {}) {
   const sinceQuery = since ? `?since=${encodeURIComponent(since)}` : "";
-  return panelAPI.request(`/panel/v1/usage${sinceQuery}`);
+  return panelAPI.request(`/panel/v1/usage${sinceQuery}`, options);
 }
 
-export function fetchAdminUsers() {
-  return panelAPI.request("/panel/v1/admin/users");
+export function fetchAdminUsers(options = {}) {
+  return panelAPI.request("/panel/v1/admin/users", options);
 }
 
 export function createAdminUser(userData) {
@@ -230,8 +230,8 @@ export function fetchAdminUserUsage(userIdentifier) {
   return panelAPI.request(`/panel/v1/admin/users/${encodeURIComponent(userIdentifier)}/usage`);
 }
 
-export function fetchTiers() {
-  return panelAPI.request("/panel/v1/admin/tiers");
+export function fetchTiers(options = {}) {
+  return panelAPI.request("/panel/v1/admin/tiers", options);
 }
 
 export function createTier(tierData) {
@@ -249,8 +249,8 @@ export function deleteTier(tierIdentifier) {
   return panelAPI.request(`/panel/v1/admin/tiers/${encodeURIComponent(tierIdentifier)}`, { method: "DELETE" });
 }
 
-export function fetchInviteCodes() {
-  return panelAPI.request("/panel/v1/admin/invite-codes");
+export function fetchInviteCodes(options = {}) {
+  return panelAPI.request("/panel/v1/admin/invite-codes", options);
 }
 
 export function createInviteCode(inviteCodeData) {
@@ -268,8 +268,8 @@ export function deleteInviteCode(inviteIdentifier) {
   return panelAPI.request(`/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}`, { method: "DELETE" });
 }
 
-export function fetchSettings() {
-  return panelAPI.request("/panel/v1/admin/settings");
+export function fetchSettings(options = {}) {
+  return panelAPI.request("/panel/v1/admin/settings", options);
 }
 
 export function updateSettings(settingsData) {

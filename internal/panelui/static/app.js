@@ -29,6 +29,13 @@ const modalRegionElement = document.querySelector("#modal-region");
 const toastRegionElement = document.querySelector("#toast-region");
 
 let activePageRequestIdentifier = 0;
+let activePageRequestController = null;
+
+function abortCurrentPageLoad() {
+  activePageRequestController?.abort();
+  activePageRequestController = null;
+  activePageRequestIdentifier += 1;
+}
 
 function renderApplication() {
   applicationElement.innerHTML = state.authenticated ? renderShell(state) : renderAuthView(state);
@@ -50,6 +57,7 @@ async function initializeApplication() {
     renderApplication,
     renderModalRegion,
     loadCurrentPage,
+    abortCurrentPageLoad,
     normalizeCurrentPageForRole,
     handleSessionError
   }).register();
@@ -100,14 +108,18 @@ function normalizeCurrentPageForRole() {
 }
 
 async function loadCurrentPage(options = {}) {
+  abortCurrentPageLoad();
+
   const page = state.currentPage;
-  const requestIdentifier = ++activePageRequestIdentifier;
+  const requestIdentifier = activePageRequestIdentifier;
+  const requestController = new AbortController();
+  activePageRequestController = requestController;
   state.pageLoading = !pageHasExistingData(page);
   state.refreshing = Boolean(options.refreshing);
   renderApplication();
 
   try {
-    const pageResult = await loadPageData(page);
+    const pageResult = await loadPageData(page, requestController.signal);
     if (requestIdentifier !== activePageRequestIdentifier) {
       return;
     }
@@ -116,11 +128,17 @@ async function loadCurrentPage(options = {}) {
     if (requestIdentifier !== activePageRequestIdentifier) {
       return;
     }
+    if (error?.name === "AbortError") {
+      return;
+    }
     if (handleSessionError(error)) {
       return;
     }
     showToast("加载失败", getErrorMessage(error), "error");
   } finally {
+    if (activePageRequestController === requestController) {
+      activePageRequestController = null;
+    }
     if (requestIdentifier === activePageRequestIdentifier && state.authenticated) {
       state.pageLoading = false;
       state.refreshing = false;
@@ -129,13 +147,13 @@ async function loadCurrentPage(options = {}) {
   }
 }
 
-async function loadPageData(page) {
+async function loadPageData(page, signal) {
   switch (page) {
     case "overview": {
       const [user, keyResponse, usage] = await Promise.all([
-        fetchCurrentUser(),
-        fetchKeys(),
-        fetchUsage(getUsagePeriodSince("24h"))
+        fetchCurrentUser({ signal }),
+        fetchKeys({ signal }),
+        fetchUsage(getUsagePeriodSince("24h"), { signal })
       ]);
       return {
         user,
@@ -144,32 +162,35 @@ async function loadPageData(page) {
       };
     }
     case "keys": {
-      const keyResponse = await fetchKeys();
+      const keyResponse = await fetchKeys({ signal });
       return { keys: keyResponse?.keys || [] };
     }
     case "usage": {
-      const usage = await fetchUsage(getUsagePeriodSince(state.filters.usagePeriod));
+      const usage = await fetchUsage(getUsagePeriodSince(state.filters.usagePeriod), { signal });
       return { usage: normalizeUsage(usage) };
     }
     case "users": {
-      const [userResponse, tierResponse] = await Promise.all([fetchAdminUsers(), fetchTiers()]);
+      const [userResponse, tierResponse] = await Promise.all([
+        fetchAdminUsers({ signal }),
+        fetchTiers({ signal })
+      ]);
       return {
         users: userResponse?.users || [],
         tiers: tierResponse?.tiers || []
       };
     }
     case "tiers": {
-      const tierResponse = await fetchTiers();
+      const tierResponse = await fetchTiers({ signal });
       return { tiers: tierResponse?.tiers || [] };
     }
     case "invites": {
-      const inviteResponse = await fetchInviteCodes();
+      const inviteResponse = await fetchInviteCodes({ signal });
       return { invites: inviteResponse?.invite_codes || [] };
     }
     case "settings":
-      return { settings: await fetchSettings() };
+      return { settings: await fetchSettings({ signal }) };
     case "account":
-      return { user: await fetchCurrentUser() };
+      return { user: await fetchCurrentUser({ signal }) };
     default:
       return {};
   }
@@ -180,6 +201,7 @@ function handleSessionError(error) {
     return false;
   }
 
+  abortCurrentPageLoad();
   panelAPI.clearSession();
   clearAuthenticatedState();
   state.authError = "会话已失效，请重新登录。";
