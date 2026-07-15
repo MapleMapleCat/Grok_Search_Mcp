@@ -234,6 +234,8 @@ func scanAPIKey(row interface {
 
 const keyColumns = `id, user_id, name, key_hash, key_prefix, key_ciphertext, key_nonce, key_encryption_version, enabled, created_at, updated_at, last_used_at, total_calls`
 
+const listKeysByUserQuery = `SELECT ` + keyColumns + ` FROM apikeys WHERE user_id = ? ORDER BY created_at DESC`
+
 // CreateKey 插入新密钥并返回元数据与初始明文 raw；后续可通过 RevealKey 按需恢复。
 func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string) (*APIKey, string, error) {
 	name = strings.TrimSpace(name)
@@ -402,8 +404,7 @@ func (s *SQLiteStore) GetKeyByHash(ctx context.Context, hash string) (*APIKey, e
 }
 
 func (s *SQLiteStore) ListKeysByUser(ctx context.Context, userID string) ([]*APIKey, error) {
-	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT `+keyColumns+` FROM apikeys WHERE user_id = ? ORDER BY created_at DESC`, userID)
+	rows, err := s.readDB.QueryContext(ctx, listKeysByUserQuery, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -663,6 +664,11 @@ var usageStatsWhere = map[usageStatsScope]string{
 	usageStatsGlobal: `1=1`,
 }
 
+func buildUsageStatsAggregateQuery(where string) string {
+	return `SELECT tool_name, COUNT(*), COALESCE(SUM(success), 0) FROM usage_log WHERE ` +
+		where + ` AND timestamp >= ? GROUP BY tool_name`
+}
+
 func (s *SQLiteStore) GetUsageStats(ctx context.Context, keyID string, since time.Time) (*UsageStats, error) {
 	return s.queryUsageStats(ctx, usageStatsByKey, []any{keyID}, since)
 }
@@ -691,10 +697,7 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	sinceStr := formatTime(sinceUTC)
 	args := appendUsageStatsArgs(whereArgs, sinceStr)
 
-	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT tool_name, COUNT(*), COALESCE(SUM(success), 0) FROM usage_log WHERE `+where+` AND timestamp >= ? GROUP BY tool_name`,
-		args...,
-	)
+	rows, err := s.readDB.QueryContext(ctx, buildUsageStatsAggregateQuery(where), args...)
 	if err != nil {
 		return nil, err
 	}

@@ -155,8 +155,7 @@ func (s *SQLiteStore) UpdateTier(ctx context.Context, id string, updates TierUpd
 
 func (s *SQLiteStore) DeleteTier(ctx context.Context, id string) error {
 	var n int64
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM users WHERE tier_id = ?`, id).Scan(&n); err != nil {
+	if err := s.db.QueryRowContext(ctx, countUsersByTierQuery, id).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
@@ -173,9 +172,10 @@ func (s *SQLiteStore) DeleteTier(ctx context.Context, id string) error {
 	return nil
 }
 
+const countUsersByTierQuery = `SELECT COUNT(*) FROM users WHERE tier_id = ?`
+
 func (s *SQLiteStore) CountUsersByTier(ctx context.Context, tierID string) (int64, error) {
 	var n int64
-	err := s.readDB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM users WHERE tier_id = ?`, tierID).Scan(&n)
+	err := s.readDB.QueryRowContext(ctx, countUsersByTierQuery, tierID).Scan(&n)
 	return n, err
 }

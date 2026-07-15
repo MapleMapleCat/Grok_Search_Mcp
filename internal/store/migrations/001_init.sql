@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_tier_id ON users(tier_id);
 
 CREATE TABLE IF NOT EXISTS apikeys (
     id                     TEXT PRIMARY KEY,
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS apikeys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_apikeys_key_hash ON apikeys(key_hash);
+CREATE INDEX IF NOT EXISTS idx_apikeys_user_id ON apikeys(user_id);
 
 CREATE TABLE IF NOT EXISTS usage_log (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +67,7 @@ CREATE TABLE IF NOT EXISTS usage_log (
     FOREIGN KEY (key_id) REFERENCES apikeys(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_usage_log_key_id ON usage_log(key_id);
+CREATE INDEX IF NOT EXISTS idx_usage_log_key_id_timestamp ON usage_log(key_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_usage_log_timestamp ON usage_log(timestamp);
 
 CREATE TABLE IF NOT EXISTS usage_log_debug_body_chunks (

@@ -30,6 +30,81 @@ func openTestDB(t *testing.T) *SQLiteStore {
 	return s
 }
 
+func readQueryPlanDetails(t *testing.T, database *sql.DB, query string, arguments ...any) []string {
+	t.Helper()
+
+	rows, err := database.QueryContext(context.Background(), `EXPLAIN QUERY PLAN `+query, arguments...)
+	if err != nil {
+		t.Fatalf("explain query plan: %v", err)
+	}
+	defer rows.Close()
+
+	var planDetails []string
+	for rows.Next() {
+		var selectID int
+		var parentID int
+		var unusedValue int
+		var detail string
+		if err := rows.Scan(&selectID, &parentID, &unusedValue, &detail); err != nil {
+			t.Fatalf("scan query plan: %v", err)
+		}
+		planDetails = append(planDetails, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate query plan: %v", err)
+	}
+	return planDetails
+}
+
+func TestSQLiteCoreUsageAndOwnershipQueriesUseIndexes(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	sinceTimestamp := formatTime(time.Now().UTC().Add(-time.Hour))
+
+	testCases := []struct {
+		name            string
+		query           string
+		arguments       []any
+		expectedIndexes []string
+	}{
+		{
+			name:            "usage by key and timestamp",
+			query:           buildUsageStatsAggregateQuery(usageStatsWhere[usageStatsByKey]),
+			arguments:       []any{"key-id", sinceTimestamp},
+			expectedIndexes: []string{"idx_usage_log_key_id_timestamp"},
+		},
+		{
+			name:            "usage by user ownership and timestamp",
+			query:           buildUsageStatsAggregateQuery(usageStatsWhere[usageStatsByUser]),
+			arguments:       []any{"user-id", sinceTimestamp},
+			expectedIndexes: []string{"idx_usage_log_key_id_timestamp", "idx_apikeys_user_id"},
+		},
+		{
+			name:            "API keys by owner",
+			query:           listKeysByUserQuery,
+			arguments:       []any{"user-id"},
+			expectedIndexes: []string{"idx_apikeys_user_id"},
+		},
+		{
+			name:            "users by tier",
+			query:           countUsersByTierQuery,
+			arguments:       []any{"tier-id"},
+			expectedIndexes: []string{"idx_users_tier_id"},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			planDetails := readQueryPlanDetails(t, sqliteStore.readDB, testCase.query, testCase.arguments...)
+			joinedPlan := strings.Join(planDetails, "\n")
+			for _, expectedIndex := range testCase.expectedIndexes {
+				if !strings.Contains(joinedPlan, expectedIndex) {
+					t.Fatalf("query plan did not use %s:\n%s", expectedIndex, joinedPlan)
+				}
+			}
+		})
+	}
+}
+
 func TestSQLiteReadPoolIsBoundedAndQueryOnly(t *testing.T) {
 	sqliteStore := openTestDB(t)
 	ctx := context.Background()
