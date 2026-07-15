@@ -12,6 +12,7 @@ import (
 
 type entry struct {
 	limiter  *rate.Limiter
+	rpm      int
 	lastSeen time.Time
 }
 
@@ -52,13 +53,14 @@ func (l *UserLimiter) allow(userID string, rpm int) bool {
 	defer l.mu.Unlock()
 	e, ok := l.entries[userID]
 	if !ok {
-		e = &entry{limiter: l.limitFor(rpm)}
-		l.entries[userID] = e
-	} else {
-		want := l.limitFor(rpm)
-		if e.limiter.Limit() != want.Limit() || e.limiter.Burst() != want.Burst() {
-			e.limiter = want
+		e = &entry{
+			limiter: l.limitFor(rpm),
+			rpm:     rpm,
 		}
+		l.entries[userID] = e
+	} else if e.rpm != rpm {
+		e.limiter = l.limitFor(rpm)
+		e.rpm = rpm
 	}
 	e.lastSeen = now
 	return e.limiter.Allow()
