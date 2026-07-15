@@ -31,7 +31,7 @@ func scanTier(row interface {
 }
 
 func (s *SQLiteStore) GetTierByID(ctx context.Context, id string) (*Tier, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.readDB.QueryRowContext(ctx,
 		`SELECT `+tierColumns+` FROM tiers WHERE id = ?`, id)
 	t, err := scanTier(row)
 	if err == sql.ErrNoRows {
@@ -42,7 +42,7 @@ func (s *SQLiteStore) GetTierByID(ctx context.Context, id string) (*Tier, error)
 
 // GetTierByName 未找到时返回 (nil, nil) 以便调用方按需 fallback。
 func (s *SQLiteStore) GetTierByName(ctx context.Context, name string) (*Tier, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.readDB.QueryRowContext(ctx,
 		`SELECT `+tierColumns+` FROM tiers WHERE name = ? COLLATE NOCASE`, strings.TrimSpace(name))
 	t, err := scanTier(row)
 	if err == sql.ErrNoRows {
@@ -52,7 +52,7 @@ func (s *SQLiteStore) GetTierByName(ctx context.Context, name string) (*Tier, er
 }
 
 func (s *SQLiteStore) ListTiers(ctx context.Context) ([]*Tier, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT `+tierColumns+` FROM tiers ORDER BY level ASC, name ASC`)
 	if err != nil {
 		return nil, err
@@ -175,7 +175,7 @@ func (s *SQLiteStore) DeleteTier(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) CountUsersByTier(ctx context.Context, tierID string) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx,
+	err := s.readDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM users WHERE tier_id = ?`, tierID).Scan(&n)
 	return n, err
 }

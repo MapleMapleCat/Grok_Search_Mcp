@@ -54,7 +54,7 @@ func scanInviteCode(row interface {
 }
 
 func (s *SQLiteStore) ListInviteCodes(ctx context.Context) ([]*InviteCode, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+inviteCodeColumns+` FROM invite_codes ORDER BY created_at DESC`)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT `+inviteCodeColumns+` FROM invite_codes ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +267,7 @@ func (s *SQLiteStore) RegisterUserWithInviteCode(ctx context.Context, username, 
 }
 
 func (s *SQLiteStore) getInviteCodeByID(ctx context.Context, id string) (*InviteCode, error) {
-	inviteCode, err := scanInviteCode(s.db.QueryRowContext(ctx,
+	inviteCode, err := scanInviteCode(s.readDB.QueryRowContext(ctx,
 		`SELECT `+inviteCodeColumns+` FROM invite_codes WHERE id = ?`, strings.TrimSpace(id),
 	))
 	if err != nil {

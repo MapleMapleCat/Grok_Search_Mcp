@@ -2,10 +2,14 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +28,137 @@ func openTestDB(t *testing.T) *SQLiteStore {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+func TestSQLiteReadPoolIsBoundedAndQueryOnly(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+
+	if maximumOpenConnections := sqliteStore.readDB.Stats().MaxOpenConnections; maximumOpenConnections != sqliteReadPoolSize {
+		t.Fatalf("read pool MaxOpenConnections = %d, want %d", maximumOpenConnections, sqliteReadPoolSize)
+	}
+
+	var queryOnly int
+	if err := sqliteStore.readDB.QueryRowContext(ctx, `PRAGMA query_only`).Scan(&queryOnly); err != nil {
+		t.Fatalf("read PRAGMA query_only: %v", err)
+	}
+	if queryOnly != 1 {
+		t.Fatalf("PRAGMA query_only = %d, want 1", queryOnly)
+	}
+
+	if _, err := sqliteStore.readDB.ExecContext(ctx, `UPDATE users SET username = username`); err == nil {
+		t.Fatal("expected the read pool to reject writes")
+	}
+}
+
+func TestSQLiteInMemoryDatabaseKeepsSharedConnection(t *testing.T) {
+	sqliteStore, err := OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqliteStore.Close() })
+
+	if sqliteStore.readDB != sqliteStore.db {
+		t.Fatal("in-memory SQLite must reuse the writer pool so reads see the same database")
+	}
+	if _, err := sqliteStore.CountUsers(context.Background()); err != nil {
+		t.Fatalf("query in-memory database: %v", err)
+	}
+}
+
+func TestSQLiteWriterDoesNotWaitForHeldReader(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+	userID := testUserID(t, sqliteStore)
+
+	readTransaction, err := sqliteStore.readDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatalf("begin read transaction: %v", err)
+	}
+	defer readTransaction.Rollback()
+
+	var username string
+	if err := readTransaction.QueryRowContext(ctx, `SELECT username FROM users WHERE id = ?`, userID).Scan(&username); err != nil {
+		t.Fatalf("establish reader snapshot: %v", err)
+	}
+
+	writeContext, cancelWrite := context.WithTimeout(ctx, time.Second)
+	defer cancelWrite()
+	if _, err := sqliteStore.db.ExecContext(writeContext,
+		`UPDATE users SET success_calls = success_calls + 1 WHERE id = ?`, userID,
+	); err != nil {
+		t.Fatalf("writer was blocked by held reader: %v", err)
+	}
+}
+
+func BenchmarkSQLiteMixedAuthenticationReadsAndWrites(b *testing.B) {
+	databasePath := filepath.Join(b.TempDir(), "benchmark.db")
+	sqliteStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = sqliteStore.Close() })
+	if err := sqliteStore.ConfigureAPIKeyEncryption("benchmark-api-key-encryption-secret-at-least-32-bytes"); err != nil {
+		b.Fatal(err)
+	}
+
+	ctx := context.Background()
+	user, err := sqliteStore.CreateUser(ctx, "benchmark-user", "hash", RoleUser)
+	if err != nil {
+		b.Fatal(err)
+	}
+	apiKey, rawAPIKey, err := sqliteStore.CreateKey(ctx, user.ID, "benchmark-key")
+	if err != nil {
+		b.Fatal(err)
+	}
+	apiKeyHash := keyhash.HashAPIKey(rawAPIKey)
+
+	benchmarks := []struct {
+		name         string
+		readDatabase *sql.DB
+	}{
+		{name: "serialized", readDatabase: sqliteStore.db},
+		{name: "split-read-pool", readDatabase: sqliteStore.readDB},
+	}
+
+	for _, benchmark := range benchmarks {
+		b.Run(benchmark.name, func(b *testing.B) {
+			var operationCounter uint64
+			var firstError error
+			var firstErrorOnce sync.Once
+
+			b.ResetTimer()
+			b.RunParallel(func(parallelBenchmark *testing.PB) {
+				for parallelBenchmark.Next() {
+					operationNumber := atomic.AddUint64(&operationCounter, 1)
+					if operationNumber%10 == 0 {
+						if err := sqliteStore.TouchKeyUsage(ctx, apiKey.ID); err != nil {
+							firstErrorOnce.Do(func() { firstError = err })
+							return
+						}
+						continue
+					}
+
+					foundAPIKey, err := scanAPIKey(benchmark.readDatabase.QueryRowContext(ctx,
+						`SELECT `+keyColumns+` FROM apikeys WHERE key_hash = ?`, apiKeyHash,
+					))
+					if err != nil {
+						firstErrorOnce.Do(func() { firstError = err })
+						return
+					}
+					if foundAPIKey.ID != apiKey.ID {
+						firstErrorOnce.Do(func() {
+							firstError = fmt.Errorf("read API key ID %q, want %q", foundAPIKey.ID, apiKey.ID)
+						})
+						return
+					}
+				}
+			})
+			if firstError != nil {
+				b.Fatal(firstError)
+			}
+		})
+	}
 }
 
 func testUserID(t *testing.T, s *SQLiteStore) string {

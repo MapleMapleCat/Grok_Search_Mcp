@@ -368,13 +368,13 @@ func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
 
 func (s *SQLiteStore) CountUsers(ctx context.Context) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	err := s.readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
 }
 
 func (s *SQLiteStore) CountEnabledAdmins(ctx context.Context) (int64, error) {
 	var enabledAdminCount int64
-	err := s.db.QueryRowContext(ctx,
+	err := s.readDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM users WHERE role = ? AND enabled = 1`, string(RoleAdmin),
 	).Scan(&enabledAdminCount)
 	return enabledAdminCount, err

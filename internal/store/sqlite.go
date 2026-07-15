@@ -22,9 +22,12 @@ import (
 // timeLayout 为库内 UTC 时间字符串格式（与 SQLite datetime 列一致）。
 const timeLayout = "2006-01-02 15:04:05"
 
-// SQLiteStore 使用纯 Go 驱动 modernc.org/sqlite，MaxOpenConns=1 以配合 SQLite 写锁语义。
+const sqliteReadPoolSize = 4
+
+// SQLiteStore 使用纯 Go 驱动 modernc.org/sqlite。写连接保持串行，读取连接池用于发挥 WAL 的并发读取能力。
 type SQLiteStore struct {
 	db           *sql.DB
+	readDB       *sql.DB
 	secretCipher *keycrypt.Cipher
 }
 
@@ -35,17 +38,42 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	if err := migrate(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+	if path == ":memory:" {
+		return &SQLiteStore{db: db, readDB: db}, nil
+	}
 
-	return &SQLiteStore{db: db}, nil
+	readDB, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=query_only(1)")
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("open sqlite read pool: %w", err)
+	}
+	readDB.SetMaxOpenConns(sqliteReadPoolSize)
+	readDB.SetMaxIdleConns(sqliteReadPoolSize)
+	if err := readDB.Ping(); err != nil {
+		_ = readDB.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("initialize sqlite read pool: %w", err)
+	}
+
+	return &SQLiteStore{db: db, readDB: readDB}, nil
 }
 
 func (s *SQLiteStore) Close() error {
-	return s.db.Close()
+	if s.readDB == nil || s.readDB == s.db {
+		return s.db.Close()
+	}
+	readCloseErr := s.readDB.Close()
+	writeCloseErr := s.db.Close()
+	if readCloseErr != nil {
+		return readCloseErr
+	}
+	return writeCloseErr
 }
 
 // ConfigureAPIKeyEncryption derives the at-rest encryption key used for
@@ -295,7 +323,7 @@ func (s *SQLiteStore) RotateLegacyAPIKeys(ctx context.Context) (int, error) {
 
 // GetKeyByHash 供鉴权使用；未找到时返回 (nil, nil)。
 func (s *SQLiteStore) GetKeyByHash(ctx context.Context, hash string) (*APIKey, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.readDB.QueryRowContext(ctx,
 		`SELECT `+keyColumns+` FROM apikeys WHERE key_hash = ?`, hash)
 	k, err := scanAPIKey(row)
 	if err == sql.ErrNoRows {
@@ -305,7 +333,7 @@ func (s *SQLiteStore) GetKeyByHash(ctx context.Context, hash string) (*APIKey, e
 }
 
 func (s *SQLiteStore) ListKeysByUser(ctx context.Context, userID string) ([]*APIKey, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT `+keyColumns+` FROM apikeys WHERE user_id = ? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
@@ -324,7 +352,7 @@ func (s *SQLiteStore) ListKeysByUser(ctx context.Context, userID string) ([]*API
 }
 
 func (s *SQLiteStore) ListKeys(ctx context.Context) ([]*APIKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+keyColumns+` FROM apikeys ORDER BY created_at DESC`)
+	rows, err := s.readDB.QueryContext(ctx, `SELECT `+keyColumns+` FROM apikeys ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +370,7 @@ func (s *SQLiteStore) ListKeys(ctx context.Context) ([]*APIKey, error) {
 }
 
 func (s *SQLiteStore) GetKeyByID(ctx context.Context, id string) (*APIKey, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.readDB.QueryRowContext(ctx,
 		`SELECT `+keyColumns+` FROM apikeys WHERE id = ?`, id)
 	k, err := scanAPIKey(row)
 	if err == sql.ErrNoRows {
@@ -523,7 +551,7 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	sinceStr := formatTime(sinceUTC)
 	args := appendUsageStatsArgs(whereArgs, sinceStr)
 
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT tool_name, COUNT(*), COALESCE(SUM(success), 0) FROM usage_log WHERE `+where+` AND timestamp >= ? GROUP BY tool_name`,
 		args...,
 	)
@@ -548,7 +576,7 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	}
 	rows.Close()
 
-	recRows, err := s.db.QueryContext(ctx,
+	recRows, err := s.readDB.QueryContext(ctx,
 		`SELECT id, key_id, tool_name, timestamp, duration_ms, success, debug_json FROM usage_log WHERE `+where+` AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500`,
 		args...,
 	)
@@ -611,7 +639,7 @@ func (s *SQLiteStore) loadUsageDebugBodySummaries(ctx context.Context, records [
 		recordIndexesByID[records[recordIndex].ID] = recordIndex
 	}
 
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT usage_id, body_kind, COALESCE(SUM(length(body_data)), 0)
 		 FROM usage_log_debug_body_chunks
 		 WHERE usage_id IN (`+queryPlaceholders+`)
@@ -665,7 +693,7 @@ func (s *SQLiteStore) GetUsageRecordDetail(ctx context.Context, usageID int64, s
 	var record UsageRecord
 	var timestamp string
 	var success int
-	err := s.db.QueryRowContext(ctx, query, queryArgs...).Scan(
+	err := s.readDB.QueryRowContext(ctx, query, queryArgs...).Scan(
 		&record.ID,
 		&record.KeyID,
 		&record.ToolName,
@@ -686,7 +714,7 @@ func (s *SQLiteStore) GetUsageRecordDetail(ctx context.Context, usageID int64, s
 		return nil, err
 	}
 
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT body_kind, body_data
 		 FROM usage_log_debug_body_chunks
 		 WHERE usage_id = ?
@@ -737,7 +765,7 @@ func (s *SQLiteStore) queryCurrentRPM(ctx context.Context, where string, whereAr
 	queryArgs := appendUsageStatsArgs(whereArgs, formatTime(queryStart), formatTime(queryEnd))
 
 	var currentRPM int64
-	err := s.db.QueryRowContext(ctx,
+	err := s.readDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM usage_log WHERE `+where+` AND timestamp >= ? AND timestamp <= ?`,
 		queryArgs...,
 	).Scan(&currentRPM)
@@ -759,7 +787,7 @@ func (s *SQLiteStore) resolveUsageTrafficRangeStart(
 	}
 
 	var earliestTimestamp sql.NullString
-	if err := s.db.QueryRowContext(ctx,
+	if err := s.readDB.QueryRowContext(ctx,
 		`SELECT MIN(timestamp) FROM usage_log WHERE `+where,
 		whereArgs...,
 	).Scan(&earliestTimestamp); err != nil {
@@ -804,7 +832,7 @@ func (s *SQLiteStore) queryUsageTrafficBuckets(
 	queryArgs = append(queryArgs, whereArgs...)
 	queryArgs = append(queryArgs, formatTime(rangeStart), formatTime(rangeEnd))
 
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`WITH bucket_window(start_unix, duration_seconds) AS (VALUES (?, ?))
 		 SELECT MIN(7, CAST(((CAST(strftime('%s', usage_log.timestamp) AS INTEGER) - bucket_window.start_unix) * 8) / bucket_window.duration_seconds AS INTEGER)) AS bucket_index,
 		        COUNT(*)
