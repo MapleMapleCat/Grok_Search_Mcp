@@ -1,7 +1,6 @@
 package panel
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -11,11 +10,6 @@ import (
 	"github.com/grok-mcp/internal/grok"
 	"github.com/grok-mcp/internal/store"
 )
-
-// ModelLister fetches the currently available upstream Grok models.
-type ModelLister interface {
-	ListModels(context.Context) ([]grok.Model, error)
-}
 
 func (h *Handler) adminGetServerSettings(w http.ResponseWriter, r *http.Request) {
 	settings, updatedAt, err := h.loadEffectiveServerSettings(r)
