@@ -63,19 +63,19 @@ func TestFirstUserAdminAndSuccessQuotaReserve(t *testing.T) {
 		t.Fatalf("role %s", u1.Role)
 	}
 
-	if err := s.TryIncrementUserSuccessCalls(ctx, u1.ID, 1); err != nil {
+	if err := s.ReserveSuccessCall(ctx, u1.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.TryIncrementUserSuccessCalls(ctx, u1.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+	if err := s.ReserveSuccessCall(ctx, u1.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("expected success quota, got %v", err)
 	}
 }
 
-func TestTryIncrementUserSuccessCallsDistinguishesMissingUserFromQuota(t *testing.T) {
+func TestReserveSuccessCallDistinguishesMissingUserFromQuota(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
-	if err := s.TryIncrementUserSuccessCalls(ctx, "missing-user", 1); !errors.Is(err, ErrUserNotFound) {
+	if err := s.ReserveSuccessCall(ctx, "missing-user", 1); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("expected missing user error, got %v", err)
 	}
 
@@ -83,10 +83,10 @@ func TestTryIncrementUserSuccessCallsDistinguishesMissingUserFromQuota(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.TryIncrementUserSuccessCalls(ctx, user.ID, 1); err != nil {
+	if err := s.ReserveSuccessCall(ctx, user.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.TryIncrementUserSuccessCalls(ctx, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+	if err := s.ReserveSuccessCall(ctx, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("expected quota error for existing exhausted user, got %v", err)
 	}
 }

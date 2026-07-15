@@ -33,10 +33,6 @@ func (f *fakeStore) RecordUsage(_ context.Context, record store.UsageRecord) err
 
 func (f *fakeStore) ReleaseSuccessCall(context.Context, string) error { return nil }
 
-func (f *fakeStore) TryIncrementUserSuccessCalls(context.Context, string, int) error {
-	return nil
-}
-
 func (f *fakeStore) RecordedUsage() []store.UsageRecord {
 	f.mu.Lock()
 	defer f.mu.Unlock()

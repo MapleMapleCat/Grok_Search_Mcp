@@ -335,7 +335,6 @@ type Store interface {
 	CountEnabledAdmins(ctx context.Context) (int64, error)
 	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) error
 	ReleaseSuccessCall(ctx context.Context, userID string) error
-	TryIncrementUserSuccessCalls(ctx context.Context, userID string, successLimit int) error
 
 	GetTierByID(ctx context.Context, id string) (*Tier, error)
 	GetTiersByIDs(ctx context.Context, ids []string) (map[string]*Tier, error)

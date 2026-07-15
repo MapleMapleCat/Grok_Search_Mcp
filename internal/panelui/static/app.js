@@ -15,7 +15,7 @@ import { renderAuthView } from "./js/components/forms.js";
 import { renderModal } from "./js/components/modal.js";
 import { configureToastRegion, showToast } from "./js/components/toast.js";
 import { createApplicationEvents } from "./js/events.js";
-import { adminPages, availablePages, pageMetadata, renderShell } from "./js/router.js";
+import { adminPages, availablePages, isStaticPage, pageMetadata, renderShell } from "./js/router.js";
 import {
   clearAuthenticatedState,
   COLLECTION_PAGE_SIZE,
@@ -113,6 +113,13 @@ async function loadCurrentPage(options = {}) {
   abortCurrentPageLoad();
 
   const page = state.currentPage;
+  if (isStaticPage(page)) {
+    state.pageLoading = false;
+    state.refreshing = false;
+    renderApplication();
+    return true;
+  }
+
   const requestIdentifier = activePageRequestIdentifier;
   const requestController = new AbortController();
   activePageRequestController = requestController;

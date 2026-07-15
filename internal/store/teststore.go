@@ -35,9 +35,6 @@ func (TestStore) ReserveSuccessCall(context.Context, string, int) error {
 	return nil
 }
 func (TestStore) ReleaseSuccessCall(context.Context, string) error { return nil }
-func (TestStore) TryIncrementUserSuccessCalls(context.Context, string, int) error {
-	return nil
-}
 
 func (TestStore) GetTierByID(context.Context, string) (*Tier, error) { return nil, ErrTierNotFound }
 func (TestStore) GetTiersByIDs(context.Context, []string) (map[string]*Tier, error) {

@@ -344,7 +344,6 @@ export function createApplicationEvents({
 
   function resetCurrentPagePagination() {
     const paginationByPage = {
-      overview: "keys",
       keys: "keys",
       usage: "usageRecords",
       users: "users",
