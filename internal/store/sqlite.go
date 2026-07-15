@@ -572,6 +572,30 @@ func buildUsageStatsAggregateQuery(where string) string {
 		where + ` AND timestamp >= ? GROUP BY tool_name`
 }
 
+type usageRollupSource struct {
+	tableName       string
+	timestampColumn string
+	bucketDuration  time.Duration
+}
+
+var usageRollupSources = []usageRollupSource{
+	{
+		tableName:       "usage_hourly_rollups",
+		timestampColumn: "bucket_start",
+		bucketDuration:  time.Hour,
+	},
+	{
+		tableName:       "usage_daily_rollups",
+		timestampColumn: "bucket_start",
+		bucketDuration:  24 * time.Hour,
+	},
+}
+
+func buildUsageRollupStatsAggregateQuery(source usageRollupSource, where string) string {
+	return `SELECT tool_name, COALESCE(SUM(total_calls), 0), COALESCE(SUM(success_calls), 0) FROM ` +
+		source.tableName + ` WHERE ` + where + ` AND ` + source.timestampColumn + ` >= ? GROUP BY tool_name`
+}
+
 func (s *SQLiteStore) GetUsageStats(ctx context.Context, keyID string, since time.Time) (*UsageStats, error) {
 	return s.queryUsageStats(ctx, usageStatsByKey, []any{keyID}, since)
 }
@@ -600,27 +624,16 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	sinceStr := formatTime(sinceUTC)
 	args := appendUsageStatsArgs(whereArgs, sinceStr)
 
-	rows, err := s.readDB.QueryContext(ctx, buildUsageStatsAggregateQuery(where), args...)
-	if err != nil {
+	if err := s.addRawUsageAggregates(ctx, stats, where, args); err != nil {
 		return nil, err
 	}
-	for rows.Next() {
-		var tool string
-		var count int64
-		var successCount int64
-		if err := rows.Scan(&tool, &count, &successCount); err != nil {
-			rows.Close()
+	for _, source := range usageRollupSources {
+		rollupSince := truncateUsageRollupBoundary(sinceUTC, source.bucketDuration)
+		rollupArgs := appendUsageStatsArgs(whereArgs, formatTime(rollupSince))
+		if err := s.addRollupUsageAggregates(ctx, stats, source, where, rollupArgs); err != nil {
 			return nil, err
 		}
-		stats.ByTool[tool] = count
-		stats.TotalCalls += count
-		stats.SuccessCalls += successCount
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
 
 	recRows, err := s.readDB.QueryContext(ctx,
 		`SELECT id, key_id, tool_name, timestamp, duration_ms, success FROM usage_log WHERE `+where+` AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500`,
@@ -670,6 +683,68 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	}
 	stats.TrafficBuckets = trafficBuckets
 	return stats, nil
+}
+
+func (s *SQLiteStore) addRawUsageAggregates(
+	ctx context.Context,
+	stats *UsageStats,
+	where string,
+	queryArgs []any,
+) error {
+	rows, err := s.readDB.QueryContext(ctx, buildUsageStatsAggregateQuery(where), queryArgs...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var toolName string
+		var callCount int64
+		var successCount int64
+		if err := rows.Scan(&toolName, &callCount, &successCount); err != nil {
+			return err
+		}
+		addUsageAggregate(stats, toolName, callCount, successCount)
+	}
+	return rows.Err()
+}
+
+func (s *SQLiteStore) addRollupUsageAggregates(
+	ctx context.Context,
+	stats *UsageStats,
+	source usageRollupSource,
+	where string,
+	queryArgs []any,
+) error {
+	rows, err := s.readDB.QueryContext(ctx, buildUsageRollupStatsAggregateQuery(source, where), queryArgs...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var toolName string
+		var callCount int64
+		var successCount int64
+		if err := rows.Scan(&toolName, &callCount, &successCount); err != nil {
+			return err
+		}
+		addUsageAggregate(stats, toolName, callCount, successCount)
+	}
+	return rows.Err()
+}
+
+func addUsageAggregate(stats *UsageStats, toolName string, callCount, successCount int64) {
+	stats.ByTool[toolName] += callCount
+	stats.TotalCalls += callCount
+	stats.SuccessCalls += successCount
+}
+
+func truncateUsageRollupBoundary(timestamp time.Time, bucketDuration time.Duration) time.Time {
+	if bucketDuration == 24*time.Hour {
+		return truncateToUTCDay(timestamp)
+	}
+	return timestamp.UTC().Truncate(bucketDuration)
 }
 
 func (s *SQLiteStore) loadUsageDebugBodySummaries(ctx context.Context, records []UsageRecord) error {
@@ -863,26 +938,60 @@ func (s *SQLiteStore) resolveUsageTrafficRangeStart(
 		return queryEnd.Add(-24 * time.Hour), nil
 	}
 
-	var earliestTimestamp sql.NullString
-	if err := s.readDB.QueryRowContext(ctx,
-		`SELECT MIN(timestamp) FROM usage_log WHERE `+where,
-		whereArgs...,
-	).Scan(&earliestTimestamp); err != nil {
+	earliestUsageTime, hasUsage, err := s.queryEarliestUsageTime(ctx, "usage_log", "timestamp", where, whereArgs)
+	if err != nil {
 		return time.Time{}, err
 	}
-	if !earliestTimestamp.Valid || earliestTimestamp.String == "" {
+	for _, source := range usageRollupSources {
+		sourceEarliestTime, sourceHasUsage, err := s.queryEarliestUsageTime(
+			ctx,
+			source.tableName,
+			source.timestampColumn,
+			where,
+			whereArgs,
+		)
+		if err != nil {
+			return time.Time{}, err
+		}
+		if sourceHasUsage && (!hasUsage || sourceEarliestTime.Before(earliestUsageTime)) {
+			earliestUsageTime = sourceEarliestTime
+			hasUsage = true
+		}
+	}
+	if !hasUsage {
 		return queryEnd.Add(-24 * time.Hour), nil
+	}
+
+	earliestUsageTime = earliestUsageTime.UTC().Truncate(time.Second)
+	if !earliestUsageTime.Before(queryEnd) {
+		return queryEnd.Add(-24 * time.Hour), nil
+	}
+	return earliestUsageTime, nil
+}
+
+func (s *SQLiteStore) queryEarliestUsageTime(
+	ctx context.Context,
+	tableName string,
+	timestampColumn string,
+	where string,
+	whereArgs []any,
+) (time.Time, bool, error) {
+	var earliestTimestamp sql.NullString
+	if err := s.readDB.QueryRowContext(ctx,
+		`SELECT MIN(`+timestampColumn+`) FROM `+tableName+` WHERE `+where,
+		whereArgs...,
+	).Scan(&earliestTimestamp); err != nil {
+		return time.Time{}, false, err
+	}
+	if !earliestTimestamp.Valid || earliestTimestamp.String == "" {
+		return time.Time{}, false, nil
 	}
 
 	parsedTimestamp, err := parseTime(earliestTimestamp.String)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, false, err
 	}
-	parsedTimestamp = parsedTimestamp.UTC().Truncate(time.Second)
-	if !parsedTimestamp.Before(queryEnd) {
-		return queryEnd.Add(-24 * time.Hour), nil
-	}
-	return parsedTimestamp, nil
+	return parsedTimestamp, true, nil
 }
 
 func (s *SQLiteStore) queryUsageTrafficBuckets(
@@ -904,24 +1013,70 @@ func (s *SQLiteStore) queryUsageTrafficBuckets(
 	}
 
 	buckets := createEmptyUsageTrafficBuckets(rangeStart, rangeEnd, rangeDurationSeconds)
+	if err := s.addUsageTrafficSource(
+		ctx,
+		buckets,
+		"usage_log",
+		"timestamp",
+		"COUNT(*)",
+		where,
+		whereArgs,
+		rangeStart,
+		rangeEnd,
+		rangeDurationSeconds,
+	); err != nil {
+		return nil, err
+	}
+	for _, source := range usageRollupSources {
+		sourceRangeStart := truncateUsageRollupBoundary(rangeStart, source.bucketDuration)
+		if err := s.addUsageTrafficSource(
+			ctx,
+			buckets,
+			source.tableName,
+			source.timestampColumn,
+			"SUM(total_calls)",
+			where,
+			whereArgs,
+			sourceRangeStart,
+			rangeEnd,
+			rangeDurationSeconds,
+		); err != nil {
+			return nil, err
+		}
+	}
+	return buckets, nil
+}
+
+func (s *SQLiteStore) addUsageTrafficSource(
+	ctx context.Context,
+	buckets []UsageBucket,
+	tableName string,
+	timestampColumn string,
+	callCountExpression string,
+	where string,
+	whereArgs []any,
+	sourceRangeStart time.Time,
+	rangeEnd time.Time,
+	rangeDurationSeconds int64,
+) error {
 	queryArgs := make([]any, 0, 2+len(whereArgs)+2)
-	queryArgs = append(queryArgs, rangeStart.Unix(), rangeDurationSeconds)
+	queryArgs = append(queryArgs, buckets[0].Start.Unix(), rangeDurationSeconds)
 	queryArgs = append(queryArgs, whereArgs...)
-	queryArgs = append(queryArgs, formatTime(rangeStart), formatTime(rangeEnd))
+	queryArgs = append(queryArgs, formatTime(sourceRangeStart), formatTime(rangeEnd))
 
 	rows, err := s.readDB.QueryContext(ctx,
 		`WITH bucket_window(start_unix, duration_seconds) AS (VALUES (?, ?))
-		 SELECT MIN(7, CAST(((CAST(strftime('%s', usage_log.timestamp) AS INTEGER) - bucket_window.start_unix) * 8) / bucket_window.duration_seconds AS INTEGER)) AS bucket_index,
-		        COUNT(*)
-		 FROM usage_log
+		 SELECT MIN(7, MAX(0, CAST(((CAST(strftime('%s', `+timestampColumn+`) AS INTEGER) - bucket_window.start_unix) * 8) / bucket_window.duration_seconds AS INTEGER))) AS bucket_index,
+		        `+callCountExpression+`
+		 FROM `+tableName+`
 		 CROSS JOIN bucket_window
-		 WHERE `+where+` AND timestamp >= ? AND timestamp <= ?
+		 WHERE `+where+` AND `+timestampColumn+` >= ? AND `+timestampColumn+` <= ?
 		 GROUP BY bucket_index
 		 ORDER BY bucket_index`,
 		queryArgs...,
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer rows.Close()
 
@@ -929,17 +1084,14 @@ func (s *SQLiteStore) queryUsageTrafficBuckets(
 		var bucketIndex int
 		var callCount int64
 		if err := rows.Scan(&bucketIndex, &callCount); err != nil {
-			return nil, err
+			return err
 		}
 		if bucketIndex < 0 || bucketIndex >= len(buckets) {
-			return nil, fmt.Errorf("invalid usage traffic bucket index %d", bucketIndex)
+			return fmt.Errorf("invalid usage traffic bucket index %d", bucketIndex)
 		}
-		buckets[bucketIndex].Calls = callCount
+		buckets[bucketIndex].Calls += callCount
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return buckets, nil
+	return rows.Err()
 }
 
 func createEmptyUsageTrafficBuckets(rangeStart, rangeEnd time.Time, rangeDurationSeconds int64) []UsageBucket {

@@ -13,12 +13,16 @@ import (
 )
 
 const (
-	defaultBaseURL          = "http://127.0.0.1:8317"
-	defaultModel            = "grok-4.3"
-	defaultUpstreamProtocol = UpstreamProtocolResponses
-	defaultTimeout          = 120 * time.Second
-	defaultHTTPAddr         = ":8080"
-	defaultDBPath           = "./grok-mcp.db"
+	defaultBaseURL                  = "http://127.0.0.1:8317"
+	defaultModel                    = "grok-4.3"
+	defaultUpstreamProtocol         = UpstreamProtocolResponses
+	defaultTimeout                  = 120 * time.Second
+	defaultHTTPAddr                 = ":8080"
+	defaultDBPath                   = "./grok-mcp.db"
+	defaultUsageRawRetention        = 7 * 24 * time.Hour
+	defaultUsageHourlyRetention     = 90 * 24 * time.Hour
+	defaultUsageDailyRetention      = 730 * 24 * time.Hour
+	defaultUsageMaintenanceInterval = time.Hour
 	// defaultMCPIPRPM 在请求携带反向代理客户端 IP Header 时，于 API key 鉴权前限制 /mcp 请求。
 	defaultMCPIPRPM = 300
 )
@@ -35,19 +39,23 @@ const (
 
 // Config 保存进程启动所需的全部配置项。
 type Config struct {
-	CPABaseURL       string
-	CPAAPIKey        string
-	UpstreamProtocol UpstreamProtocol
-	Model            string
-	Timeout          time.Duration
-	Debug            bool
-	HTTPAddr         string
-	DBPath           string
-	JWTSecret        string
-	MCPIPRPM         int
-	ProxyURL         string
-	ProxyEnabled     bool
-	RegistrationMode store.RegistrationMode
+	CPABaseURL               string
+	CPAAPIKey                string
+	UpstreamProtocol         UpstreamProtocol
+	Model                    string
+	Timeout                  time.Duration
+	Debug                    bool
+	HTTPAddr                 string
+	DBPath                   string
+	JWTSecret                string
+	MCPIPRPM                 int
+	UsageRawRetention        time.Duration
+	UsageHourlyRetention     time.Duration
+	UsageDailyRetention      time.Duration
+	UsageMaintenanceInterval time.Duration
+	ProxyURL                 string
+	ProxyEnabled             bool
+	RegistrationMode         store.RegistrationMode
 }
 
 // ServerSettings contains the runtime-tunable upstream settings exposed in the
@@ -69,19 +77,23 @@ type ServerSettings struct {
 func Load() (*Config, error) {
 	proxyURL := strings.TrimSpace(os.Getenv("GROK_PROXY_URL"))
 	cfg := &Config{
-		CPABaseURL:       strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
-		CPAAPIKey:        strings.TrimSpace(os.Getenv("CPA_API_KEY")),
-		UpstreamProtocol: UpstreamProtocol(envOrDefault("GROK_UPSTREAM_PROTOCOL", string(defaultUpstreamProtocol))),
-		Model:            envOrDefault("GROK_MODEL", defaultModel),
-		Timeout:          defaultTimeout,
-		Debug:            parseBoolEnv("GROK_MCP_DEBUG"),
-		HTTPAddr:         envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
-		DBPath:           envOrDefault("GROK_DB_PATH", defaultDBPath),
-		JWTSecret:        strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
-		MCPIPRPM:         defaultMCPIPRPM,
-		ProxyURL:         proxyURL,
-		ProxyEnabled:     parseBoolEnv("GROK_PROXY_ENABLED"),
-		RegistrationMode: store.RegistrationModeFree,
+		CPABaseURL:               strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
+		CPAAPIKey:                strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		UpstreamProtocol:         UpstreamProtocol(envOrDefault("GROK_UPSTREAM_PROTOCOL", string(defaultUpstreamProtocol))),
+		Model:                    envOrDefault("GROK_MODEL", defaultModel),
+		Timeout:                  defaultTimeout,
+		Debug:                    parseBoolEnv("GROK_MCP_DEBUG"),
+		HTTPAddr:                 envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
+		DBPath:                   envOrDefault("GROK_DB_PATH", defaultDBPath),
+		JWTSecret:                strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
+		MCPIPRPM:                 defaultMCPIPRPM,
+		UsageRawRetention:        defaultUsageRawRetention,
+		UsageHourlyRetention:     defaultUsageHourlyRetention,
+		UsageDailyRetention:      defaultUsageDailyRetention,
+		UsageMaintenanceInterval: defaultUsageMaintenanceInterval,
+		ProxyURL:                 proxyURL,
+		ProxyEnabled:             parseBoolEnv("GROK_PROXY_ENABLED"),
+		RegistrationMode:         store.RegistrationModeFree,
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("GROK_HTTP_TIMEOUT")); raw != "" {
@@ -98,6 +110,38 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("GROK_MCP_IP_RPM must be a positive integer, got %q", raw)
 		}
 		cfg.MCPIPRPM = n
+	}
+
+	var err error
+	if cfg.UsageRawRetention, err = parseRetentionDays(
+		"GROK_USAGE_RAW_RETENTION_DAYS",
+		defaultUsageRawRetention,
+	); err != nil {
+		return nil, err
+	}
+	if cfg.UsageHourlyRetention, err = parseRetentionDays(
+		"GROK_USAGE_HOURLY_RETENTION_DAYS",
+		defaultUsageHourlyRetention,
+	); err != nil {
+		return nil, err
+	}
+	if cfg.UsageDailyRetention, err = parseRetentionDays(
+		"GROK_USAGE_DAILY_RETENTION_DAYS",
+		defaultUsageDailyRetention,
+	); err != nil {
+		return nil, err
+	}
+	if raw := strings.TrimSpace(os.Getenv("GROK_USAGE_MAINTENANCE_INTERVAL")); raw != "" {
+		cfg.UsageMaintenanceInterval, err = time.ParseDuration(raw)
+		if err != nil || cfg.UsageMaintenanceInterval <= 0 {
+			return nil, fmt.Errorf("GROK_USAGE_MAINTENANCE_INTERVAL must be a positive duration, got %q", raw)
+		}
+	}
+	if cfg.UsageHourlyRetention <= cfg.UsageRawRetention {
+		return nil, fmt.Errorf("GROK_USAGE_HOURLY_RETENTION_DAYS must exceed GROK_USAGE_RAW_RETENTION_DAYS")
+	}
+	if cfg.UsageDailyRetention <= cfg.UsageHourlyRetention {
+		return nil, fmt.Errorf("GROK_USAGE_DAILY_RETENTION_DAYS must exceed GROK_USAGE_HOURLY_RETENTION_DAYS")
 	}
 
 	// Validate and canonicalize environment defaults without requiring the CPA
@@ -251,4 +295,21 @@ func envOrDefault(key, fallback string) string {
 func parseBoolEnv(key string) bool {
 	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
 	return raw == "1" || raw == "true" || raw == "yes"
+}
+
+func parseRetentionDays(environmentVariable string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(environmentVariable))
+	if raw == "" {
+		return fallback, nil
+	}
+
+	days, err := strconv.Atoi(raw)
+	if err != nil || days <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer (days), got %q", environmentVariable, raw)
+	}
+	const maximumRetentionDays = 36500
+	if days > maximumRetentionDays {
+		return 0, fmt.Errorf("%s must not exceed %d days, got %q", environmentVariable, maximumRetentionDays, raw)
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
 }

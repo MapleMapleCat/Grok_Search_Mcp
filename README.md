@@ -131,6 +131,31 @@ Default endpoints:
 | Administration panel | `http://127.0.0.1:8080/panel/` |
 | Panel REST API | `http://127.0.0.1:8080/panel/v1/` |
 
+### Usage retention and SQLite maintenance
+
+Usage data is retained at progressively lower resolutions so long-running
+installations do not keep every request forever:
+
+| Environment variable | Default | Purpose |
+|---|---:|---|
+| `GROK_USAGE_RAW_RETENTION_DAYS` | `7` | Keeps per-request records and debug payloads before compacting them into hourly history. |
+| `GROK_USAGE_HOURLY_RETENTION_DAYS` | `90` | Keeps hourly history before compacting it into daily history. |
+| `GROK_USAGE_DAILY_RETENTION_DAYS` | `730` | Deletes daily history older than this window. |
+| `GROK_USAGE_MAINTENANCE_INTERVAL` | `1h` | Runs retention, rollup, cleanup, and WAL checkpoint work. |
+
+The hourly retention must exceed the raw retention, and the daily retention
+must exceed the hourly retention. Historical totals and traffic charts combine
+raw, hourly, and daily data; the recent-record list and individual debug details
+are available only while the corresponding raw record is retained.
+
+The main database and `<GROK_DB_PATH>.debug.sqlite` both use WAL mode. For a
+live backup, use SQLite's online backup facilities for both database files. Do
+not copy only the main `.db` file while the service is running. If using a
+filesystem copy, stop the service first and copy both databases together with
+any WAL/SHM sidecars. Scheduled maintenance checkpoints WAL files but does not
+run `VACUUM`; use `VACUUM` or `VACUUM INTO` only as an explicit, infrequent
+operator action when file-level space reclamation is required.
+
 ### 3. Sign in and create an MCP client key
 
 When no enabled administrator exists, the server bootstraps an `admin` account and writes its one-time random password to the startup log. Sign in, rotate the credentials as soon as possible, and create an MCP client API key.
@@ -252,6 +277,10 @@ Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs,
 | `GROK_HTTP_TIMEOUT` | `120` | Upstream timeout in seconds. |
 | `GROK_HTTP_ADDR` | `:8080` | HTTP listen address. Requires restart to change. |
 | `GROK_DB_PATH` | `./grok-mcp.db` | SQLite database path. Requires restart to change. |
+| `GROK_USAGE_RAW_RETENTION_DAYS` | `7` | Raw usage and debug-detail retention before hourly compaction. |
+| `GROK_USAGE_HOURLY_RETENTION_DAYS` | `90` | Hourly usage retention before daily compaction. |
+| `GROK_USAGE_DAILY_RETENTION_DAYS` | `730` | Daily aggregate retention before deletion. |
+| `GROK_USAGE_MAINTENANCE_INTERVAL` | `1h` | Interval for rollup, cleanup, and WAL checkpoint maintenance. |
 | `GROK_MCP_IP_RPM` | `300` | Source-IP RPM applied before MCP API-key authentication only when `X-Real-IP` or `X-Forwarded-For` contains a valid IP. |
 | `GROK_MCP_DEBUG` | `false` | Accepts `1`, `true`, or `yes`. May capture debug request/response context in usage records. |
 | `GROK_PROXY_URL` | Empty | Explicit upstream HTTP(S) proxy URL. |

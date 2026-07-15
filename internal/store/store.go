@@ -198,8 +198,8 @@ type UsageBucket struct {
 	Calls int64
 }
 
-// UsageStats 聚合某段时间内的调用统计；Records 最多返回最近 500 条明细，
-// CurrentRPM 与 TrafficBuckets 始终基于完整的 usage_log 数据集聚合。
+// UsageStats 聚合某段时间内的调用统计；Records 最多返回保留期内最近 500 条原始明细，
+// CurrentRPM 基于原始日志，历史总量与 TrafficBuckets 会合并小时级和日级聚合。
 type UsageStats struct {
 	TotalCalls     int64
 	SuccessCalls   int64

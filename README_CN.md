@@ -131,6 +131,28 @@ set +a
 | 管理面板 | `http://127.0.0.1:8080/panel/` |
 | 面板 REST API | `http://127.0.0.1:8080/panel/v1/` |
 
+### Usage 数据保留与 SQLite 维护
+
+用量数据会按逐级降低的时间分辨率保留，避免长期运行后仍保存全部请求明细：
+
+| 环境变量 | 默认值 | 用途 |
+|---|---:|---|
+| `GROK_USAGE_RAW_RETENTION_DAYS` | `7` | 保留逐请求明细和 debug 数据，之后压缩为小时级历史。 |
+| `GROK_USAGE_HOURLY_RETENTION_DAYS` | `90` | 保留小时级历史，之后压缩为日级历史。 |
+| `GROK_USAGE_DAILY_RETENTION_DAYS` | `730` | 删除超过此期限的日级历史。 |
+| `GROK_USAGE_MAINTENANCE_INTERVAL` | `1h` | 执行聚合、清理以及主库和 debug 库的 WAL checkpoint。 |
+
+小时级保留期限必须大于原始明细期限，日级保留期限必须大于小时级期限。
+历史总量和流量图会合并原始、小时和日级数据；最近调用明细与单条 debug
+详情只在对应原始记录仍处于保留期内时可用。
+
+主数据库和 `<GROK_DB_PATH>.debug.sqlite` 都使用 WAL 模式。在线备份应对两个
+数据库都使用 SQLite 在线备份机制，不能在服务运行时只复制主 `.db` 文件。
+如果使用文件系统复制，应先停止服务，并同时复制两个数据库及其 WAL/SHM
+旁路文件。定时维护会 checkpoint WAL，但不会自动执行 `VACUUM`；只有在需要
+回收数据库文件本身空间时，才应由运维人员低频显式执行 `VACUUM` 或
+`VACUUM INTO`。
+
 ### 3. 登录并创建 MCP 客户端 Key
 
 当数据库中没有已启用的管理员时，服务会初始化 `admin` 账号，并在启动日志中输出一次性随机密码。登录后应尽快轮换凭据，再创建 MCP 客户端 API Key。
@@ -252,6 +274,10 @@ claude mcp add --transport http grok-mcp http://127.0.0.1:8080/mcp \
 | `GROK_HTTP_TIMEOUT` | `120` | 上游超时秒数。 |
 | `GROK_HTTP_ADDR` | `:8080` | HTTP 监听地址，修改后需要重启。 |
 | `GROK_DB_PATH` | `./grok-mcp.db` | SQLite 路径，修改后需要重启。 |
+| `GROK_USAGE_RAW_RETENTION_DAYS` | `7` | 原始用量和 debug 明细保留期限，之后压缩为小时级数据。 |
+| `GROK_USAGE_HOURLY_RETENTION_DAYS` | `90` | 小时级用量保留期限，之后压缩为日级数据。 |
+| `GROK_USAGE_DAILY_RETENTION_DAYS` | `730` | 日级聚合超过此期限后删除。 |
+| `GROK_USAGE_MAINTENANCE_INTERVAL` | `1h` | 聚合、清理和 WAL checkpoint 的执行间隔。 |
 | `GROK_MCP_IP_RPM` | `300` | 仅当 `X-Real-IP` 或 `X-Forwarded-For` 包含有效 IP 时，在 MCP API Key 鉴权前应用的来源 IP RPM。 |
 | `GROK_MCP_DEBUG` | `false` | `1`、`true` 或 `yes` 启用；可能在用量记录中捕获调试上下文。 |
 | `GROK_PROXY_URL` | 空 | 显式上游 HTTP(S) 代理。 |

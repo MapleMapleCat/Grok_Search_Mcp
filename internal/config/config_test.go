@@ -32,6 +32,10 @@ func panelEnv(t *testing.T) {
 	t.Helper()
 	unsetEnv(t, "GROK_PROXY_URL")
 	unsetEnv(t, "GROK_PROXY_ENABLED")
+	unsetEnv(t, "GROK_USAGE_RAW_RETENTION_DAYS")
+	unsetEnv(t, "GROK_USAGE_HOURLY_RETENTION_DAYS")
+	unsetEnv(t, "GROK_USAGE_DAILY_RETENTION_DAYS")
+	unsetEnv(t, "GROK_USAGE_MAINTENANCE_INTERVAL")
 	setEnv(t, "CPA_API_KEY", "test-key")
 	setEnv(t, "GROK_JWT_SECRET", "jwt-secret-must-be-at-least-32-bytes!")
 }
@@ -230,6 +234,86 @@ func TestLoadHTTPDefaults(t *testing.T) {
 		cfg.DBPath != "./grok-mcp.db" ||
 		cfg.MCPIPRPM != 300 {
 		t.Fatalf("unexpected http defaults: %+v", cfg)
+	}
+}
+
+func TestLoadUsageRetentionDefaults(t *testing.T) {
+	panelEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.UsageRawRetention != 7*24*time.Hour {
+		t.Fatalf("raw retention = %v, want 7 days", cfg.UsageRawRetention)
+	}
+	if cfg.UsageHourlyRetention != 90*24*time.Hour {
+		t.Fatalf("hourly retention = %v, want 90 days", cfg.UsageHourlyRetention)
+	}
+	if cfg.UsageDailyRetention != 730*24*time.Hour {
+		t.Fatalf("daily retention = %v, want 730 days", cfg.UsageDailyRetention)
+	}
+	if cfg.UsageMaintenanceInterval != time.Hour {
+		t.Fatalf("maintenance interval = %v, want 1 hour", cfg.UsageMaintenanceInterval)
+	}
+}
+
+func TestLoadCustomUsageRetention(t *testing.T) {
+	panelEnv(t)
+	setEnv(t, "GROK_USAGE_RAW_RETENTION_DAYS", "3")
+	setEnv(t, "GROK_USAGE_HOURLY_RETENTION_DAYS", "30")
+	setEnv(t, "GROK_USAGE_DAILY_RETENTION_DAYS", "365")
+	setEnv(t, "GROK_USAGE_MAINTENANCE_INTERVAL", "30m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if cfg.UsageRawRetention != 3*24*time.Hour ||
+		cfg.UsageHourlyRetention != 30*24*time.Hour ||
+		cfg.UsageDailyRetention != 365*24*time.Hour ||
+		cfg.UsageMaintenanceInterval != 30*time.Minute {
+		t.Fatalf("unexpected usage maintenance config: %+v", cfg)
+	}
+}
+
+func TestLoadRejectsInvalidUsageRetention(t *testing.T) {
+	testCases := []struct {
+		name          string
+		environment   map[string]string
+		expectedError string
+	}{
+		{
+			name:          "non-positive raw retention",
+			environment:   map[string]string{"GROK_USAGE_RAW_RETENTION_DAYS": "0"},
+			expectedError: "GROK_USAGE_RAW_RETENTION_DAYS must be a positive integer",
+		},
+		{
+			name: "hourly retention must exceed raw retention",
+			environment: map[string]string{
+				"GROK_USAGE_RAW_RETENTION_DAYS":    "30",
+				"GROK_USAGE_HOURLY_RETENTION_DAYS": "30",
+			},
+			expectedError: "GROK_USAGE_HOURLY_RETENTION_DAYS must exceed",
+		},
+		{
+			name:          "invalid maintenance interval",
+			environment:   map[string]string{"GROK_USAGE_MAINTENANCE_INTERVAL": "soon"},
+			expectedError: "GROK_USAGE_MAINTENANCE_INTERVAL must be a positive duration",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			panelEnv(t)
+			for environmentVariable, value := range testCase.environment {
+				setEnv(t, environmentVariable, value)
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), testCase.expectedError) {
+				t.Fatalf("expected error containing %q, got %v", testCase.expectedError, err)
+			}
+		})
 	}
 }
 

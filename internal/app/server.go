@@ -101,6 +101,20 @@ func Run(ctx context.Context, cfg *config.Config) error {
 
 	usageWriter := store.NewAsyncUsageWriter(st, 256)
 	defer usageWriter.Close()
+	usageMaintenanceRunner, err := store.StartUsageMaintenance(
+		ctx,
+		st,
+		store.UsageRetentionPolicy{
+			RawRetention:    cfg.UsageRawRetention,
+			HourlyRetention: cfg.UsageHourlyRetention,
+			DailyRetention:  cfg.UsageDailyRetention,
+		},
+		cfg.UsageMaintenanceInterval,
+	)
+	if err != nil {
+		return fmt.Errorf("start usage maintenance: %w", err)
+	}
+	defer usageMaintenanceRunner.Close()
 
 	userLimiter := ratelimit.NewUserLimiter()
 	defer userLimiter.Close()
