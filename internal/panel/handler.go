@@ -612,21 +612,23 @@ func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load users")
 		return
 	}
-	tierByID := make(map[string]*store.Tier)
+	tierIDs := make([]string, 0, len(page.Users))
+	seenTierIDs := make(map[string]struct{}, len(page.Users))
 	for _, user := range page.Users {
 		tierID := strings.TrimSpace(user.TierID)
 		if tierID == "" {
 			continue
 		}
-		if _, alreadyLoaded := tierByID[tierID]; alreadyLoaded {
+		if _, alreadyAdded := seenTierIDs[tierID]; alreadyAdded {
 			continue
 		}
-		tier, loadErr := h.Store.GetTierByID(r.Context(), tierID)
-		if loadErr != nil {
-			log.Printf("load tier %q while listing users failed: %v", tierID, loadErr)
-			continue
-		}
-		tierByID[tierID] = tier
+		seenTierIDs[tierID] = struct{}{}
+		tierIDs = append(tierIDs, tierID)
+	}
+	tierByID, err := h.Store.GetTiersByIDs(r.Context(), tierIDs)
+	if err != nil {
+		log.Printf("load tiers while listing users failed: %v", err)
+		tierByID = make(map[string]*store.Tier)
 	}
 	response := UsersResponse{
 		Users:      make([]UserResponse, 0, len(page.Users)),
@@ -635,10 +637,11 @@ func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 		TotalCount: page.TotalCount,
 	}
 	for _, u := range page.Users {
-		tier := tierByID[u.TierID]
-		if tier == nil && strings.TrimSpace(u.TierID) != "" {
+		tierID := strings.TrimSpace(u.TierID)
+		tier := tierByID[tierID]
+		if tier == nil && tierID != "" {
 			log.Printf("user %s tier_id %q missing from tier list; limits unavailable", u.ID, u.TierID)
-		} else if strings.TrimSpace(u.TierID) == "" {
+		} else if tierID == "" {
 			log.Printf("user %s has empty tier_id; limits unavailable", u.ID)
 		}
 		response.Users = append(response.Users, toUserResponseWithTier(u, tier))

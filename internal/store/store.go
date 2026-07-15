@@ -338,6 +338,7 @@ type Store interface {
 	TryIncrementUserSuccessCalls(ctx context.Context, userID string, successLimit int) error
 
 	GetTierByID(ctx context.Context, id string) (*Tier, error)
+	GetTiersByIDs(ctx context.Context, ids []string) (map[string]*Tier, error)
 	GetTierByName(ctx context.Context, name string) (*Tier, error)
 	ListTiersPage(ctx context.Context, cursor *TierCursor, limit int) (*TierPage, error)
 	CreateTier(ctx context.Context, name string, level, rpm, successLimit int) (*Tier, error)

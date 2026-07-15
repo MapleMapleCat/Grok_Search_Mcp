@@ -40,6 +40,55 @@ func (s *SQLiteStore) GetTierByID(ctx context.Context, id string) (*Tier, error)
 	return t, err
 }
 
+// GetTiersByIDs loads all matching tiers in one query. Missing IDs are omitted
+// from the returned map so callers can distinguish broken user references.
+func (s *SQLiteStore) GetTiersByIDs(ctx context.Context, ids []string) (map[string]*Tier, error) {
+	tierByID := make(map[string]*Tier)
+	uniqueTierIDs := make([]string, 0, len(ids))
+	seenTierIDs := make(map[string]struct{}, len(ids))
+	for _, rawTierID := range ids {
+		tierID := strings.TrimSpace(rawTierID)
+		if tierID == "" {
+			continue
+		}
+		if _, alreadyAdded := seenTierIDs[tierID]; alreadyAdded {
+			continue
+		}
+		seenTierIDs[tierID] = struct{}{}
+		uniqueTierIDs = append(uniqueTierIDs, tierID)
+	}
+	if len(uniqueTierIDs) == 0 {
+		return tierByID, nil
+	}
+
+	placeholders := make([]string, len(uniqueTierIDs))
+	queryArguments := make([]any, len(uniqueTierIDs))
+	for index, tierID := range uniqueTierIDs {
+		placeholders[index] = "?"
+		queryArguments[index] = tierID
+	}
+	rows, err := s.readDB.QueryContext(ctx,
+		`SELECT `+tierColumns+` FROM tiers WHERE id IN (`+strings.Join(placeholders, ", ")+`)`,
+		queryArguments...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		tier, scanErr := scanTier(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		tierByID[tier.ID] = tier
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tierByID, nil
+}
+
 // GetTierByName 未找到时返回 (nil, nil) 以便调用方按需 fallback。
 func (s *SQLiteStore) GetTierByName(ctx context.Context, name string) (*Tier, error) {
 	row := s.readDB.QueryRowContext(ctx,

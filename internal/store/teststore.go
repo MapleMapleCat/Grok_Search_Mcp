@@ -39,7 +39,10 @@ func (TestStore) TryIncrementUserSuccessCalls(context.Context, string, int) erro
 	return nil
 }
 
-func (TestStore) GetTierByID(context.Context, string) (*Tier, error)   { return nil, ErrTierNotFound }
+func (TestStore) GetTierByID(context.Context, string) (*Tier, error) { return nil, ErrTierNotFound }
+func (TestStore) GetTiersByIDs(context.Context, []string) (map[string]*Tier, error) {
+	return map[string]*Tier{}, nil
+}
 func (TestStore) GetTierByName(context.Context, string) (*Tier, error) { return nil, nil }
 func (TestStore) ListTiersPage(context.Context, *TierCursor, int) (*TierPage, error) {
 	return &TierPage{}, nil
