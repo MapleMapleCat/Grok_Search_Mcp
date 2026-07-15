@@ -349,6 +349,26 @@ func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
 		}
 	}
 
+	keyRows, err := tx.QueryContext(ctx, `SELECT id FROM apikeys WHERE user_id = ?`, id)
+	if err != nil {
+		return err
+	}
+	keyIDs := make([]string, 0)
+	for keyRows.Next() {
+		var keyID string
+		if err := keyRows.Scan(&keyID); err != nil {
+			_ = keyRows.Close()
+			return err
+		}
+		keyIDs = append(keyIDs, keyID)
+	}
+	if err := keyRows.Close(); err != nil {
+		return err
+	}
+	if err := keyRows.Err(); err != nil {
+		return err
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_log WHERE key_id IN (SELECT id FROM apikeys WHERE user_id = ?)`, id); err != nil {
 		return err
 	}
@@ -363,7 +383,15 @@ func (s *SQLiteStore) DeleteUser(ctx context.Context, id string) error {
 	if rowsAffected == 0 {
 		return ErrUserNotFound
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, keyID := range keyIDs {
+		if _, err := s.debugDB.ExecContext(ctx, `DELETE FROM usage_debug WHERE key_id = ?`, keyID); err != nil {
+			return fmt.Errorf("delete user debug usage: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteStore) CountUsers(ctx context.Context) (int64, error) {

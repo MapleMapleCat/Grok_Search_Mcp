@@ -8,12 +8,19 @@ import (
 )
 
 type debugBodySpool struct {
-	file       *os.File
-	path       string
-	bytesCount int64
-	writeErr   error
-	closed     bool
+	file          *os.File
+	path          string
+	bytesCount    int64
+	observedBytes int64
+	truncated     bool
+	writeErr      error
+	closed        bool
 }
+
+// Debug capture is intentionally a bounded diagnostic sample. Request and
+// response forwarding remain unbounded; only the bytes retained for later
+// inspection are capped.
+const maxDebugCapturedBodyBytes int64 = 1 << 20 // 1 MiB per direction
 
 func createDebugBodySpool(bodyKind string) (*debugBodySpool, error) {
 	bodyFile, err := os.CreateTemp("", "grok-mcp-debug-"+bodyKind+"-*.body")
@@ -30,8 +37,22 @@ func createDebugBodySpool(bodyKind string) (*debugBodySpool, error) {
 }
 
 func (s *debugBodySpool) write(body []byte) {
-	if s == nil || s.file == nil || s.writeErr != nil || len(body) == 0 {
+	if s == nil || len(body) == 0 {
 		return
+	}
+	s.observedBytes += int64(len(body))
+	if s.file == nil || s.writeErr != nil {
+		return
+	}
+
+	remainingCaptureBytes := maxDebugCapturedBodyBytes - s.bytesCount
+	if remainingCaptureBytes <= 0 {
+		s.truncated = true
+		return
+	}
+	if int64(len(body)) > remainingCaptureBytes {
+		body = body[:int(remainingCaptureBytes)]
+		s.truncated = true
 	}
 	for len(body) > 0 {
 		bytesWritten, err := s.file.Write(body)
@@ -83,8 +104,8 @@ func (r *debugCaptureReadCloser) Read(destination []byte) (int, error) {
 	return bytesRead, readErr
 }
 
-// The middleware owns the source body until capture finalization so it can
-// drain bytes a downstream decoder did not consume.
+// The middleware owns the source body until capture finalization so downstream
+// code cannot close it before the capture session records its final state.
 func (r *debugCaptureReadCloser) Close() error {
 	return nil
 }
@@ -118,7 +139,6 @@ func (s *debugCaptureSession) finalize() {
 	}
 	s.finalized = true
 	if s.requestReader != nil {
-		_, _ = io.Copy(io.Discard, s.requestReader)
 		if err := s.requestReader.source.Close(); err != nil && s.requestSpool.writeErr == nil {
 			s.requestSpool.writeErr = err
 		}
@@ -163,6 +183,28 @@ func (s *debugCaptureSession) responseBytes() int64 {
 		return 0
 	}
 	return s.responseSpool.bytesCount
+}
+
+func (s *debugCaptureSession) requestObservedBytes() int64 {
+	if s == nil || s.requestSpool == nil {
+		return 0
+	}
+	return s.requestSpool.observedBytes
+}
+
+func (s *debugCaptureSession) responseObservedBytes() int64 {
+	if s == nil || s.responseSpool == nil {
+		return 0
+	}
+	return s.responseSpool.observedBytes
+}
+
+func (s *debugCaptureSession) requestTruncated() bool {
+	return s != nil && s.requestSpool != nil && s.requestSpool.truncated
+}
+
+func (s *debugCaptureSession) responseTruncated() bool {
+	return s != nil && s.responseSpool != nil && s.responseSpool.truncated
 }
 
 func (s *debugCaptureSession) captureError() string {

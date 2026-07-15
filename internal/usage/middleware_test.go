@@ -332,7 +332,7 @@ func (s *debugCaptureRecordingStore) snapshot() (store.UsageRecord, []byte, []by
 	return s.recordedUsage[0], s.requestBody, s.responseBody, s.requestPermissions, s.responsePermissions
 }
 
-func TestMCPMiddlewareSpoolsCompleteDebugBodiesWithoutQueueingBodyStrings(t *testing.T) {
+func TestMCPMiddlewareBoundsDebugBodiesWithoutChangingForwardedContent(t *testing.T) {
 	requestBody := strings.Repeat("request-body-segment|", 120000)
 	responseBody := strings.Repeat("response-body-segment|", 550000)
 	debugStore := &debugCaptureRecordingStore{}
@@ -350,7 +350,8 @@ func TestMCPMiddlewareSpoolsCompleteDebugBodiesWithoutQueueingBodyStrings(t *tes
 	requestContext := auth.WithAPIKey(request.Context(), &store.APIKey{ID: "debug-key", KeyPrefix: "grok_dbg"})
 	requestContext = WithToolName(requestContext, "grok_web_search")
 	request = request.WithContext(requestContext)
-	handler.ServeHTTP(httptest.NewRecorder(), request)
+	responseRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(responseRecorder, request)
 	writer.Close()
 
 	if len(debugStore.recordedUsage) != 1 {
@@ -366,11 +367,20 @@ func TestMCPMiddlewareSpoolsCompleteDebugBodiesWithoutQueueingBodyStrings(t *tes
 	if strings.Contains(record.DebugJSON, "request-body-segment") || strings.Contains(record.DebugJSON, "response-body-segment") {
 		t.Fatal("debug metadata must not embed request or response bodies")
 	}
-	if !bytes.Equal(capturedRequest, []byte(requestBody)) {
-		t.Fatalf("captured request length = %d, want %d", len(capturedRequest), len(requestBody))
+	if !bytes.Equal(capturedRequest, []byte(requestBody[:maxDebugCapturedBodyBytes])) {
+		t.Fatalf("captured request length = %d, want bounded prefix %d", len(capturedRequest), maxDebugCapturedBodyBytes)
 	}
-	if !bytes.Equal(capturedResponse, []byte(responseBody)) {
-		t.Fatalf("captured response length = %d, want %d", len(capturedResponse), len(responseBody))
+	if !bytes.Equal(capturedResponse, []byte(responseBody[:maxDebugCapturedBodyBytes])) {
+		t.Fatalf("captured response length = %d, want bounded prefix %d", len(capturedResponse), maxDebugCapturedBodyBytes)
+	}
+	if record.DebugRequestObservedBytes != int64(len(requestBody)) || record.DebugResponseObservedBytes != int64(len(responseBody)) {
+		t.Fatalf("observed bytes request=%d response=%d, want %d and %d", record.DebugRequestObservedBytes, record.DebugResponseObservedBytes, len(requestBody), len(responseBody))
+	}
+	if !record.DebugRequestTruncated || !record.DebugResponseTruncated {
+		t.Fatalf("truncation flags request=%v response=%v, want true", record.DebugRequestTruncated, record.DebugResponseTruncated)
+	}
+	if responseRecorder.Body.String() != responseBody {
+		t.Fatalf("forwarded response length = %d, want %d", responseRecorder.Body.Len(), len(responseBody))
 	}
 	if requestPermissions != 0o600 || responsePermissions != 0o600 {
 		t.Fatalf("spool permissions request=%#o response=%#o, want 0600", requestPermissions, responsePermissions)

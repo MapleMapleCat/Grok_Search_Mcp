@@ -66,6 +66,40 @@ func TestSQLiteInMemoryDatabaseKeepsSharedConnection(t *testing.T) {
 	}
 }
 
+func TestSQLiteCreatesSeparateRestrictedDebugDatabase(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "split-storage.db")
+	sqliteStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	t.Cleanup(func() { _ = sqliteStore.Close() })
+
+	debugPath := debugDatabasePath(databasePath)
+	debugInfo, err := os.Stat(debugPath)
+	if err != nil {
+		t.Fatalf("stat debug database: %v", err)
+	}
+	if permissions := debugInfo.Mode().Perm(); permissions != 0o600 {
+		t.Fatalf("debug database permissions = %#o, want 0600", permissions)
+	}
+
+	var debugTableCount int
+	if err := sqliteStore.debugDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'usage_debug'`).Scan(&debugTableCount); err != nil {
+		t.Fatalf("query debug schema: %v", err)
+	}
+	if debugTableCount != 1 {
+		t.Fatalf("debug table count = %d, want 1", debugTableCount)
+	}
+
+	var mainDebugTableCount int
+	if err := sqliteStore.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'usage_debug'`).Scan(&mainDebugTableCount); err != nil {
+		t.Fatalf("query main schema: %v", err)
+	}
+	if mainDebugTableCount != 0 {
+		t.Fatalf("main database debug table count = %d, want 0", mainDebugTableCount)
+	}
+}
+
 func TestSQLiteWriterDoesNotWaitForHeldReader(t *testing.T) {
 	sqliteStore := openTestDB(t)
 	ctx := context.Background()
@@ -471,7 +505,7 @@ func TestUsageStats(t *testing.T) {
 	}
 }
 
-func TestUsageDebugBodiesPersistAndLoadInBoundedChunks(t *testing.T) {
+func TestUsageDebugBodiesPersistInSeparateDatabaseWithBoundedBlobs(t *testing.T) {
 	store := openTestDB(t)
 	ctx := context.Background()
 
@@ -492,7 +526,7 @@ func TestUsageDebugBodiesPersistAndLoadInBoundedChunks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	debugJSON := `{"version":2,"request":{"body_storage":"sqlite_chunks"},"response":{"body_storage":"sqlite_chunks"}}`
+	debugJSON := `{"version":2,"request":{"body_storage":"debug_sqlite"},"response":{"body_storage":"debug_sqlite"}}`
 	recordTimestamp := time.Now().UTC()
 	if err := store.RecordUsage(ctx, UsageRecord{
 		KeyID:                 key.ID,
@@ -521,11 +555,17 @@ func TestUsageDebugBodiesPersistAndLoadInBoundedChunks(t *testing.T) {
 	if persistedRecord.DebugRequestBody != "" || persistedRecord.DebugResponseBody != "" {
 		t.Fatal("usage list must not load complete debug bodies")
 	}
-	if !persistedRecord.HasDebugRequestBody || persistedRecord.DebugRequestBytes != int64(len(requestBody)) {
-		t.Fatalf("request body summary = available:%v bytes:%d, want true/%d", persistedRecord.HasDebugRequestBody, persistedRecord.DebugRequestBytes, len(requestBody))
+	if !persistedRecord.HasDebugRequestBody || persistedRecord.DebugRequestBytes != maxPersistedDebugBodyBytes {
+		t.Fatalf("request body summary = available:%v bytes:%d, want true/%d", persistedRecord.HasDebugRequestBody, persistedRecord.DebugRequestBytes, maxPersistedDebugBodyBytes)
 	}
-	if !persistedRecord.HasDebugResponseBody || persistedRecord.DebugResponseBytes != int64(len(responseBody)) {
-		t.Fatalf("response body summary = available:%v bytes:%d, want true/%d", persistedRecord.HasDebugResponseBody, persistedRecord.DebugResponseBytes, len(responseBody))
+	if !persistedRecord.HasDebugResponseBody || persistedRecord.DebugResponseBytes != maxPersistedDebugBodyBytes {
+		t.Fatalf("response body summary = available:%v bytes:%d, want true/%d", persistedRecord.HasDebugResponseBody, persistedRecord.DebugResponseBytes, maxPersistedDebugBodyBytes)
+	}
+	if persistedRecord.DebugRequestObservedBytes != int64(len(requestBody)) || persistedRecord.DebugResponseObservedBytes != int64(len(responseBody)) {
+		t.Fatalf("observed body bytes request=%d response=%d, want %d and %d", persistedRecord.DebugRequestObservedBytes, persistedRecord.DebugResponseObservedBytes, len(requestBody), len(responseBody))
+	}
+	if !persistedRecord.DebugRequestTruncated || !persistedRecord.DebugResponseTruncated {
+		t.Fatalf("truncation flags request=%v response=%v, want true", persistedRecord.DebugRequestTruncated, persistedRecord.DebugResponseTruncated)
 	}
 	if persistedRecord.DebugRequestBodyPath != "" || persistedRecord.DebugResponseBodyPath != "" {
 		t.Fatalf("temporary paths must not be returned from stats: %+v", persistedRecord)
@@ -535,26 +575,39 @@ func TestUsageDebugBodiesPersistAndLoadInBoundedChunks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detailRecord.DebugRequestBody != requestBody {
-		t.Fatalf("detail request body length = %d, want %d", len(detailRecord.DebugRequestBody), len(requestBody))
+	if detailRecord.DebugRequestBody != requestBody[:maxPersistedDebugBodyBytes] {
+		t.Fatalf("detail request body length = %d, want %d", len(detailRecord.DebugRequestBody), maxPersistedDebugBodyBytes)
 	}
-	if detailRecord.DebugResponseBody != responseBody {
-		t.Fatalf("detail response body length = %d, want %d", len(detailRecord.DebugResponseBody), len(responseBody))
+	if detailRecord.DebugResponseBody != responseBody[:maxPersistedDebugBodyBytes] {
+		t.Fatalf("detail response body length = %d, want %d", len(detailRecord.DebugResponseBody), maxPersistedDebugBodyBytes)
 	}
 
-	var chunkCount int
-	var maximumChunkBytes int
-	if err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(MAX(length(body_data)), 0) FROM usage_log_debug_body_chunks WHERE usage_id = ?`,
+	var debugRecordCount int
+	var requestBlobBytes int64
+	var responseBlobBytes int64
+	if err := store.debugDB.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(length(request_body)), 0), COALESCE(MAX(length(response_body)), 0)
+		 FROM usage_debug WHERE usage_id = ?`,
 		persistedRecord.ID,
-	).Scan(&chunkCount, &maximumChunkBytes); err != nil {
+	).Scan(&debugRecordCount, &requestBlobBytes, &responseBlobBytes); err != nil {
 		t.Fatal(err)
 	}
-	if chunkCount < 3 {
-		t.Fatalf("chunk count = %d, want multiple bounded chunks", chunkCount)
+	if debugRecordCount != 1 {
+		t.Fatalf("debug record count = %d, want 1", debugRecordCount)
 	}
-	if maximumChunkBytes > usageDebugBodyChunkSize {
-		t.Fatalf("maximum chunk size = %d, cap = %d", maximumChunkBytes, usageDebugBodyChunkSize)
+	if requestBlobBytes != maxPersistedDebugBodyBytes || responseBlobBytes != maxPersistedDebugBodyBytes {
+		t.Fatalf("debug blob bytes request=%d response=%d, want %d", requestBlobBytes, responseBlobBytes, maxPersistedDebugBodyBytes)
+	}
+
+	var legacyChunkCount int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM usage_log_debug_body_chunks WHERE usage_id = ?`,
+		persistedRecord.ID,
+	).Scan(&legacyChunkCount); err != nil {
+		t.Fatal(err)
+	}
+	if legacyChunkCount != 0 {
+		t.Fatalf("legacy chunk count = %d, want 0", legacyChunkCount)
 	}
 }
 
@@ -597,7 +650,7 @@ func TestGetUsageRecordDetailEnforcesUserScope(t *testing.T) {
 	}
 }
 
-func TestUsageDebugBodyPersistenceRollsBackTransactionOnSpoolFailure(t *testing.T) {
+func TestUsageDebugBodyPersistenceFailurePreservesPrimaryUsage(t *testing.T) {
 	store := openTestDB(t)
 	ctx := context.Background()
 	key, _, err := store.CreateKey(ctx, testUserID(t, store), "debug-rollback")
@@ -625,15 +678,22 @@ func TestUsageDebugBodyPersistenceRollsBackTransactionOnSpoolFailure(t *testing.
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_log WHERE key_id = ?`, key.ID).Scan(&usageCount); err != nil {
 		t.Fatal(err)
 	}
-	if usageCount != 0 {
-		t.Fatalf("usage rows after rollback = %d, want 0", usageCount)
+	if usageCount != 1 {
+		t.Fatalf("usage rows after debug persistence failure = %d, want 1", usageCount)
 	}
-	var bodyChunkCount int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_log_debug_body_chunks`).Scan(&bodyChunkCount); err != nil {
+	var debugRecordCount int
+	if err := store.debugDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_debug`).Scan(&debugRecordCount); err != nil {
 		t.Fatal(err)
 	}
-	if bodyChunkCount != 0 {
-		t.Fatalf("body chunks after rollback = %d, want 0", bodyChunkCount)
+	if debugRecordCount != 0 {
+		t.Fatalf("debug records after failed sidecar write = %d, want 0", debugRecordCount)
+	}
+	var legacyChunkCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_log_debug_body_chunks`).Scan(&legacyChunkCount); err != nil {
+		t.Fatal(err)
+	}
+	if legacyChunkCount != 0 {
+		t.Fatalf("legacy chunks after failed sidecar write = %d, want 0", legacyChunkCount)
 	}
 }
 

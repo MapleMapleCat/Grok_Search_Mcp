@@ -203,6 +203,10 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 				if debugCapture != nil {
 					usageRecord.DebugRequestBodyPath = debugCapture.requestPath()
 					usageRecord.DebugResponseBodyPath = debugCapture.responsePath()
+					usageRecord.DebugRequestObservedBytes = debugCapture.requestObservedBytes()
+					usageRecord.DebugResponseObservedBytes = debugCapture.responseObservedBytes()
+					usageRecord.DebugRequestTruncated = debugCapture.requestTruncated()
+					usageRecord.DebugResponseTruncated = debugCapture.responseTruncated()
 					usageRecord.Cleanup = debugCapture.cleanup
 					captureTransferred = true
 				}
@@ -263,21 +267,25 @@ func buildDebugJSON(r *http.Request, key *store.APIKey, user *auth.Authenticated
 			"started_at":  startedAt.UTC().Format(time.RFC3339Nano),
 		},
 		"request": map[string]any{
-			"method":         r.Method,
-			"path":           r.URL.Path,
-			"query":          r.URL.RawQuery,
-			"remote_addr":    r.RemoteAddr,
-			"host":           r.Host,
-			"content_length": r.ContentLength,
-			"headers":        headerSnapshot(r.Header),
-			"body_bytes":     capture.requestBytes(),
-			"body_storage":   "sqlite_chunks",
+			"method":              r.Method,
+			"path":                r.URL.Path,
+			"query":               r.URL.RawQuery,
+			"remote_addr":         r.RemoteAddr,
+			"host":                r.Host,
+			"content_length":      r.ContentLength,
+			"headers":             headerSnapshot(r.Header),
+			"body_bytes":          capture.requestBytes(),
+			"body_observed_bytes": capture.requestObservedBytes(),
+			"body_truncated":      capture.requestTruncated(),
+			"body_storage":        "debug_sqlite",
 		},
 		"response": map[string]any{
-			"status":       rec.status,
-			"headers":      headerSnapshot(rec.Header()),
-			"body_bytes":   capture.responseBytes(),
-			"body_storage": "sqlite_chunks",
+			"status":              rec.status,
+			"headers":             headerSnapshot(rec.Header()),
+			"body_bytes":          capture.responseBytes(),
+			"body_observed_bytes": capture.responseObservedBytes(),
+			"body_truncated":      capture.responseTruncated(),
+			"body_storage":        "debug_sqlite",
 		},
 	}
 	if captureError := capture.captureError(); captureError != "" {

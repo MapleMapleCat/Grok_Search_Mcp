@@ -166,10 +166,14 @@ type UsageRecord struct {
 	DebugJSON string
 	// Debug body summaries are populated in one batched metadata query for usage
 	// lists. The complete BLOB contents are loaded only by GetUsageRecordDetail.
-	HasDebugRequestBody  bool
-	HasDebugResponseBody bool
-	DebugRequestBytes    int64
-	DebugResponseBytes   int64
+	HasDebugRequestBody        bool
+	HasDebugResponseBody       bool
+	DebugRequestBytes          int64
+	DebugResponseBytes         int64
+	DebugRequestObservedBytes  int64
+	DebugResponseObservedBytes int64
+	DebugRequestTruncated      bool
+	DebugResponseTruncated     bool
 	// DebugRequestBodyPath and DebugResponseBodyPath are short-lived spool file
 	// references consumed transactionally by RecordUsage. They are never
 	// returned from usage-stat queries.
