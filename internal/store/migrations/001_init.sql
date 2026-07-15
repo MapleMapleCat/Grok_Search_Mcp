@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash  TEXT NOT NULL,
     role           TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
     enabled        INTEGER NOT NULL DEFAULT 1,
-    tier_id        TEXT REFERENCES tiers(id) ON DELETE SET NULL,
+    tier_id        TEXT NOT NULL REFERENCES tiers(id) ON DELETE RESTRICT,
     success_calls  INTEGER NOT NULL DEFAULT 0,
     success_period TEXT NOT NULL DEFAULT '1970-01',
     token_version  INTEGER NOT NULL DEFAULT 0,
@@ -39,13 +39,13 @@ CREATE INDEX IF NOT EXISTS idx_users_tier_id ON users(tier_id);
 
 CREATE TABLE IF NOT EXISTS apikeys (
     id                     TEXT PRIMARY KEY,
-    user_id                TEXT REFERENCES users(id) ON DELETE CASCADE,
+    user_id                TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name                   TEXT NOT NULL,
     key_hash               TEXT NOT NULL UNIQUE,
     key_prefix             TEXT NOT NULL,
-    key_ciphertext         TEXT NOT NULL DEFAULT '',
-    key_nonce              TEXT NOT NULL DEFAULT '',
-    key_encryption_version INTEGER NOT NULL DEFAULT 0,
+    key_ciphertext         TEXT NOT NULL CHECK (key_ciphertext <> ''),
+    key_nonce              TEXT NOT NULL CHECK (key_nonce <> ''),
+    key_encryption_version INTEGER NOT NULL CHECK (key_encryption_version > 0),
     enabled                INTEGER NOT NULL DEFAULT 1,
     created_at             TEXT NOT NULL,
     updated_at             TEXT NOT NULL,
@@ -63,39 +63,25 @@ CREATE TABLE IF NOT EXISTS usage_log (
     timestamp   TEXT NOT NULL,
     duration_ms INTEGER NOT NULL,
     success     INTEGER NOT NULL DEFAULT 1,
-    debug_json  TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (key_id) REFERENCES apikeys(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_log_key_id_timestamp ON usage_log(key_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_usage_log_timestamp ON usage_log(timestamp);
 
-CREATE TABLE IF NOT EXISTS usage_log_debug_body_chunks (
-    usage_id    INTEGER NOT NULL,
-    body_kind   TEXT NOT NULL CHECK (body_kind IN ('request', 'response')),
-    chunk_index INTEGER NOT NULL,
-    body_data   BLOB NOT NULL,
-    PRIMARY KEY (usage_id, body_kind, chunk_index),
-    FOREIGN KEY (usage_id) REFERENCES usage_log(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_usage_debug_body_chunks_usage_id
-    ON usage_log_debug_body_chunks(usage_id);
-
 CREATE TABLE IF NOT EXISTS server_settings (
     id                             TEXT PRIMARY KEY,
     cpa_base_url                   TEXT NOT NULL,
-    cpa_api_key                    TEXT NOT NULL,
-    cpa_api_key_ciphertext         TEXT NOT NULL DEFAULT '',
-    cpa_api_key_nonce              TEXT NOT NULL DEFAULT '',
-    cpa_api_key_encryption_version INTEGER NOT NULL DEFAULT 0,
-    upstream_protocol              TEXT NOT NULL DEFAULT 'responses',
+    cpa_api_key_ciphertext         TEXT NOT NULL CHECK (cpa_api_key_ciphertext <> ''),
+    cpa_api_key_nonce              TEXT NOT NULL CHECK (cpa_api_key_nonce <> ''),
+    cpa_api_key_encryption_version INTEGER NOT NULL CHECK (cpa_api_key_encryption_version > 0),
+    upstream_protocol              TEXT NOT NULL CHECK (upstream_protocol IN ('responses', 'chat_completions', 'anthropic_messages')),
     model                          TEXT NOT NULL,
-    timeout_seconds                INTEGER NOT NULL,
+    timeout_seconds                INTEGER NOT NULL CHECK (timeout_seconds > 0),
     proxy_url                      TEXT NOT NULL DEFAULT '',
-    proxy_enabled                  INTEGER NOT NULL DEFAULT 0,
-    registration_mode              TEXT NOT NULL DEFAULT 'free',
-    debug                          INTEGER NOT NULL DEFAULT 0,
+    proxy_enabled                  INTEGER NOT NULL DEFAULT 0 CHECK (proxy_enabled IN (0, 1)),
+    registration_mode              TEXT NOT NULL CHECK (registration_mode IN ('free', 'invite', 'disabled')),
+    debug                          INTEGER NOT NULL DEFAULT 0 CHECK (debug IN (0, 1)),
     created_at                     TEXT NOT NULL,
     updated_at                     TEXT NOT NULL
 );

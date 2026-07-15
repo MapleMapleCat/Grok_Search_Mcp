@@ -295,6 +295,7 @@ func TestSearchChatCompletionsContinuesIntermediateAnswer(t *testing.T) {
 		UpstreamProtocol: config.UpstreamProtocolChatCompletions,
 		Model:            "grok-4.5",
 		Timeout:          5 * time.Second,
+		RegistrationMode: "free",
 	})
 	result, err := client.SearchStream(context.Background(), SearchRequest{
 		Query:    "compare versions",
@@ -337,6 +338,7 @@ func TestSearchChatCompletionsRejectsPersistentIntermediateAnswer(t *testing.T) 
 		UpstreamProtocol: config.UpstreamProtocolChatCompletions,
 		Model:            "grok-4.5",
 		Timeout:          5 * time.Second,
+		RegistrationMode: "free",
 	})
 	_, err := client.SearchStream(context.Background(), SearchRequest{
 		Query:    "compare versions",
@@ -479,6 +481,7 @@ func TestClientUsesSelectedProtocolEndpointAndHeaders(t *testing.T) {
 				UpstreamProtocol: testCase.protocol,
 				Model:            "grok-4.3",
 				Timeout:          5 * time.Second,
+				RegistrationMode: "free",
 			})
 			result, err := client.SearchStream(context.Background(), SearchRequest{
 				Query:    "test",

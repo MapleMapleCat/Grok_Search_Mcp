@@ -15,10 +15,9 @@ type UserLoader interface {
 	GetUserByID(ctx context.Context, id string) (*store.User, error)
 }
 
-// TierLoader loads tiers by ID or name for effective-limit resolution.
+// TierLoader loads the assigned tier for effective-limit resolution.
 type TierLoader interface {
 	GetTierByID(ctx context.Context, id string) (*store.Tier, error)
-	GetTierByName(ctx context.Context, name string) (*store.Tier, error)
 }
 
 // UserTierLoader is the minimal store surface needed to build an AuthenticatedUser.
@@ -31,7 +30,7 @@ type UserTierLoader interface {
 // It embeds the persisted store.User and adds effective RPM / SuccessLimit from the tier.
 type AuthenticatedUser struct {
 	store.User
-	// RPM is the effective requests-per-minute limit from the assigned (or default) tier.
+	// RPM is the effective requests-per-minute limit from the assigned tier.
 	// 0 means unlimited; negative values are treated as misconfiguration by rate limiting.
 	RPM int
 	// SuccessLimit is the effective monthly successful tools/call limit from the tier.
@@ -53,8 +52,8 @@ func UserFromContext(ctx context.Context) (*AuthenticatedUser, bool) {
 }
 
 // LoadUserWithTierLimits loads a persisted user and returns an AuthenticatedUser whose
-// effective limits come solely from the assigned tier (or default tier0 when tier_id is empty).
-// Missing assigned or default tiers fail closed so zero limits cannot be mistaken for unlimited.
+// effective limits come solely from the assigned tier. Missing assignments and
+// missing tiers fail closed so zero limits cannot be mistaken for unlimited.
 func LoadUserWithTierLimits(ctx context.Context, loader UserTierLoader, userID string) (*AuthenticatedUser, error) {
 	user, err := loader.GetUserByID(ctx, userID)
 	if err != nil {
@@ -79,32 +78,24 @@ func AuthenticateUser(ctx context.Context, loader TierLoader, user *store.User) 
 	}, nil
 }
 
-// resolveTier returns the effective tier: prefer user.TierID, otherwise default tier0.
-// Missing assigned or default tiers return an error so limits never silently become unlimited.
+// resolveTier requires the persisted user to reference an existing tier.
 func resolveTier(ctx context.Context, loader TierLoader, user *store.User) (*store.Tier, error) {
 	if user == nil {
 		return nil, fmt.Errorf("user is required")
 	}
 	tierID := strings.TrimSpace(user.TierID)
-	if tierID != "" {
-		tier, err := loader.GetTierByID(ctx, tierID)
-		if err != nil {
-			if errors.Is(err, store.ErrTierNotFound) {
-				return nil, fmt.Errorf("assigned tier %q not found: %w", tierID, err)
-			}
-			return nil, err
-		}
-		if tier == nil {
-			return nil, fmt.Errorf("assigned tier %q not found: %w", tierID, store.ErrTierNotFound)
-		}
-		return tier, nil
+	if tierID == "" {
+		return nil, store.ErrTierNotAssignable
 	}
-	tier, err := loader.GetTierByName(ctx, store.DefaultTierName)
+	tier, err := loader.GetTierByID(ctx, tierID)
 	if err != nil {
+		if errors.Is(err, store.ErrTierNotFound) {
+			return nil, fmt.Errorf("assigned tier %q not found: %w", tierID, err)
+		}
 		return nil, err
 	}
 	if tier == nil {
-		return nil, fmt.Errorf("default tier %q not found: %w", store.DefaultTierName, store.ErrTierNotFound)
+		return nil, fmt.Errorf("assigned tier %q not found: %w", tierID, store.ErrTierNotFound)
 	}
 	return tier, nil
 }

@@ -123,6 +123,7 @@ func TestInitializeServerSettingsUsesEnvironmentDefaultsWithoutMutatingConfig(t 
 	cfg := &config.Config{
 		CPABaseURL:       " http://127.0.0.1:8317/ ",
 		CPAAPIKey:        " environment-key ",
+		UpstreamProtocol: config.UpstreamProtocolResponses,
 		Model:            " grok-4.3 ",
 		Timeout:          45 * time.Second,
 		RegistrationMode: store.RegistrationModeFree,
@@ -159,16 +160,15 @@ func TestInitializeServerSettingsUsesEnvironmentDefaultsWithoutMutatingConfig(t 
 		t.Fatal(err)
 	}
 	defer rawDatabase.Close()
-	var plaintextAPIKey string
 	var ciphertextAPIKey string
 	if err := rawDatabase.QueryRow(`
-		SELECT cpa_api_key, cpa_api_key_ciphertext
+		SELECT cpa_api_key_ciphertext
 		FROM server_settings`,
-	).Scan(&plaintextAPIKey, &ciphertextAPIKey); err != nil {
+	).Scan(&ciphertextAPIKey); err != nil {
 		t.Fatal(err)
 	}
-	if plaintextAPIKey != "" || ciphertextAPIKey == "" || ciphertextAPIKey == "environment-key" {
-		t.Fatalf("unexpected CPA API key storage: plaintext=%q ciphertext=%q", plaintextAPIKey, ciphertextAPIKey)
+	if ciphertextAPIKey == "" || ciphertextAPIKey == "environment-key" {
+		t.Fatalf("unexpected CPA API key ciphertext: %q", ciphertextAPIKey)
 	}
 }
 
@@ -225,9 +225,11 @@ func TestInitializeServerSettingsRejectsMissingAPIKeyWithoutDatabaseFallback(t *
 	}
 
 	cfg := &config.Config{
-		CPABaseURL: "http://127.0.0.1:8317",
-		Model:      "grok-4.3",
-		Timeout:    30 * time.Second,
+		CPABaseURL:       "http://127.0.0.1:8317",
+		UpstreamProtocol: config.UpstreamProtocolResponses,
+		Model:            "grok-4.3",
+		Timeout:          30 * time.Second,
+		RegistrationMode: store.RegistrationModeFree,
 	}
 	_, err = InitializeServerSettings(context.Background(), sqliteStore, cfg)
 	if err == nil || !strings.Contains(err.Error(), "CPA_API_KEY is required") {

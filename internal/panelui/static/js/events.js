@@ -773,7 +773,7 @@ export function createApplicationEvents({
     const formData = createFormDataObject(formElement);
     const settingsPayload = {
       cpa_base_url: String(formData.cpa_base_url || "").trim(),
-      upstream_protocol: String(formData.upstream_protocol || "responses"),
+      upstream_protocol: String(formData.upstream_protocol || ""),
       model: String(formData.model || "").trim(),
       timeout_seconds: Number(formData.timeout_seconds),
       proxy_url: String(formData.proxy_url || "").trim(),

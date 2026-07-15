@@ -324,11 +324,13 @@ func TestRunSearchUsesRuntimeDebugState(t *testing.T) {
 	defer server.Close()
 
 	configuration := &config.Config{
-		CPABaseURL: server.URL,
-		CPAAPIKey:  "test-cpa-key",
-		Model:      "grok-4.3",
-		Timeout:    5 * time.Second,
-		Debug:      false,
+		CPABaseURL:       server.URL,
+		CPAAPIKey:        "test-cpa-key",
+		UpstreamProtocol: config.UpstreamProtocolResponses,
+		Model:            "grok-4.3",
+		Timeout:          5 * time.Second,
+		RegistrationMode: "free",
+		Debug:            false,
 	}
 	debugState := logx.NewDebugState(false)
 	client, err := grok.NewClientWithServerSettings(configuration.ServerSettings(), debugState)
@@ -524,10 +526,12 @@ func TestRunListModelsReturnsOnlyFilteredGrokModels(t *testing.T) {
 func newMCPTestClient(t *testing.T, baseURL string) *grok.Client {
 	t.Helper()
 	configuration := &config.Config{
-		CPABaseURL: baseURL,
-		CPAAPIKey:  "test-cpa-key",
-		Model:      "grok-4.3",
-		Timeout:    5 * time.Second,
+		CPABaseURL:       baseURL,
+		CPAAPIKey:        "test-cpa-key",
+		UpstreamProtocol: config.UpstreamProtocolResponses,
+		Model:            "grok-4.3",
+		Timeout:          5 * time.Second,
+		RegistrationMode: "free",
 	}
 	client, err := grok.NewClientWithServerSettings(configuration.ServerSettings(), nil)
 	if err != nil {

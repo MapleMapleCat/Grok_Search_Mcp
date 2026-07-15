@@ -30,11 +30,11 @@ func (m *memStore) GetUserByID(_ context.Context, id string) (*store.User, error
 	return nil, store.ErrUserNotFound
 }
 
-func (m *memStore) GetTierByName(_ context.Context, name string) (*store.Tier, error) {
-	if strings.EqualFold(name, store.DefaultTierName) {
+func (m *memStore) GetTierByID(_ context.Context, id string) (*store.Tier, error) {
+	if id == "tier0-id" {
 		return &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800}, nil
 	}
-	return nil, nil
+	return nil, store.ErrTierNotFound
 }
 
 func TestAPIKeyMiddleware(t *testing.T) {
@@ -45,7 +45,7 @@ func TestAPIKeyMiddleware(t *testing.T) {
 			hash: {ID: "id-1", UserID: "u1", Enabled: true},
 		},
 		users: map[string]*store.User{
-			"u1": {ID: "u1", Enabled: true},
+			"u1": {ID: "u1", Enabled: true, TierID: "tier0-id"},
 		},
 	}
 
@@ -87,14 +87,14 @@ func TestAPIKeyMiddlewareRejectsInvalidDisabledKeyAndDisabledUser(t *testing.T) 
 		{
 			name:     "disabled key",
 			key:      &store.APIKey{ID: "k-disabled", UserID: "u1", Enabled: false},
-			user:     &store.User{ID: "u1", Enabled: true},
+			user:     &store.User{ID: "u1", Enabled: true, TierID: "tier0-id"},
 			want:     http.StatusForbidden,
 			wantBody: "API key disabled",
 		},
 		{
 			name:     "disabled user",
 			key:      &store.APIKey{ID: "k-user-disabled", UserID: "u1", Enabled: true},
-			user:     &store.User{ID: "u1", Enabled: false},
+			user:     &store.User{ID: "u1", Enabled: false, TierID: "tier0-id"},
 			want:     http.StatusForbidden,
 			wantBody: "user disabled",
 		},
@@ -197,7 +197,8 @@ func TestCachedAPIKeyResolverReloadsAfterTTL(t *testing.T) {
 	keyHash := "hash-for-ttl"
 	st := &cacheResolverStore{
 		key:  &store.APIKey{ID: "k1", UserID: "u1", Name: "before-expiry", Enabled: true},
-		user: &store.User{ID: "u1", Enabled: true},
+		user: &store.User{ID: "u1", Enabled: true, TierID: "tier0-id"},
+		tier: &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800},
 	}
 	currentTime := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
 	resolver := NewCachedAPIKeyResolver(st, time.Second)

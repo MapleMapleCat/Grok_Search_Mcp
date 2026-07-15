@@ -52,7 +52,7 @@ var ErrInviteCodeLimitTooLow = errors.New("invite code registration limit is low
 // outside the caller's authorized scope.
 var ErrUsageRecordNotFound = errors.New("usage record not found")
 
-// DefaultTierName 是新建用户与缺失 tier_id 时回退使用的默认等级名称。
+// DefaultTierName 是新建用户默认分配的等级名称。
 const DefaultTierName = "tier0"
 
 // RegistrationMode 控制公开注册入口如何放行新用户。
@@ -70,7 +70,7 @@ const (
 // NormalizeRegistrationMode canonicalizes the persisted/server setting value.
 func NormalizeRegistrationMode(mode RegistrationMode) (RegistrationMode, error) {
 	switch mode {
-	case "", RegistrationModeFree:
+	case RegistrationModeFree:
 		return RegistrationModeFree, nil
 	case RegistrationModeInvite:
 		return RegistrationModeInvite, nil
@@ -298,7 +298,6 @@ type Store interface {
 
 	CreateKey(ctx context.Context, userID, name string) (*APIKey, string, error)
 	ConfigureAPIKeyEncryption(applicationSecret string) error
-	RotateLegacyAPIKeys(ctx context.Context) (int, error)
 	RevealKey(ctx context.Context, id string) (string, error)
 	GetKeyByHash(ctx context.Context, hash string) (*APIKey, error)
 	ListKeys(ctx context.Context) ([]*APIKey, error)

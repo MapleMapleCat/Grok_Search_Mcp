@@ -2,7 +2,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -145,18 +144,14 @@ func (s *SQLiteStore) Close() error {
 	return firstCloseErr
 }
 
-// ConfigureAPIKeyEncryption derives the at-rest encryption key used for
-// recoverable API keys and other persisted secrets. The key derivation remains
-// unchanged so existing API key ciphertext stays compatible.
+// ConfigureAPIKeyEncryption derives the at-rest encryption key used for API
+// keys and other persisted secrets.
 func (s *SQLiteStore) ConfigureAPIKeyEncryption(applicationSecret string) error {
 	secretCipher, err := keycrypt.New(applicationSecret)
 	if err != nil {
 		return err
 	}
 	s.secretCipher = secretCipher
-	if _, err := s.GetServerSettings(context.Background()); err != nil {
-		return fmt.Errorf("migrate server settings CPA API key: %w", err)
-	}
 	return nil
 }
 
@@ -300,98 +295,6 @@ func (s *SQLiteStore) RevealKey(ctx context.Context, id string) (string, error) 
 	)
 }
 
-// RotateLegacyAPIKeys replaces hash-only or no-longer-decryptable keys with
-// recoverable encrypted keys. The record identity, metadata, and usage history
-// are preserved, while the old bearer token stops authenticating immediately.
-func (s *SQLiteStore) RotateLegacyAPIKeys(ctx context.Context) (int, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, key_ciphertext, key_nonce, key_encryption_version FROM apikeys ORDER BY created_at ASC`)
-	if err != nil {
-		return 0, err
-	}
-
-	type legacyAPIKey struct {
-		id                   string
-		userID               string
-		keyCiphertext        string
-		keyNonce             string
-		keyEncryptionVersion int
-	}
-	legacyKeys := make([]legacyAPIKey, 0)
-	for rows.Next() {
-		var legacyKey legacyAPIKey
-		if err := rows.Scan(
-			&legacyKey.id,
-			&legacyKey.userID,
-			&legacyKey.keyCiphertext,
-			&legacyKey.keyNonce,
-			&legacyKey.keyEncryptionVersion,
-		); err != nil {
-			_ = rows.Close()
-			return 0, err
-		}
-		secretUnavailable := legacyKey.keyCiphertext == "" || legacyKey.keyNonce == "" || legacyKey.keyEncryptionVersion == 0
-		if !secretUnavailable {
-			_, decryptErr := s.secretCipher.Decrypt(
-				legacyKey.keyCiphertext,
-				legacyKey.keyNonce,
-				apiKeyRecordIdentity(legacyKey.id, legacyKey.userID),
-				legacyKey.keyEncryptionVersion,
-			)
-			secretUnavailable = decryptErr != nil
-		}
-		if secretUnavailable {
-			legacyKeys = append(legacyKeys, legacyKey)
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return 0, err
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	if len(legacyKeys) == 0 {
-		return 0, nil
-	}
-
-	transaction, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = transaction.Rollback() }()
-
-	updatedAt := formatTime(time.Now().UTC())
-	for _, legacyKey := range legacyKeys {
-		rawKey, err := generateRawKey()
-		if err != nil {
-			return 0, err
-		}
-		keyPrefix := rawKey
-		if len(keyPrefix) > 8 {
-			keyPrefix = keyPrefix[:8]
-		}
-		ciphertext, nonce, encryptionVersion, err := s.secretCipher.Encrypt(
-			rawKey,
-			apiKeyRecordIdentity(legacyKey.id, legacyKey.userID),
-		)
-		if err != nil {
-			return 0, err
-		}
-		if _, err := transaction.ExecContext(ctx,
-			`UPDATE apikeys
-			 SET key_hash = ?, key_prefix = ?, key_ciphertext = ?, key_nonce = ?, key_encryption_version = ?, updated_at = ?
-			 WHERE id = ?`,
-			keyhash.HashAPIKey(rawKey), keyPrefix, ciphertext, nonce, encryptionVersion, updatedAt, legacyKey.id,
-		); err != nil {
-			return 0, err
-		}
-	}
-	if err := transaction.Commit(); err != nil {
-		return 0, err
-	}
-	return len(legacyKeys), nil
-}
-
 // GetKeyByHash 供鉴权使用；未找到时返回 (nil, nil)。
 func (s *SQLiteStore) GetKeyByHash(ctx context.Context, hash string) (*APIKey, error) {
 	row := s.readDB.QueryRowContext(ctx,
@@ -518,8 +421,8 @@ func (s *SQLiteStore) RecordUsage(ctx context.Context, record UsageRecord) error
 	defer transaction.Rollback()
 
 	result, err := transaction.ExecContext(ctx,
-		`INSERT INTO usage_log (key_id, tool_name, timestamp, duration_ms, success, debug_json) VALUES (?, ?, ?, ?, ?, ?)`,
-		record.KeyID, record.ToolName, formatTime(record.Timestamp.UTC()), record.DurationMs, success, "",
+		`INSERT INTO usage_log (key_id, tool_name, timestamp, duration_ms, success) VALUES (?, ?, ?, ?, ?)`,
+		record.KeyID, record.ToolName, formatTime(record.Timestamp.UTC()), record.DurationMs, success,
 	)
 	if err != nil {
 		return err
@@ -720,7 +623,7 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 	rows.Close()
 
 	recRows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, key_id, tool_name, timestamp, duration_ms, success, debug_json FROM usage_log WHERE `+where+` AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500`,
+		`SELECT id, key_id, tool_name, timestamp, duration_ms, success FROM usage_log WHERE `+where+` AND timestamp >= ? ORDER BY timestamp DESC LIMIT 500`,
 		args...,
 	)
 	if err != nil {
@@ -732,7 +635,7 @@ func (s *SQLiteStore) queryUsageStats(ctx context.Context, scope usageStatsScope
 		var r UsageRecord
 		var ts string
 		var success int
-		if err := recRows.Scan(&r.ID, &r.KeyID, &r.ToolName, &ts, &r.DurationMs, &success, &r.DebugJSON); err != nil {
+		if err := recRows.Scan(&r.ID, &r.KeyID, &r.ToolName, &ts, &r.DurationMs, &success); err != nil {
 			return nil, err
 		}
 		r.Success = success != 0
@@ -794,8 +697,6 @@ func (s *SQLiteStore) loadUsageDebugBodySummaries(ctx context.Context, records [
 	if err != nil {
 		return err
 	}
-	debugRecordIDs := make(map[int64]struct{}, len(records))
-
 	for rows.Next() {
 		var usageID int64
 		var debugJSON string
@@ -821,7 +722,6 @@ func (s *SQLiteStore) loadUsageDebugBodySummaries(ctx context.Context, records [
 		if !exists {
 			continue
 		}
-		debugRecordIDs[usageID] = struct{}{}
 		record := &records[recordIndex]
 		record.DebugJSON = debugJSON
 		record.HasDebugRequestBody = requestBytes > 0
@@ -840,62 +740,7 @@ func (s *SQLiteStore) loadUsageDebugBodySummaries(ctx context.Context, records [
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	return s.loadLegacyUsageDebugBodySummaries(ctx, records, debugRecordIDs)
-}
-
-func (s *SQLiteStore) loadLegacyUsageDebugBodySummaries(ctx context.Context, records []UsageRecord, debugRecordIDs map[int64]struct{}) error {
-	legacyRecordIndexesByID := make(map[int64]int)
-	legacyUsageIDs := make([]int64, 0)
-	for recordIndex := range records {
-		usageID := records[recordIndex].ID
-		if _, exists := debugRecordIDs[usageID]; exists {
-			continue
-		}
-		legacyRecordIndexesByID[usageID] = recordIndex
-		legacyUsageIDs = append(legacyUsageIDs, usageID)
-	}
-	if len(legacyUsageIDs) == 0 {
-		return nil
-	}
-
-	queryPlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(legacyUsageIDs)), ",")
-	queryArgs := make([]any, 0, len(legacyUsageIDs))
-	for _, usageID := range legacyUsageIDs {
-		queryArgs = append(queryArgs, usageID)
-	}
-	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT usage_id, body_kind, COALESCE(SUM(length(body_data)), 0)
-		 FROM usage_log_debug_body_chunks
-		 WHERE usage_id IN (`+queryPlaceholders+`)
-		 GROUP BY usage_id, body_kind`,
-		queryArgs...,
-	)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var usageID int64
-		var bodyKind string
-		var bodyBytes int64
-		if err := rows.Scan(&usageID, &bodyKind, &bodyBytes); err != nil {
-			return err
-		}
-		recordIndex, exists := legacyRecordIndexesByID[usageID]
-		if !exists {
-			continue
-		}
-		switch bodyKind {
-		case "request":
-			records[recordIndex].HasDebugRequestBody = true
-			records[recordIndex].DebugRequestBytes = bodyBytes
-		case "response":
-			records[recordIndex].HasDebugResponseBody = true
-			records[recordIndex].DebugResponseBytes = bodyBytes
-		}
-	}
-	return rows.Err()
+	return nil
 }
 
 func (s *SQLiteStore) GetUsageRecordDetail(ctx context.Context, usageID int64, scope UsageRecordScope) (*UsageRecord, error) {
@@ -904,7 +749,7 @@ func (s *SQLiteStore) GetUsageRecordDetail(ctx context.Context, usageID int64, s
 	}
 
 	query := `SELECT usage_log.id, usage_log.key_id, usage_log.tool_name, usage_log.timestamp,
-	                 usage_log.duration_ms, usage_log.success, usage_log.debug_json
+	                 usage_log.duration_ms, usage_log.success
 	          FROM usage_log
 	          INNER JOIN apikeys ON apikeys.id = usage_log.key_id
 	          WHERE usage_log.id = ?`
@@ -924,7 +769,6 @@ func (s *SQLiteStore) GetUsageRecordDetail(ctx context.Context, usageID int64, s
 		&timestamp,
 		&record.DurationMs,
 		&success,
-		&record.DebugJSON,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrUsageRecordNotFound
@@ -938,14 +782,8 @@ func (s *SQLiteStore) GetUsageRecordDetail(ctx context.Context, usageID int64, s
 		return nil, err
 	}
 
-	foundDebugRecord, err := s.loadUsageDebugRecord(ctx, &record)
-	if err != nil {
+	if _, err := s.loadUsageDebugRecord(ctx, &record); err != nil {
 		return nil, err
-	}
-	if !foundDebugRecord {
-		if err := s.loadLegacyUsageDebugBodies(ctx, &record); err != nil {
-			return nil, err
-		}
 	}
 	return &record, nil
 }
@@ -990,46 +828,6 @@ func (s *SQLiteStore) loadUsageDebugRecord(ctx context.Context, record *UsageRec
 	record.DebugRequestBody = string(requestBody)
 	record.DebugResponseBody = string(responseBody)
 	return true, nil
-}
-
-func (s *SQLiteStore) loadLegacyUsageDebugBodies(ctx context.Context, record *UsageRecord) error {
-	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT body_kind, body_data
-		 FROM usage_log_debug_body_chunks
-		 WHERE usage_id = ?
-		 ORDER BY body_kind, chunk_index`,
-		record.ID,
-	)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	var requestBody bytes.Buffer
-	var responseBody bytes.Buffer
-	for rows.Next() {
-		var bodyKind string
-		var bodyData []byte
-		if err := rows.Scan(&bodyKind, &bodyData); err != nil {
-			return err
-		}
-		switch bodyKind {
-		case "request":
-			record.HasDebugRequestBody = true
-			record.DebugRequestBytes += int64(len(bodyData))
-			_, _ = requestBody.Write(bodyData)
-		case "response":
-			record.HasDebugResponseBody = true
-			record.DebugResponseBytes += int64(len(bodyData))
-			_, _ = responseBody.Write(bodyData)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	record.DebugRequestBody = requestBody.String()
-	record.DebugResponseBody = responseBody.String()
-	return nil
 }
 
 func appendUsageStatsArgs(whereArgs []any, trailingArgs ...any) []any {
@@ -1171,7 +969,6 @@ func divideCeiling(numerator int64, denominator int) int64 {
 const serverSettingsID = "default"
 
 type storedServerSettingsAPIKey struct {
-	plaintext         string
 	ciphertext        string
 	nonce             string
 	encryptionVersion int
@@ -1190,7 +987,6 @@ func scanServerSettings(row interface {
 	err := row.Scan(
 		&settings.ID,
 		&settings.CPABaseURL,
-		&storedAPIKey.plaintext,
 		&storedAPIKey.ciphertext,
 		&storedAPIKey.nonce,
 		&storedAPIKey.encryptionVersion,
@@ -1226,7 +1022,7 @@ func scanServerSettings(row interface {
 	return &settings, storedAPIKey, nil
 }
 
-const serverSettingsColumns = `id, cpa_base_url, cpa_api_key, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version, upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at`
+const serverSettingsColumns = `id, cpa_base_url, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version, upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at`
 
 func serverSettingsAPIKeyRecordIdentity(settingsID string) string {
 	return "server-settings:" + settingsID + ":cpa-api-key"
@@ -1242,7 +1038,7 @@ func (s *SQLiteStore) GetServerSettings(ctx context.Context) (*ServerSettings, e
 		return nil, err
 	}
 
-	plaintextAPIKey, err := s.readOrMigrateServerSettingsAPIKey(ctx, settings.ID, storedAPIKey)
+	plaintextAPIKey, err := s.decryptServerSettingsAPIKey(settings.ID, storedAPIKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1250,62 +1046,27 @@ func (s *SQLiteStore) GetServerSettings(ctx context.Context) (*ServerSettings, e
 	return settings, nil
 }
 
-func (s *SQLiteStore) readOrMigrateServerSettingsAPIKey(ctx context.Context, settingsID string, storedAPIKey storedServerSettingsAPIKey) (string, error) {
+func (s *SQLiteStore) decryptServerSettingsAPIKey(settingsID string, storedAPIKey storedServerSettingsAPIKey) (string, error) {
 	hasCompleteCiphertext := storedAPIKey.ciphertext != "" && storedAPIKey.nonce != "" && storedAPIKey.encryptionVersion != 0
-	if hasCompleteCiphertext {
-		plaintextAPIKey, err := s.secretCipher.Decrypt(
-			storedAPIKey.ciphertext,
-			storedAPIKey.nonce,
-			serverSettingsAPIKeyRecordIdentity(settingsID),
-			storedAPIKey.encryptionVersion,
-		)
-		if err != nil {
-			return "", fmt.Errorf("decrypt server settings CPA API key: %w", err)
-		}
-		if storedAPIKey.plaintext != "" {
-			if _, err := s.db.ExecContext(ctx, `UPDATE server_settings SET cpa_api_key = '' WHERE id = ?`, settingsID); err != nil {
-				return "", fmt.Errorf("clear plaintext server settings CPA API key: %w", err)
-			}
-		}
-		return plaintextAPIKey, nil
+	if !hasCompleteCiphertext {
+		return "", fmt.Errorf("server settings CPA API key ciphertext is incomplete")
 	}
-
-	hasPartialCiphertext := storedAPIKey.ciphertext != "" || storedAPIKey.nonce != "" || storedAPIKey.encryptionVersion != 0
-	if storedAPIKey.plaintext == "" {
-		if hasPartialCiphertext {
-			return "", fmt.Errorf("server settings CPA API key ciphertext is incomplete")
-		}
-		return "", nil
-	}
-
-	ciphertext, nonce, encryptionVersion, err := s.secretCipher.Encrypt(
-		storedAPIKey.plaintext,
+	plaintextAPIKey, err := s.secretCipher.Decrypt(
+		storedAPIKey.ciphertext,
+		storedAPIKey.nonce,
 		serverSettingsAPIKeyRecordIdentity(settingsID),
+		storedAPIKey.encryptionVersion,
 	)
 	if err != nil {
-		return "", fmt.Errorf("encrypt legacy server settings CPA API key: %w", err)
+		return "", fmt.Errorf("decrypt server settings CPA API key: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `
-		UPDATE server_settings
-		SET cpa_api_key = '', cpa_api_key_ciphertext = ?, cpa_api_key_nonce = ?, cpa_api_key_encryption_version = ?
-		WHERE id = ?`,
-		ciphertext,
-		nonce,
-		encryptionVersion,
-		settingsID,
-	); err != nil {
-		return "", fmt.Errorf("migrate legacy server settings CPA API key: %w", err)
-	}
-	return storedAPIKey.plaintext, nil
+	return plaintextAPIKey, nil
 }
 
 func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerSettings) (*ServerSettings, error) {
 	cpaBaseURL := strings.TrimSpace(settings.CPABaseURL)
 	cpaAPIKey := strings.TrimSpace(settings.CPAAPIKey)
 	upstreamProtocol := strings.TrimSpace(settings.UpstreamProtocol)
-	if upstreamProtocol == "" {
-		upstreamProtocol = "responses"
-	}
 	model := strings.TrimSpace(settings.Model)
 	proxyURL := strings.TrimSpace(settings.ProxyURL)
 	if cpaBaseURL == "" {
@@ -1313,6 +1074,9 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 	}
 	if cpaAPIKey == "" {
 		return nil, fmt.Errorf("cpa_api_key is required")
+	}
+	if upstreamProtocol == "" {
+		return nil, fmt.Errorf("upstream_protocol is required")
 	}
 	if model == "" {
 		return nil, fmt.Errorf("model is required")
@@ -1343,12 +1107,11 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 	now := formatTime(time.Now().UTC())
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO server_settings (
-			id, cpa_base_url, cpa_api_key, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version,
+			id, cpa_base_url, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version,
 			upstream_protocol, model, timeout_seconds, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
-		) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			cpa_base_url = excluded.cpa_base_url,
-			cpa_api_key = '',
 			cpa_api_key_ciphertext = excluded.cpa_api_key_ciphertext,
 			cpa_api_key_nonce = excluded.cpa_api_key_nonce,
 			cpa_api_key_encryption_version = excluded.cpa_api_key_encryption_version,

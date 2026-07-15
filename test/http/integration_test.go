@@ -192,11 +192,13 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 	usageWriter := store.NewAsyncUsageWriter(st, 64)
 
 	cfg := &config.Config{
-		CPABaseURL: cpa.URL,
-		CPAAPIKey:  "cpa-mock-key",
-		Model:      "grok-4.3",
-		JWTSecret:  "jwt-secret-must-be-at-least-32-bytes!",
-		Timeout:    30 * time.Second,
+		CPABaseURL:       cpa.URL,
+		CPAAPIKey:        "cpa-mock-key",
+		UpstreamProtocol: config.UpstreamProtocolResponses,
+		Model:            "grok-4.3",
+		JWTSecret:        "jwt-secret-must-be-at-least-32-bytes!",
+		Timeout:          30 * time.Second,
+		RegistrationMode: store.RegistrationModeFree,
 	}
 	if err := st.ConfigureAPIKeyEncryption(cfg.JWTSecret); err != nil {
 		t.Fatal(err)

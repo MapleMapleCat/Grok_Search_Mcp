@@ -263,7 +263,7 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 	if isSSE {
 		searchRounds := newSearchRoundTracker()
 		err = forEachSSEEvent(capturedBody, func(payload string) error {
-			if searchErr := searchRounds.emitCompatibleSearchRound(payload, onRound, log); searchErr != nil {
+			if searchErr := searchRounds.emitSearchRound(payload, onRound, log); searchErr != nil {
 				return searchErr
 			}
 			var response chatCompletionsResponse

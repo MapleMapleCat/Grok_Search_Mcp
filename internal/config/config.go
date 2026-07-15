@@ -24,7 +24,7 @@ const (
 )
 
 // UpstreamProtocol identifies the CPA-compatible HTTP protocol used for
-// search requests. Existing deployments default to the Responses API.
+// search requests.
 type UpstreamProtocol string
 
 const (
@@ -80,7 +80,8 @@ func Load() (*Config, error) {
 		JWTSecret:        strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
 		MCPIPRPM:         defaultMCPIPRPM,
 		ProxyURL:         proxyURL,
-		ProxyEnabled:     resolveProxyEnabledFromEnv(proxyURL),
+		ProxyEnabled:     parseBoolEnv("GROK_PROXY_ENABLED"),
+		RegistrationMode: store.RegistrationModeFree,
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("GROK_HTTP_TIMEOUT")); raw != "" {
@@ -199,12 +200,11 @@ func normalizeServerSettings(settings ServerSettings, requireAPIKey bool) (Serve
 	return settings, nil
 }
 
-// NormalizeUpstreamProtocol canonicalizes the configured protocol while
-// preserving Responses as the backward-compatible default for empty values.
+// NormalizeUpstreamProtocol canonicalizes an explicitly configured protocol.
 func NormalizeUpstreamProtocol(protocol UpstreamProtocol) (UpstreamProtocol, error) {
 	normalizedProtocol := UpstreamProtocol(strings.ToLower(strings.TrimSpace(string(protocol))))
 	switch normalizedProtocol {
-	case "", UpstreamProtocolResponses:
+	case UpstreamProtocolResponses:
 		return UpstreamProtocolResponses, nil
 	case UpstreamProtocolChatCompletions:
 		return UpstreamProtocolChatCompletions, nil
@@ -251,16 +251,4 @@ func envOrDefault(key, fallback string) string {
 func parseBoolEnv(key string) bool {
 	raw := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
 	return raw == "1" || raw == "true" || raw == "yes"
-}
-
-func resolveProxyEnabledFromEnv(proxyURL string) bool {
-	if raw, ok := os.LookupEnv("GROK_PROXY_ENABLED"); ok {
-		normalizedRawValue := strings.TrimSpace(strings.ToLower(raw))
-		return normalizedRawValue == "1" || normalizedRawValue == "true" || normalizedRawValue == "yes"
-	}
-
-	// Treat GROK_PROXY_URL by itself as an explicit proxy configuration. When it
-	// is absent, the HTTP client falls back to standard HTTP_PROXY/HTTPS_PROXY
-	// environment variables through net/http.
-	return strings.TrimSpace(proxyURL) != ""
 }

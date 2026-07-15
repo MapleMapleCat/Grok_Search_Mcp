@@ -84,7 +84,7 @@ func TestNormalizeUpstreamProtocol(t *testing.T) {
 		expected     UpstreamProtocol
 		expectsError bool
 	}{
-		{name: "empty defaults to responses", input: "", expected: UpstreamProtocolResponses},
+		{name: "rejects empty protocol", input: "", expectsError: true},
 		{name: "trims and normalizes", input: " Chat_Completions ", expected: UpstreamProtocolChatCompletions},
 		{name: "anthropic messages", input: UpstreamProtocolAnthropicMessages, expected: UpstreamProtocolAnthropicMessages},
 		{name: "rejects unknown protocol", input: "legacy", expectsError: true},
@@ -109,7 +109,7 @@ func TestNormalizeUpstreamProtocol(t *testing.T) {
 	}
 }
 
-func TestLoadEnablesExplicitProxyWhenProxyURLSet(t *testing.T) {
+func TestLoadDoesNotEnableProxyFromURLAlone(t *testing.T) {
 	panelEnv(t)
 	setEnv(t, "GROK_PROXY_URL", " http://127.0.0.1:7890 ")
 
@@ -117,8 +117,8 @@ func TestLoadEnablesExplicitProxyWhenProxyURLSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if !cfg.ProxyEnabled {
-		t.Fatalf("expected proxy enabled when GROK_PROXY_URL is set")
+	if cfg.ProxyEnabled {
+		t.Fatalf("expected proxy disabled without GROK_PROXY_ENABLED")
 	}
 	if cfg.ProxyURL != "http://127.0.0.1:7890" {
 		t.Fatalf("unexpected proxy URL: %q", cfg.ProxyURL)

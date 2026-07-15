@@ -175,6 +175,102 @@ func TestSQLiteCreatesSeparateRestrictedDebugDatabase(t *testing.T) {
 	}
 }
 
+func TestSQLiteStrictSchemaExcludesRetiredStorage(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+
+	for _, retiredTableName := range []string{"usage_log_debug_body_chunks"} {
+		var tableCount int
+		if err := sqliteStore.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`,
+			retiredTableName,
+		).Scan(&tableCount); err != nil {
+			t.Fatal(err)
+		}
+		if tableCount != 0 {
+			t.Fatalf("retired table %q still exists", retiredTableName)
+		}
+	}
+
+	retiredColumns := map[string]string{
+		"usage_log":       "debug_json",
+		"server_settings": "cpa_api_key",
+	}
+	for tableName, retiredColumnName := range retiredColumns {
+		rows, err := sqliteStore.db.QueryContext(ctx, `PRAGMA table_info(`+tableName+`)`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for rows.Next() {
+			var columnID int
+			var columnName string
+			var columnType string
+			var notNull int
+			var defaultValue any
+			var primaryKey int
+			if err := rows.Scan(&columnID, &columnName, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				_ = rows.Close()
+				t.Fatal(err)
+			}
+			if columnName == retiredColumnName {
+				_ = rows.Close()
+				t.Fatalf("retired column %s.%s still exists", tableName, retiredColumnName)
+			}
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var tierIDNotNull int
+	rows, err := sqliteStore.db.QueryContext(ctx, `PRAGMA table_info(users)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var columnID int
+		var columnName string
+		var columnType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+		if err := rows.Scan(&columnID, &columnName, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			t.Fatal(err)
+		}
+		if columnName == "tier_id" {
+			tierIDNotNull = notNull
+		}
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if tierIDNotNull != 1 {
+		t.Fatalf("users.tier_id NOT NULL = %d, want 1", tierIDNotNull)
+	}
+
+	userID := testUserID(t, sqliteStore)
+	if _, err := sqliteStore.db.ExecContext(ctx,
+		`INSERT INTO apikeys (
+			id, user_id, name, key_hash, key_prefix, key_ciphertext, key_nonce,
+			key_encryption_version, enabled, created_at, updated_at
+		) VALUES ('invalid-key', ?, 'invalid', 'invalid-hash', 'invalid', '', '', 0, 1, ?, ?)`,
+		userID,
+		formatTime(time.Now().UTC()),
+		formatTime(time.Now().UTC()),
+	); err == nil {
+		t.Fatal("expected strict API key encryption constraints to reject empty ciphertext")
+	}
+
+	user, err := sqliteStore.GetUserByID(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqliteStore.db.ExecContext(ctx, `DELETE FROM tiers WHERE id = ?`, user.TierID); err == nil {
+		t.Fatal("expected database foreign key to restrict deleting an assigned tier")
+	}
+}
+
 func TestSQLiteWriterDoesNotWaitForHeldReader(t *testing.T) {
 	sqliteStore := openTestDB(t)
 	ctx := context.Background()
@@ -344,18 +440,14 @@ func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T)
 		t.Fatalf("returned CPA API key = %q, want original value", storedSettings.CPAAPIKey)
 	}
 
-	var plaintext string
 	var ciphertext string
 	var nonce string
 	var encryptionVersion int
 	if err := sqliteStore.db.QueryRowContext(ctx, `
-		SELECT cpa_api_key, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version
+		SELECT cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version
 		FROM server_settings WHERE id = ?`, serverSettingsID,
-	).Scan(&plaintext, &ciphertext, &nonce, &encryptionVersion); err != nil {
+	).Scan(&ciphertext, &nonce, &encryptionVersion); err != nil {
 		t.Fatal(err)
-	}
-	if plaintext != "" {
-		t.Fatalf("plaintext CPA API key remained at rest: %q", plaintext)
 	}
 	if ciphertext == "" || ciphertext == cpaAPIKey || nonce == "" || encryptionVersion == 0 {
 		t.Fatalf("invalid encrypted CPA API key fields: ciphertext=%q nonce=%q version=%d", ciphertext, nonce, encryptionVersion)
@@ -385,120 +477,6 @@ func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T)
 	}
 	if revealedAPIKey != rawAPIKey {
 		t.Fatal("generalized encryption configuration broke existing API key ciphertext")
-	}
-}
-
-func TestConfigureAPIKeyEncryptionMigratesLegacyPlaintextServerSettings(t *testing.T) {
-	const encryptionSecret = "test-legacy-settings-encryption-secret-at-least-32-bytes"
-	const legacyCPAAPIKey = "legacy-plaintext-cpa-key"
-	databasePath := filepath.Join(t.TempDir(), "legacy-settings.db")
-	ctx := context.Background()
-
-	legacyStore, err := OpenSQLite(databasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := formatTime(time.Now().UTC())
-	if _, err := legacyStore.db.ExecContext(ctx, `
-		INSERT INTO server_settings (
-			id, cpa_base_url, cpa_api_key, upstream_protocol, model, timeout_seconds,
-			proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, '', 0, ?, 0, ?, ?)`,
-		serverSettingsID,
-		"http://127.0.0.1:8317",
-		legacyCPAAPIKey,
-		"responses",
-		"grok-4.3",
-		30,
-		string(RegistrationModeFree),
-		now,
-		now,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacyStore.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	migratedStore, err := OpenSQLite(databasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer migratedStore.Close()
-	if err := migratedStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
-		t.Fatal(err)
-	}
-	migratedSettings, err := migratedStore.GetServerSettings(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if migratedSettings == nil || migratedSettings.CPAAPIKey != legacyCPAAPIKey {
-		t.Fatalf("migrated settings = %+v, want legacy CPA API key", migratedSettings)
-	}
-
-	var plaintext string
-	var ciphertext string
-	var nonce string
-	var encryptionVersion int
-	if err := migratedStore.db.QueryRowContext(ctx, `
-		SELECT cpa_api_key, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version
-		FROM server_settings WHERE id = ?`, serverSettingsID,
-	).Scan(&plaintext, &ciphertext, &nonce, &encryptionVersion); err != nil {
-		t.Fatal(err)
-	}
-	if plaintext != "" {
-		t.Fatalf("legacy plaintext CPA API key was not cleared: %q", plaintext)
-	}
-	if ciphertext == "" || ciphertext == legacyCPAAPIKey || nonce == "" || encryptionVersion == 0 {
-		t.Fatalf("legacy CPA API key was not migrated to ciphertext: ciphertext=%q nonce=%q version=%d", ciphertext, nonce, encryptionVersion)
-	}
-}
-
-func TestRotateLegacyAPIKeysPreservesRecordAndInvalidatesOldSecret(t *testing.T) {
-	s := openTestDB(t)
-	ctx := context.Background()
-	userID := testUserID(t, s)
-	legacyKeyID, err := randomID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyRawKey := "grok_legacy_key_that_cannot_be_recovered_after_rotation"
-	now := formatTime(time.Now().UTC())
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO apikeys (id, user_id, name, key_hash, key_prefix, enabled, created_at, updated_at, total_calls)
-		 VALUES (?, ?, ?, ?, ?, 1, ?, ?, 17)`,
-		legacyKeyID, userID, "legacy", keyhash.HashAPIKey(legacyRawKey), legacyRawKey[:8], now, now,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	rotatedCount, err := s.RotateLegacyAPIKeys(ctx)
-	if err != nil {
-		t.Fatalf("RotateLegacyAPIKeys: %v", err)
-	}
-	if rotatedCount != 1 {
-		t.Fatalf("rotated key count = %d, want 1", rotatedCount)
-	}
-	if legacyLookup, err := s.GetKeyByHash(ctx, keyhash.HashAPIKey(legacyRawKey)); err != nil || legacyLookup != nil {
-		t.Fatalf("legacy key must stop authenticating, lookup=%v err=%v", legacyLookup, err)
-	}
-
-	rotatedKey, err := s.GetKeyByID(ctx, legacyKeyID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rotatedKey.Name != "legacy" || rotatedKey.TotalCalls != 17 || !rotatedKey.Enabled {
-		t.Fatalf("rotation must preserve metadata and usage, got %+v", rotatedKey)
-	}
-	replacementRawKey, err := s.RevealKey(ctx, legacyKeyID)
-	if err != nil {
-		t.Fatalf("RevealKey after rotation: %v", err)
-	}
-	if replacementRawKey == legacyRawKey || replacementRawKey == "" {
-		t.Fatalf("rotation must generate a distinct replacement key")
-	}
-	if replacementLookup, err := s.GetKeyByHash(ctx, keyhash.HashAPIKey(replacementRawKey)); err != nil || replacementLookup == nil {
-		t.Fatalf("replacement key must authenticate, lookup=%v err=%v", replacementLookup, err)
 	}
 }
 
@@ -674,16 +652,6 @@ func TestUsageDebugBodiesPersistInSeparateDatabaseWithBoundedBlobs(t *testing.T)
 		t.Fatalf("debug blob bytes request=%d response=%d, want %d", requestBlobBytes, responseBlobBytes, maxPersistedDebugBodyBytes)
 	}
 
-	var legacyChunkCount int
-	if err := store.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM usage_log_debug_body_chunks WHERE usage_id = ?`,
-		persistedRecord.ID,
-	).Scan(&legacyChunkCount); err != nil {
-		t.Fatal(err)
-	}
-	if legacyChunkCount != 0 {
-		t.Fatalf("legacy chunk count = %d, want 0", legacyChunkCount)
-	}
 }
 
 func TestGetUsageRecordDetailEnforcesUserScope(t *testing.T) {
@@ -762,13 +730,6 @@ func TestUsageDebugBodyPersistenceFailurePreservesPrimaryUsage(t *testing.T) {
 	}
 	if debugRecordCount != 0 {
 		t.Fatalf("debug records after failed sidecar write = %d, want 0", debugRecordCount)
-	}
-	var legacyChunkCount int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_log_debug_body_chunks`).Scan(&legacyChunkCount); err != nil {
-		t.Fatal(err)
-	}
-	if legacyChunkCount != 0 {
-		t.Fatalf("legacy chunks after failed sidecar write = %d, want 0", legacyChunkCount)
 	}
 }
 

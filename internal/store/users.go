@@ -43,11 +43,10 @@ func scanUser(row interface {
 	var u User
 	var role string
 	var enabled int
-	var tierID sql.NullString
 	var successPeriod sql.NullString
 	var createdAt, updatedAt string
 	err := row.Scan(
-		&u.ID, &u.Username, &u.PasswordHash, &role, &enabled, &tierID,
+		&u.ID, &u.Username, &u.PasswordHash, &role, &enabled, &u.TierID,
 		&u.SuccessCalls, &successPeriod,
 		&u.TokenVersion, &createdAt, &updatedAt,
 	)
@@ -56,9 +55,6 @@ func scanUser(row interface {
 	}
 	u.Role = UserRole(role)
 	u.Enabled = enabled != 0
-	if tierID.Valid {
-		u.TierID = tierID.String
-	}
 	if successPeriod.Valid {
 		u.SuccessPeriod = successPeriod.String
 	}

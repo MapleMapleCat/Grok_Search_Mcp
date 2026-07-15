@@ -36,6 +36,7 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 	initialSettings := config.ServerSettings{
 		CPABaseURL:       "http://127.0.0.1:8317",
 		CPAAPIKey:        "initial-key",
+		UpstreamProtocol: config.UpstreamProtocolResponses,
 		Model:            "grok-4.3",
 		TimeoutSeconds:   120,
 		RegistrationMode: store.RegistrationModeFree,

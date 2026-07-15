@@ -63,11 +63,13 @@ func TestNewHTTPClientWithProxyRejectsEnabledProxyWithoutURL(t *testing.T) {
 
 func TestApplyServerSettingsUpdatesSharedDebugState(t *testing.T) {
 	configuration := &config.Config{
-		CPABaseURL: "https://api.example.test",
-		CPAAPIKey:  "test-key",
-		Model:      "grok-4.3",
-		Timeout:    time.Second,
-		Debug:      false,
+		CPABaseURL:       "https://api.example.test",
+		CPAAPIKey:        "test-key",
+		UpstreamProtocol: config.UpstreamProtocolResponses,
+		Model:            "grok-4.3",
+		Timeout:          time.Second,
+		RegistrationMode: "free",
+		Debug:            false,
 	}
 	debugState := logx.NewDebugState(false)
 	client, err := NewClientWithServerSettings(configuration.ServerSettings(), debugState)

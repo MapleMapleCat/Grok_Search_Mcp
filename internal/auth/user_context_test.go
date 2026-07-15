@@ -65,36 +65,6 @@ func (s tierResolvingStore) GetTierByID(_ context.Context, id string) (*store.Ti
 	return nil, store.ErrTierNotFound
 }
 
-func (s tierResolvingStore) GetTierByName(_ context.Context, name string) (*store.Tier, error) {
-	for _, tier := range s.tiers {
-		if tier.Name == name {
-			tierCopy := *tier
-			return &tierCopy, nil
-		}
-	}
-	return nil, nil
-}
-
-// TestLoadUserWithTierLimitsFallsBackToTier0 锁定缺省用户的核心语义：
-// tier_id 为空时生效限额回退到 tier0，绝不退化为“不限”或历史残留值。
-func TestLoadUserWithTierLimitsFallsBackToTier0(t *testing.T) {
-	ctx := context.Background()
-	tier0 := &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800}
-	st := tierResolvingStore{
-		user:  &store.User{ID: "user-without-tier"},
-		tiers: map[string]*store.Tier{tier0.ID: tier0},
-	}
-
-	loaded, err := LoadUserWithTierLimits(ctx, st, "user-without-tier")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.RPM != tier0.RPM || loaded.SuccessLimit != tier0.SuccessLimit {
-		t.Fatalf("missing tier must fall back to tier0, got rpm=%d success=%d",
-			loaded.RPM, loaded.SuccessLimit)
-	}
-}
-
 func TestLoadUserWithTierLimitsFailsClosedWhenAssignedTierIsMissing(t *testing.T) {
 	st := tierResolvingStore{
 		user:  &store.User{ID: "user-with-missing-tier", TierID: "missing-tier"},
@@ -106,13 +76,15 @@ func TestLoadUserWithTierLimitsFailsClosedWhenAssignedTierIsMissing(t *testing.T
 	}
 }
 
-func TestLoadUserWithTierLimitsFailsClosedWhenDefaultTierIsMissing(t *testing.T) {
+func TestLoadUserWithTierLimitsRejectsMissingTierAssignment(t *testing.T) {
 	st := tierResolvingStore{
-		user:  &store.User{ID: "user-without-tier"},
-		tiers: map[string]*store.Tier{},
+		user: &store.User{ID: "user-without-tier"},
+		tiers: map[string]*store.Tier{
+			"tier0-id": {ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800},
+		},
 	}
 
 	if _, err := LoadUserWithTierLimits(context.Background(), st, "user-without-tier"); err == nil {
-		t.Fatal("missing default tier0 must fail closed")
+		t.Fatal("missing tier assignment must fail closed")
 	}
 }
