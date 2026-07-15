@@ -62,6 +62,7 @@ type HTTPDependencies struct {
 	MCPIPLimiter   *ratelimit.IPLimiter
 	APIKeyResolver auth.APIKeyResolver
 	PanelHandler   *panel.Handler
+	DebugState     *logx.DebugState
 }
 
 // Run starts the HTTP server (MCP + panel) and blocks until ctx is cancelled or ListenAndServe fails.
@@ -130,6 +131,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		MCPIPLimiter:   mcpIPLimiter,
 		APIKeyResolver: authResolver,
 		PanelHandler:   panelHandler,
+		DebugState:     debugState,
 	})
 
 	srv := &http.Server{
@@ -177,7 +179,7 @@ func BuildHTTPHandler(dependencies HTTPDependencies) http.Handler {
 	// MCP middleware is wrapped from inside out. The effective request order is:
 	// MaxBody -> IP RPM -> API Key -> ExtractToolName -> User RPM -> Quota -> Usage -> MCP.
 	var mcpChain http.Handler = mcpHandler
-	mcpChain = usage.MCPMiddleware(dependencies.Store, dependencies.UsageWriter)(mcpChain)
+	mcpChain = usage.MCPMiddleware(dependencies.Store, dependencies.UsageWriter, dependencies.DebugState)(mcpChain)
 	mcpChain = quota.MCPMiddleware(dependencies.Store)(mcpChain)
 	mcpChain = dependencies.UserLimiter.UserMiddleware()(mcpChain)
 	mcpChain = usage.ExtractToolNameMiddleware()(mcpChain)

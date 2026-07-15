@@ -290,8 +290,8 @@ type debugCaptureRecordingStore struct {
 	responsePermissions os.FileMode
 }
 
-func (s *debugCaptureRecordingStore) GetServerSettings(context.Context) (*store.ServerSettings, error) {
-	return &store.ServerSettings{Debug: true}, nil
+func (s *debugCaptureRecordingStore) Enabled() bool {
+	return true
 }
 
 func (s *debugCaptureRecordingStore) TouchKeyUsage(context.Context, string) error {
@@ -338,7 +338,7 @@ func TestMCPMiddlewareSpoolsCompleteDebugBodiesWithoutQueueingBodyStrings(t *tes
 	debugStore := &debugCaptureRecordingStore{}
 	writer := store.NewAsyncUsageWriter(debugStore, 4)
 
-	handler := MCPMiddleware(debugStore, writer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := MCPMiddleware(debugStore, writer, debugStore)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			t.Errorf("read request body: %v", err)
 		}
@@ -441,7 +441,7 @@ func TestMCPMiddlewareCleansDebugSpoolsOnPanic(t *testing.T) {
 	temporaryDirectory := t.TempDir()
 	t.Setenv("TMPDIR", temporaryDirectory)
 	debugStore := &debugCaptureRecordingStore{}
-	handler := MCPMiddleware(debugStore, nil)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	handler := MCPMiddleware(debugStore, nil, debugStore)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("handler failed")
 	}))
 

@@ -10,11 +10,13 @@ import (
 
 type cachedResolverStore struct {
 	store.TestStore
-	key         *store.APIKey
-	keys        map[string]*store.APIKey
-	user        *store.User
-	tier        *store.Tier
-	getKeyCalls int
+	key          *store.APIKey
+	keys         map[string]*store.APIKey
+	user         *store.User
+	tier         *store.Tier
+	getKeyCalls  int
+	getUserCalls int
+	getTierCalls int
 }
 
 func (s *cachedResolverStore) GetKeyByHash(_ context.Context, keyHash string) (*store.APIKey, error) {
@@ -31,16 +33,18 @@ func (s *cachedResolverStore) GetKeyByHash(_ context.Context, keyHash string) (*
 }
 
 func (s *cachedResolverStore) GetUserByID(context.Context, string) (*store.User, error) {
+	s.getUserCalls++
 	userCopy := *s.user
 	return &userCopy, nil
 }
 
 func (s *cachedResolverStore) GetTierByID(context.Context, string) (*store.Tier, error) {
+	s.getTierCalls++
 	tierCopy := *s.tier
 	return &tierCopy, nil
 }
 
-func TestCachedAPIKeyResolverReloadsTierLimitsForCachedKey(t *testing.T) {
+func TestCachedAPIKeyResolverCachesCompleteAuthenticationSnapshot(t *testing.T) {
 	tier := &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 1}
 	fakeStore := &cachedResolverStore{
 		key:  &store.APIKey{ID: "key-id", UserID: "user-id", Enabled: true},
@@ -57,16 +61,50 @@ func TestCachedAPIKeyResolverReloadsTierLimitsForCachedKey(t *testing.T) {
 		t.Fatalf("first resolve success limit = %d, want 1", firstUser.SuccessLimit)
 	}
 
+	firstUser.SuccessLimit = 99
 	tier.SuccessLimit = 7
 	_, secondUser, err := resolver.Resolve(context.Background(), "hashed-key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if secondUser.SuccessLimit != 7 {
-		t.Fatalf("cached key must reload tier limits, got %d", secondUser.SuccessLimit)
+	if secondUser.SuccessLimit != 1 {
+		t.Fatalf("cached authentication snapshot success limit = %d, want 1", secondUser.SuccessLimit)
 	}
 	if fakeStore.getKeyCalls != 1 {
 		t.Fatalf("key lookup should still be cached, got %d lookups", fakeStore.getKeyCalls)
+	}
+	if fakeStore.getUserCalls != 1 {
+		t.Fatalf("user lookup should be cached, got %d lookups", fakeStore.getUserCalls)
+	}
+	if fakeStore.getTierCalls != 1 {
+		t.Fatalf("tier lookup should be cached, got %d lookups", fakeStore.getTierCalls)
+	}
+}
+
+func TestCachedAPIKeyResolverRefreshesAuthenticationSnapshotAfterInvalidation(t *testing.T) {
+	tier := &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 1}
+	fakeStore := &cachedResolverStore{
+		key:  &store.APIKey{ID: "key-id", UserID: "user-id", Enabled: true},
+		user: &store.User{ID: "user-id", Enabled: true, TierID: tier.ID},
+		tier: tier,
+	}
+	resolver := NewCachedAPIKeyResolver(fakeStore, time.Hour)
+
+	if _, _, err := resolver.Resolve(context.Background(), "hashed-key"); err != nil {
+		t.Fatal(err)
+	}
+	tier.SuccessLimit = 7
+	resolver.InvalidateAll()
+
+	_, refreshedUser, err := resolver.Resolve(context.Background(), "hashed-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshedUser.SuccessLimit != 7 {
+		t.Fatalf("refreshed success limit = %d, want 7", refreshedUser.SuccessLimit)
+	}
+	if fakeStore.getKeyCalls != 2 || fakeStore.getUserCalls != 2 || fakeStore.getTierCalls != 2 {
+		t.Fatalf("lookups after invalidation = key:%d user:%d tier:%d, want 2 each", fakeStore.getKeyCalls, fakeStore.getUserCalls, fakeStore.getTierCalls)
 	}
 }
 

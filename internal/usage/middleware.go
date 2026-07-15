@@ -21,15 +21,14 @@ type SuccessQuotaReleaser interface {
 	ReleaseSuccessCall(ctx context.Context, userID string) error
 }
 
-// DebugSettingsReader loads server settings for debug capture decisions.
-type DebugSettingsReader interface {
-	GetServerSettings(ctx context.Context) (*store.ServerSettings, error)
+// DebugState exposes the runtime debug switch without loading persisted settings.
+type DebugState interface {
+	Enabled() bool
 }
 
 // UsageStore is the minimal store surface needed by MCP usage middleware.
 type UsageStore interface {
 	SuccessQuotaReleaser
-	DebugSettingsReader
 }
 
 // toolNameCtxKey 为 context 中存放 tools/call 工具名的私有键类型。
@@ -111,7 +110,11 @@ func (s *responseRecorder) Unwrap() http.ResponseWriter {
 // API Key 调用数与 usage_log 的 COUNT 口径一致，并避免握手请求（initialize/ping 等）刷新 last_used_at。
 // success_calls 在 quota 中间件中已原子预留；此处根据 MCP isError / HTTP 状态回滚失败调用。
 // 使用 defer + recover 保证即便下游 handler panic，release/usage 后处理也会执行，避免 success_calls 虚高。
-func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter) func(http.Handler) http.Handler {
+func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ...DebugState) func(http.Handler) http.Handler {
+	var debugState DebugState
+	if len(debugStates) > 0 {
+		debugState = debugStates[0]
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key, ok := auth.APIKeyFromContext(r.Context())
@@ -131,7 +134,7 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter) func(http.Hand
 				return
 			}
 
-			debugEnabled := serverDebugEnabled(r.Context(), st)
+			debugEnabled := serverDebugEnabled(debugState)
 			var debugCapture *debugCaptureSession
 			if debugEnabled {
 				debugCapture = startDebugCapture(r)
@@ -222,12 +225,8 @@ func releaseReservedSuccessCall(releaser SuccessQuotaReleaser, requestContext co
 	}
 }
 
-func serverDebugEnabled(ctx context.Context, reader DebugSettingsReader) bool {
-	if reader == nil {
-		return false
-	}
-	settings, err := reader.GetServerSettings(ctx)
-	return err == nil && settings != nil && settings.Debug
+func serverDebugEnabled(debugState DebugState) bool {
+	return debugState != nil && debugState.Enabled()
 }
 
 const maxDebugRequestBody = 1 << 20 // 1 MiB

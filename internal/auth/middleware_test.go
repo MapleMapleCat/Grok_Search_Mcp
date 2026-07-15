@@ -172,8 +172,8 @@ func TestCachedAPIKeyResolverReturnsClonesAndInvalidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.keyLookups != 1 || st.userLookups != 2 {
-		t.Fatalf("expected second resolve to cache key but reload user limits, keyLookups=%d userLookups=%d", st.keyLookups, st.userLookups)
+	if st.keyLookups != 1 || st.userLookups != 1 {
+		t.Fatalf("expected second resolve to use the cached authentication snapshot, keyLookups=%d userLookups=%d", st.keyLookups, st.userLookups)
 	}
 	if !secondKey.Enabled || !secondUser.Enabled || secondUser.RPM != 42 || secondUser.SuccessLimit != 84 {
 		t.Fatalf("cached values must be cloned and tier-enriched, key=%+v user=%+v", secondKey, secondUser)
@@ -188,7 +188,7 @@ func TestCachedAPIKeyResolverReturnsClonesAndInvalidates(t *testing.T) {
 	if thirdKey.Name != "after-invalidate" {
 		t.Fatalf("expected invalidation to force reload, got key=%+v", thirdKey)
 	}
-	if st.keyLookups != 2 || st.userLookups != 3 {
+	if st.keyLookups != 2 || st.userLookups != 2 {
 		t.Fatalf("expected reload after invalidation, keyLookups=%d userLookups=%d", st.keyLookups, st.userLookups)
 	}
 }

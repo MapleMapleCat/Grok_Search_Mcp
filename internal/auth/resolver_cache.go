@@ -15,11 +15,12 @@ const (
 
 type cacheEntry struct {
 	key   *store.APIKey
+	user  *AuthenticatedUser
 	until time.Time
 }
 
-// CachedAPIKeyResolver 缓存 MCP 鉴权链上的 key，减少热路径 key hash 查询。
-// 用户与 tier 限额每次 Resolve 都重新加载，保证管理员更新 tier 后旧 API key 立即使用新限额。
+// CachedAPIKeyResolver 缓存 MCP 鉴权链上的完整认证快照，避免热路径重复查询
+// API key、用户与 tier。管理员修改鉴权数据后应调用 InvalidateAll。
 type CachedAPIKeyResolver struct {
 	st            APIKeyStore
 	ttl           time.Duration
@@ -27,6 +28,7 @@ type CachedAPIKeyResolver struct {
 	mu            sync.Mutex
 	byHash        map[string]cacheEntry
 	nextCleanupAt time.Time
+	generation    uint64
 }
 
 // NewCachedAPIKeyResolver 创建鉴权解析缓存；ttl<=0 时使用默认 30s。
@@ -49,13 +51,11 @@ func (c *CachedAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*st
 	c.removeExpiredEntries(now)
 	if entry, ok := c.byHash[keyHash]; ok && now.Before(entry.until) {
 		key := cloneAPIKey(entry.key)
+		user := cloneAuthenticatedUser(entry.user)
 		c.mu.Unlock()
-		user, err := LoadUserWithTierLimits(ctx, c.st, key.UserID)
-		if err != nil {
-			return nil, nil, err
-		}
-		return cloneAPIKey(key), cloneAuthenticatedUser(user), nil
+		return key, user, nil
 	}
+	loadGeneration := c.generation
 	c.mu.Unlock()
 
 	key, err := c.st.GetKeyByHash(ctx, keyHash)
@@ -71,9 +71,12 @@ func (c *CachedAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*st
 	}
 
 	c.mu.Lock()
-	c.byHash[keyHash] = cacheEntry{
-		key:   key,
-		until: now.Add(c.ttl),
+	if c.generation == loadGeneration {
+		c.byHash[keyHash] = cacheEntry{
+			key:   cloneAPIKey(key),
+			user:  cloneAuthenticatedUser(user),
+			until: now.Add(c.ttl),
+		}
 	}
 	c.mu.Unlock()
 	return cloneAPIKey(key), cloneAuthenticatedUser(user), nil
@@ -96,6 +99,7 @@ func (c *CachedAPIKeyResolver) InvalidateAll() {
 	c.mu.Lock()
 	c.byHash = make(map[string]cacheEntry)
 	c.nextCleanupAt = time.Time{}
+	c.generation++
 	c.mu.Unlock()
 }
 
