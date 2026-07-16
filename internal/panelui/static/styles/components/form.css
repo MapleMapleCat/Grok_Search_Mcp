@@ -1,0 +1,124 @@
+.form-grid-align-fields {
+  align-items: end;
+}
+
+.form-grid-align-fields .field-label {
+  min-height: 34px;
+}
+
+.field-group {
+  display: grid;
+  gap: 8px;
+}
+
+.field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.field-hint {
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.text-input,
+.select-input,
+.textarea-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  transition: border var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+
+.text-input,
+.select-input {
+  height: 48px;
+  padding: 0 14px;
+}
+
+.textarea-input {
+  min-height: 112px;
+  padding: 13px 14px;
+  resize: vertical;
+}
+
+.text-input::placeholder,
+.textarea-input::placeholder {
+  color: #a7b0aa;
+}
+
+.text-input:hover,
+.select-input:hover,
+.textarea-input:hover {
+  border-color: var(--line-strong);
+}
+
+.text-input:focus,
+.select-input:focus,
+.textarea-input:focus {
+  border-color: var(--violet);
+  box-shadow: 0 0 0 4px rgba(118, 103, 244, 0.1);
+  outline: none;
+}
+
+.text-input:disabled,
+.select-input:disabled,
+.textarea-input:disabled {
+  background: var(--surface-muted);
+  color: var(--ink-faint);
+  cursor: not-allowed;
+}
+
+.password-wrap {
+  position: relative;
+}
+
+.password-wrap .text-input {
+  padding-right: 48px;
+}
+
+.input-icon-button {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.input-icon-button:hover {
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.form-grid .is-full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+.form-grid .is-full {
+    grid-column: auto;
+  }
+
+  
+}

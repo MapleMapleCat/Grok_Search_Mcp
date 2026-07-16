@@ -9,11 +9,11 @@ import (
 	"strings"
 )
 
-//go:embed static/*
+//go:embed static/* static/styles/*/*
 var embeddedStatic embed.FS
 
 // allowedTopLevelAssets 是允许直接对外返回的顶层静态文件白名单；
-// 其他路径仅允许 js/ 下的 ES module 文件，避免将来新增的敏感文件被原样返回。
+// 其他路径仅允许 js/ 下的 ES module 和 styles/ 下的 CSS，避免将来新增的敏感文件被原样返回。
 var allowedTopLevelAssets = map[string]struct{}{
 	"index.html": {},
 	"app.js":     {},
@@ -24,7 +24,10 @@ func isAllowedAsset(name string) bool {
 	if _, ok := allowedTopLevelAssets[name]; ok {
 		return true
 	}
-	return strings.HasPrefix(name, "js/") && strings.HasSuffix(name, ".js")
+	if strings.HasPrefix(name, "js/") && strings.HasSuffix(name, ".js") {
+		return true
+	}
+	return strings.HasPrefix(name, "styles/") && strings.HasSuffix(name, ".css")
 }
 
 // Handler 返回 /panel 前端入口处理器；未知子路径回退到 index.html 支持 SPA 路由。

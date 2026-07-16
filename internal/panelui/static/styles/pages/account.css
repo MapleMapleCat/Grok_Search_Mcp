@@ -1,0 +1,276 @@
+/* Account */
+
+.account-identity-card {
+  position: relative;
+  display: grid;
+  min-height: 190px;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 24px;
+  overflow: hidden;
+  margin-bottom: 18px;
+  padding: clamp(26px, 3.5vw, 42px);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 85% 15%, rgba(189, 244, 92, 0.2), transparent 15rem),
+    var(--surface-dark);
+  box-shadow: var(--shadow-dark);
+  color: #fff;
+}
+
+.account-identity-card::after {
+  position: absolute;
+  right: -62px;
+  bottom: -112px;
+  width: 250px;
+  height: 250px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+  box-shadow: 0 0 0 38px rgba(255, 255, 255, 0.025);
+  content: "";
+  pointer-events: none;
+}
+
+.account-avatar {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 88px;
+  height: 88px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 25px;
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--accent);
+  font-size: 24px;
+  font-weight: 780;
+  letter-spacing: -0.03em;
+}
+
+.account-identity-copy {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.account-eyebrow,
+.account-card-kicker {
+  display: block;
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.account-eyebrow {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.account-identity-copy h2 {
+  margin: 8px 0 15px;
+  color: #fff;
+  font-size: clamp(27px, 3vw, 40px);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.account-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.content-card.account-card {
+  overflow: hidden;
+  border-radius: var(--radius-md);
+}
+
+.account-card-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 23px 25px 19px;
+  border-bottom: 1px solid var(--line);
+}
+
+.account-card-kicker {
+  margin-bottom: 7px;
+  color: var(--ink-faint);
+}
+
+.account-card-header h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  letter-spacing: -0.025em;
+}
+
+.account-card-header p {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 10px;
+  text-align: right;
+}
+
+.account-detail-list {
+  margin: 0;
+  padding: 5px 25px 13px;
+}
+
+.account-detail-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 20px;
+  min-height: 58px;
+  border-bottom: 1px solid var(--line);
+}
+
+.account-detail-row:last-child {
+  border-bottom: 0;
+}
+
+.account-detail-row dt {
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.account-detail-row dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: right;
+}
+
+.account-detail-row dd.is-monospace {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+}
+
+.account-limit-warning {
+  margin: 18px 25px 0;
+  padding: 11px 13px;
+  border: 1px solid #f2dfad;
+  border-radius: 10px;
+  background: #fff8e7;
+  color: #8b6818;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.account-quota-list {
+  display: grid;
+  gap: 12px;
+  padding: 21px 25px 25px;
+}
+
+.account-quota-item {
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-muted);
+}
+
+.account-quota-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.account-quota-heading span {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.account-quota-heading strong {
+  color: var(--ink);
+  font-size: 13px;
+  text-align: right;
+}
+
+.account-progress {
+  height: 7px;
+  overflow: hidden;
+  margin-top: 14px;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.account-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent-strong);
+}
+
+.account-quota-item p {
+  margin: 10px 0 0;
+  color: var(--ink-faint);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+@media (max-width: 900px) {
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .account-identity-card {
+    min-height: 0;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .account-avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 19px;
+    font-size: 18px;
+  }
+
+  .account-card-header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .account-card-header p {
+    text-align: left;
+  }
+
+  .account-detail-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
+    padding: 12px 0;
+  }
+
+  .account-detail-row dd {
+    text-align: left;
+  }
+
+  .account-quota-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .account-quota-heading strong {
+    text-align: left;
+  }
+}

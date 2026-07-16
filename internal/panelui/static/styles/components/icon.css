@@ -1,0 +1,17 @@
+/* 所有 renderIcon() 图标的安全基线；图表 SVG 不使用此类。 */
+.app-icon {
+  width: 16px;
+  height: 16px;
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 16px;
+  overflow: visible;
+  vertical-align: middle;
+  shape-rendering: geometricPrecision;
+}
+
+.input-icon-button .app-icon {
+  width: 17px;
+  height: 17px;
+  flex-basis: 17px;
+}

@@ -1,0 +1,61 @@
+.tool-list,
+.activity-list {
+  display: grid;
+  gap: 15px;
+}
+
+.tool-row {
+  display: grid;
+  grid-template-columns: 33px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+}
+
+.tool-rank {
+  display: grid;
+  width: 33px;
+  height: 33px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.tool-copy {
+  min-width: 0;
+}
+
+.tool-copy strong {
+  display: block;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-bar {
+  height: 4px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--canvas-strong);
+}
+
+.tool-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--violet);
+  transform-origin: left;
+  animation: grow-bar 650ms var(--transition-smooth) both;
+}
+
+.tool-count {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}

@@ -1,0 +1,58 @@
+.chart-empty .app-icon {
+  width: 24px;
+  height: 24px;
+  margin: 0 auto;
+  flex-basis: 24px;
+}
+
+.chart-wrap {
+  position: relative;
+  min-height: 275px;
+}
+
+.chart-svg {
+  width: 100%;
+  height: 250px;
+  overflow: visible;
+}
+
+.chart-grid-line {
+  stroke: var(--line);
+  stroke-dasharray: 4 7;
+  stroke-width: 1;
+}
+
+.chart-area {
+  fill: url(#chartAreaGradient);
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--success);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+  vector-effect: non-scaling-stroke;
+  animation: draw-line 900ms var(--transition-smooth) both;
+}
+
+.chart-point {
+  fill: var(--surface);
+  stroke: var(--success);
+  stroke-width: 2;
+}
+
+.chart-label {
+  fill: var(--ink-faint);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.chart-empty {
+  display: grid;
+  min-height: 250px;
+  place-items: center;
+  color: var(--ink-faint);
+  font-size: 12px;
+  text-align: center;
+}

@@ -1,0 +1,13 @@
+.user-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 780;
+  text-transform: uppercase;
+}

@@ -1,0 +1,61 @@
+.boot-screen {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  gap: 18px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.boot-screen p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.boot-mark {
+  display: flex;
+  height: 44px;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+}
+
+.boot-mark span {
+  width: 8px;
+  border-radius: 99px;
+  background: var(--surface-dark);
+  animation: boot-wave 1s ease-in-out infinite;
+}
+
+.boot-mark span:nth-child(1) {
+  height: 20px;
+}
+
+.boot-mark span:nth-child(2) {
+  height: 38px;
+  animation-delay: 120ms;
+}
+
+.boot-mark span:nth-child(3) {
+  height: 28px;
+  animation-delay: 240ms;
+}
+
+.skeleton {
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--canvas-strong);
+}
+
+.skeleton::after {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.76), transparent);
+  content: "";
+  transform: translateX(-100%);
+  animation: shimmer 1.4s infinite;
+}

@@ -1,0 +1,36 @@
+.is-spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+
+.page-enter {
+  animation: enter-up 420ms var(--transition-smooth) both;
+}
+
+.mono-value {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.muted {
+  color: var(--ink-faint);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+}

@@ -1,0 +1,48 @@
+.status-badge,
+.role-badge,
+.tier-badge {
+  display: inline-flex;
+  min-height: 25px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.status-badge::before {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.status-badge.is-enabled {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.status-badge.is-disabled {
+  background: #eef1ef;
+  color: #7f8a84;
+}
+
+.status-badge.is-failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.role-badge.is-admin {
+  background: var(--violet-soft);
+  color: var(--violet);
+}
+
+.role-badge.is-user,
+.tier-badge {
+  background: var(--blue-soft);
+  color: var(--blue);
+}

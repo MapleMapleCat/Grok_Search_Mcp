@@ -51,6 +51,24 @@ func TestHandlerServesConfigurationGuideModule(t *testing.T) {
 	}
 }
 
+func TestHandlerServesNestedStylesheetAsCSS(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/panel/styles/foundation/tokens.css", nil)
+	responseRecorder := httptest.NewRecorder()
+
+	Handler().ServeHTTP(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", responseRecorder.Code, http.StatusOK)
+	}
+	assertPanelUICacheHeaders(t, responseRecorder)
+	if contentType := responseRecorder.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/css") {
+		t.Fatalf("Content-Type = %q, want text/css", contentType)
+	}
+	if body := responseRecorder.Body.String(); !strings.Contains(body, "--canvas: #f2f5f1;") {
+		t.Fatalf("expected tokens stylesheet response body, got %q", body)
+	}
+}
+
 func TestHandlerServesSearchConcurrencySettingsFields(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/panel/js/pages/settings.js", nil)
 	responseRecorder := httptest.NewRecorder()
@@ -76,6 +94,8 @@ func TestHandlerFallsBackToIndexForSpaRoutesAndUnknownAssets(t *testing.T) {
 		{name: "panel index", path: "/panel/"},
 		{name: "spa route", path: "/panel/users/42"},
 		{name: "unknown asset", path: "/panel/secret.txt"},
+		{name: "unknown stylesheet", path: "/panel/styles/foundation/missing.css"},
+		{name: "non css style asset", path: "/panel/styles/foundation/tokens.txt"},
 	}
 
 	for _, testCase := range testCases {

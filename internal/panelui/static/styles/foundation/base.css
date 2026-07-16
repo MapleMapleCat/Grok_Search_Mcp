@@ -1,0 +1,14 @@
+.app-root {
+  min-height: 100vh;
+}
+
+.noscript-message {
+  position: fixed;
+  inset: 20px;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  background: var(--surface-dark);
+  color: #fff;
+}
