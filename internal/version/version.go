@@ -11,4 +11,4 @@ package version
 //	go build -ldflags "-X github.com/grok-mcp/internal/version.Version=1.2.3" ./cmd/grok-mcp
 //
 // 注入值会原样展示，项目约定使用不带 "v" 前缀的版本号。
-var Version = "0.1.0"
+var Version = "0.2.0"
