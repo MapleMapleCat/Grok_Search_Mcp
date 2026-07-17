@@ -200,6 +200,28 @@ func (s *SQLiteStore) DeleteInviteCode(ctx context.Context, id string) error {
 	return nil
 }
 
+// InviteCodeExists performs a cheap, non-authoritative lookup so callers can
+// reject unknown codes before expensive password hashing. Registration must
+// still validate and consume the code inside RegisterUserWithInviteCode.
+func (s *SQLiteStore) InviteCodeExists(ctx context.Context, rawInviteCode string) (bool, error) {
+	rawInviteCode = strings.TrimSpace(rawInviteCode)
+	if rawInviteCode == "" {
+		return false, nil
+	}
+
+	var exists int
+	err := s.readDB.QueryRowContext(ctx,
+		`SELECT 1 FROM invite_codes WHERE code_hash = ? LIMIT 1`, keyhash.HashAPIKey(rawInviteCode),
+	).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *SQLiteStore) RegisterUserWithInviteCode(ctx context.Context, username, passwordHash, rawInviteCode string) (*User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {

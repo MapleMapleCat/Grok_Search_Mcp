@@ -326,6 +326,8 @@ type Store interface {
 	RegisterUser(ctx context.Context, username, passwordHash string) (*User, error)
 	// RegisterUserWithInviteCode 在同一事务中校验/消耗邀请码并创建普通用户。
 	RegisterUserWithInviteCode(ctx context.Context, username, passwordHash, rawInviteCode string) (*User, error)
+	// InviteCodeExists performs a cheap non-authoritative lookup before password hashing.
+	InviteCodeExists(ctx context.Context, rawInviteCode string) (bool, error)
 	GetUserByUsername(ctx context.Context, username string) (*User, error)
 	GetUserByID(ctx context.Context, id string) (*User, error)
 	ListUsersPage(ctx context.Context, cursor *TimeIDCursor, limit int) (*UserPage, error)

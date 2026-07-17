@@ -63,15 +63,28 @@ func (handler *Handler) register(writer http.ResponseWriter, request *http.Reque
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	if existingUser, err := handler.Store.GetUserByUsername(request.Context(), username); err != nil {
-		log.Printf("check user %q before register failed: %v", username, err)
-		writeError(writer, http.StatusInternalServerError, "registration failed")
-		return
-	} else if existingUser != nil {
-		writeError(writer, http.StatusConflict, "username already taken")
-		return
+	if registrationMode == store.RegistrationModeInvite {
+		inviteCodeExists, lookupErr := handler.Store.InviteCodeExists(request.Context(), registerRequest.InviteCode)
+		if lookupErr != nil {
+			log.Printf("check invite code before register failed: %v", lookupErr)
+			writeError(writer, http.StatusInternalServerError, "registration failed")
+			return
+		}
+		if !inviteCodeExists {
+			writeError(writer, http.StatusBadRequest, "valid invite code is required")
+			return
+		}
+	} else {
+		if existingUser, lookupErr := handler.Store.GetUserByUsername(request.Context(), username); lookupErr != nil {
+			log.Printf("check user %q before register failed: %v", username, lookupErr)
+			writeError(writer, http.StatusInternalServerError, "registration failed")
+			return
+		} else if existingUser != nil {
+			writeError(writer, http.StatusConflict, "username already taken")
+			return
+		}
 	}
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(registerRequest.Password), bcryptCost)
+	passwordHash, err := handler.generatePasswordHash(registerRequest.Password)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "password hash failed")
 		return
@@ -104,6 +117,13 @@ func (handler *Handler) register(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	writeJSON(writer, http.StatusCreated, toUserResponseWithTier(user, handler.loadUserTierForResponse(request.Context(), user)))
+}
+
+func (handler *Handler) generatePasswordHash(password string) ([]byte, error) {
+	if handler.passwordHashGenerator != nil {
+		return handler.passwordHashGenerator([]byte(password), bcryptCost)
+	}
+	return bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 }
 
 func (handler *Handler) registrationSettings(writer http.ResponseWriter, request *http.Request) {

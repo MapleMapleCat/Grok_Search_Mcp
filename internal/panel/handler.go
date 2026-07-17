@@ -19,6 +19,7 @@ type Handler struct {
 	AuthProtector         *AuthProtector             // 可选；未设置时使用内置面板登录/注册防护
 	SQLiteMetrics         SQLiteMetricsProvider      // 可选；管理员运行指标中的 SQLite 快照
 	UsageWriterMetrics    UsageWriterMetricsProvider // 可选；管理员运行指标中的异步队列快照
+	passwordHashGenerator func(password []byte, cost int) ([]byte, error)
 }
 
 // ServerSettingsApplier 接收热更新后的服务器运行时设置。

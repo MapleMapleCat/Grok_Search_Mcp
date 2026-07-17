@@ -71,6 +71,22 @@ type staticModelLister struct {
 	err    error
 }
 
+type inviteRegistrationPrecheckStore struct {
+	store.TestStore
+	existingUser        *store.User
+	inviteCodeExists    bool
+	usernameLookupCount int
+}
+
+func (testStore *inviteRegistrationPrecheckStore) InviteCodeExists(context.Context, string) (bool, error) {
+	return testStore.inviteCodeExists, nil
+}
+
+func (testStore *inviteRegistrationPrecheckStore) GetUserByUsername(context.Context, string) (*store.User, error) {
+	testStore.usernameLookupCount++
+	return testStore.existingUser, nil
+}
+
 func (l staticModelLister) ListModels(context.Context) ([]grok.Model, error) {
 	return l.models, l.err
 }
@@ -398,6 +414,86 @@ func TestRegisterCreatesRegularUser(t *testing.T) {
 	}
 	if u.Role != store.RoleUser {
 		t.Fatalf("expected regular user, got %s", u.Role)
+	}
+}
+
+func TestInviteRegistrationRejectsInvalidCodeBeforeUsernameLookupAndPasswordHash(t *testing.T) {
+	precheckStore := &inviteRegistrationPrecheckStore{
+		existingUser: &store.User{Username: "existing-user"},
+	}
+	passwordHashCalled := false
+	handler := &Handler{
+		Store:                 precheckStore,
+		InitialServerSettings: config.ServerSettings{RegistrationMode: store.RegistrationModeInvite},
+		passwordHashGenerator: func([]byte, int) ([]byte, error) {
+			passwordHashCalled = true
+			return []byte("hash"), nil
+		},
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/panel/v1/auth/register",
+		strings.NewReader(`{"username":"existing-user","password":"password123","invite_code":"invalid-code"}`),
+	)
+	responseRecorder := httptest.NewRecorder()
+	handler.register(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid invite status = %d, want %d", responseRecorder.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(responseRecorder.Body.String(), "valid invite code is required") {
+		t.Fatalf("invalid invite response = %q", responseRecorder.Body.String())
+	}
+	if precheckStore.usernameLookupCount != 0 {
+		t.Fatalf("invite registration performed %d username lookups before invite validation", precheckStore.usernameLookupCount)
+	}
+	if passwordHashCalled {
+		t.Fatal("invalid invite registration performed password hashing")
+	}
+}
+
+func TestInviteRegistrationReturnsInviteErrorForExistingUsername(t *testing.T) {
+	sqliteStore, err := store.OpenSQLite(filepath.Join(t.TempDir(), "invite-register.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqliteStore.Close() })
+	testServer := httptest.NewServer(NewMux(&Handler{
+		Store:                 sqliteStore,
+		JWTSecret:             "jwt-secret-must-be-at-least-32-bytes!",
+		InitialServerSettings: config.ServerSettings{RegistrationMode: store.RegistrationModeInvite},
+	}))
+	defer testServer.Close()
+	ctx := context.Background()
+
+	if _, err := sqliteStore.CreateUser(ctx, "existing-invite-user", "hash", store.RoleUser); err != nil {
+		t.Fatal(err)
+	}
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		testServer.URL+"/panel/v1/auth/register",
+		strings.NewReader(`{"username":"existing-invite-user","password":"password123","invite_code":"invalid-code"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("invalid invite for existing username status = %d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+	responseBody := new(bytes.Buffer)
+	if _, err := responseBody.ReadFrom(response.Body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(responseBody.String(), "valid invite code is required") {
+		t.Fatalf("invalid invite for existing username response = %q", responseBody.String())
 	}
 }
 

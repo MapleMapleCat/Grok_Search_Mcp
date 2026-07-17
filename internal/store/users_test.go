@@ -359,6 +359,50 @@ func TestCreateInviteCodeRejectsMissingCreator(t *testing.T) {
 	}
 }
 
+func TestInviteCodeExistsDoesNotReplaceTransactionalValidation(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+
+	creator, err := sqliteStore.CreateUser(ctx, "invite-precheck-creator", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inviteCode, rawInviteCode, err := sqliteStore.CreateInviteCode(ctx, creator.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inviteCodeExists, err := sqliteStore.InviteCodeExists(ctx, rawInviteCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inviteCodeExists {
+		t.Fatal("created invite code should be found by the existence precheck")
+	}
+	invalidInviteCodeExists, err := sqliteStore.InviteCodeExists(ctx, "invalid-code")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invalidInviteCodeExists {
+		t.Fatal("unknown invite code should not pass the existence precheck")
+	}
+
+	disabled := false
+	if _, err := sqliteStore.UpdateInviteCode(ctx, inviteCode.ID, InviteCodeUpdates{Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	inviteCodeStillExists, err := sqliteStore.InviteCodeExists(ctx, rawInviteCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inviteCodeStillExists {
+		t.Fatal("disabled invite code should still pass the non-authoritative existence precheck")
+	}
+	if _, err := sqliteStore.RegisterUserWithInviteCode(ctx, "invite-precheck-user", "hash", rawInviteCode); !errors.Is(err, ErrInviteCodeDisabled) {
+		t.Fatalf("transactional registration should reject disabled invite code, got %v", err)
+	}
+}
+
 func TestDeleteUserRejectsLastAdmin(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
