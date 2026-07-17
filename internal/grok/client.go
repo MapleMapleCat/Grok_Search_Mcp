@@ -18,7 +18,10 @@ import (
 	"github.com/grok-mcp/internal/logx"
 )
 
-const upstreamIdleConnectionPoolSize = 100
+const (
+	upstreamIdleConnectionPoolSize       = 100
+	maxUpstreamErrorBodyBytes      int64 = 64 * 1024
+)
 
 // Client 通过 HTTP 访问上游 CPA 网关的 /v1/responses 端点（SSE 流式）。
 type Client struct {
@@ -309,12 +312,22 @@ func (timings *upstreamRequestTimings) log(logger *logx.Logger, endpoint string,
 
 // httpError 在非 2xx 响应时返回分类错误，仅包含状态码，不透传响应体（可能含上游敏感信息）。
 func (s clientSnapshot) httpError(resp *http.Response) error {
-	respBody, readErr := io.ReadAll(resp.Body)
+	limitedBody := io.LimitReader(resp.Body, maxUpstreamErrorBodyBytes+1)
+	respBody, readErr := io.ReadAll(limitedBody)
 	if readErr != nil {
 		s.log.Debugf("upstream HTTP %d read body error: %v", resp.StatusCode, readErr)
 		return fmt.Errorf("upstream returned HTTP %d: read body: %w", resp.StatusCode, readErr)
 	}
-	s.log.Debugf("upstream HTTP %d: %s", resp.StatusCode, logx.Truncate(string(respBody), 256))
+	bodyWasTruncated := int64(len(respBody)) > maxUpstreamErrorBodyBytes
+	if bodyWasTruncated {
+		respBody = respBody[:maxUpstreamErrorBodyBytes]
+	}
+	s.log.Debugf(
+		"upstream HTTP %d body_truncated=%t: %s",
+		resp.StatusCode,
+		bodyWasTruncated,
+		logx.Truncate(string(respBody), 256),
+	)
 	// 错误信息只暴露状态码，body 仅写日志，避免向 MCP 客户端泄露 CPA 内部细节。
 	return fmt.Errorf("upstream returned HTTP %d", resp.StatusCode)
 }

@@ -164,6 +164,33 @@ func TestHTTPClientLimitsResponseHeaderWait(t *testing.T) {
 	}
 }
 
+func TestHTTPErrorLimitsUpstreamResponseBodyRead(t *testing.T) {
+	responseBodyLength := int(maxUpstreamErrorBodyBytes) + 1024
+	responseBodyReader := strings.NewReader(strings.Repeat("x", responseBodyLength))
+	response := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Body:       io.NopCloser(responseBodyReader),
+	}
+	snapshot := clientSnapshot{
+		log: logx.NewWithDebugState("grok-test", logx.NewDebugState(false)),
+	}
+
+	err := snapshot.httpError(response)
+	if err == nil || err.Error() != "upstream returned HTTP 502" {
+		t.Fatalf("expected status-only upstream error, got %v", err)
+	}
+
+	consumedBodyBytes := responseBodyLength - responseBodyReader.Len()
+	expectedConsumedBodyBytes := int(maxUpstreamErrorBodyBytes) + 1
+	if consumedBodyBytes != expectedConsumedBodyBytes {
+		t.Fatalf(
+			"expected error handler to consume %d bytes, consumed %d",
+			expectedConsumedBodyBytes,
+			consumedBodyBytes,
+		)
+	}
+}
+
 func TestNewHTTPClientWithProxyRejectsEnabledProxyWithoutURL(t *testing.T) {
 	_, err := newHTTPClientWithProxy(time.Second, " ", true)
 	if err == nil || !strings.Contains(err.Error(), "proxy URL is required when proxy is enabled") {
