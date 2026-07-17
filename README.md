@@ -35,7 +35,7 @@ MCP client -- HTTPS --> reverse proxy / load balancer -- HTTP --> grok-search-mc
 - Valid-forwarded-IP-triggered protection for `/mcp` and panel authentication
 - SQLite persistence for users, keys, tiers, usage, invite codes, and server settings
 - Embedded administration panel with no separate frontend build step
-- Runtime updates for upstream settings, search concurrency, proxy settings, registration mode, and debug mode
+- Runtime updates for upstream settings, search concurrency, proxy settings, registration mode, debug mode, and operational metrics collection
 - Docker Compose deployment with a non-root runtime image
 
 ## Architecture
@@ -73,7 +73,7 @@ xAI / Grok
 ## Requirements
 
 - Linux is the currently documented local runtime target
-- Go 1.25.0 or later for local builds
+- Go 1.25.12 or later for local builds
 - A reachable CPA deployment with `/v1/models` and at least one compatible search endpoint: `/v1/responses`, `/v1/chat/completions`, or `/v1/messages`
 - Docker and Docker Compose for the container workflow, if preferred
 - An MCP client that supports Streamable HTTP and custom Bearer headers
@@ -165,6 +165,10 @@ so active readers are not blocked by a periodic `TRUNCATE` checkpoint. Store
 both SQLite databases on local SSD storage, not NFS, SMB, or a high-latency
 network block volume.
 
+Operational metrics are disabled by default. An administrator must first enable
+**Database operational metrics** in **Server Settings**. When disabled, the
+endpoint below returns HTTP `404`.
+
 Administrators can query live operational metrics:
 
 ```bash
@@ -205,7 +209,9 @@ curl -sS -X POST "http://127.0.0.1:8080/panel/v1/keys" \
   -d '{"name":"local-client"}'
 ```
 
-The `api_key` in the response is returned only once. Store it securely.
+The `api_key` in the response can be used immediately. It can also be revealed
+and copied later from the **API Keys** page. Protect access to the panel and
+the database because the key can be recovered there.
 
 ### 4. Connect Claude Code
 
@@ -372,6 +378,7 @@ On startup, environment variables are loaded first. If SQLite already contains s
 - Registration mode
 - Debug mode
 - Process-wide and per-user streaming search concurrency limits
+- Operational metrics collection
 
 The listen address, database path, JWT secret, and source-IP RPM remain startup-only settings.
 
