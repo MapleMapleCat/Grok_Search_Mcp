@@ -52,5 +52,6 @@ func (handler *Handler) registerAdminRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("PATCH /panel/v1/admin/invite-codes/{id}", handler.adminUpdateInviteCode)
 	admin.HandleFunc("DELETE /panel/v1/admin/invite-codes/{id}", handler.adminDeleteInviteCode)
 	admin.HandleFunc("GET /panel/v1/admin/models", handler.adminListModels)
+	admin.HandleFunc("GET /panel/v1/admin/operations/metrics", handler.adminOperationalMetrics)
 	mux.Handle("/panel/v1/admin/", auth.RequireAdmin()(admin))
 }

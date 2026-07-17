@@ -91,6 +91,36 @@ func TestReserveSuccessCallDistinguishesMissingUserFromQuota(t *testing.T) {
 	}
 }
 
+func TestSuccessQuotaOperationsExposeLatencyAndOutcomeMetrics(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+	userID := testUserID(t, sqliteStore)
+
+	if err := sqliteStore.ReserveSuccessCall(ctx, userID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.ReserveSuccessCall(ctx, userID, 1); !errors.Is(err, ErrQuotaSuccess) {
+		t.Fatalf("second reservation error = %v, want ErrQuotaSuccess", err)
+	}
+	if err := sqliteStore.ReleaseSuccessCall(ctx, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	metrics := sqliteStore.SQLiteMetrics()
+	if metrics.QuotaReserve.Attempts != 2 || metrics.QuotaLimitRejections != 1 {
+		t.Fatalf("unexpected quota reserve metrics: %+v", metrics)
+	}
+	if metrics.QuotaReserve.Errors != 0 {
+		t.Fatalf("quota exhaustion must not count as a database error: %+v", metrics.QuotaReserve)
+	}
+	if metrics.QuotaRelease.Attempts != 1 || metrics.QuotaRelease.Errors != 0 {
+		t.Fatalf("unexpected quota release metrics: %+v", metrics.QuotaRelease)
+	}
+	if metrics.PrimaryWritePool.MaximumOpenConnections != 1 {
+		t.Fatalf("primary write pool max connections = %d, want 1", metrics.PrimaryWritePool.MaximumOpenConnections)
+	}
+}
+
 func TestReserveAndReleaseSuccessCall(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()

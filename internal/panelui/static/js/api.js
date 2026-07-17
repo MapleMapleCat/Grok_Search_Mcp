@@ -331,6 +331,10 @@ export function fetchSettings(options = {}) {
   return panelAPI.request("/panel/v1/admin/settings", options);
 }
 
+export function fetchOperationalMetrics(options = {}) {
+  return panelAPI.request("/panel/v1/admin/operations/metrics", options);
+}
+
 export function updateSettings(settingsData) {
   return panelAPI.request("/panel/v1/admin/settings", { method: "PATCH", body: settingsData });
 }

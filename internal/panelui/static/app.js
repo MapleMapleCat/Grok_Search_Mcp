@@ -4,6 +4,7 @@ import {
   fetchCurrentUser,
   fetchInviteCodes,
   fetchKeys,
+  fetchOperationalMetrics,
   fetchRegistrationSettings,
   fetchSettings,
   fetchTiers,
@@ -227,6 +228,8 @@ async function loadPageData(page, signal) {
     }
     case "settings":
       return { settings: await fetchSettings({ signal }) };
+    case "operationsMetrics":
+      return { operationsMetrics: await fetchOperationalMetrics({ signal }) };
     case "account":
       return { user: await fetchCurrentUser({ signal }) };
     default:

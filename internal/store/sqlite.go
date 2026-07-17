@@ -12,17 +12,20 @@ import (
 
 const sqliteReadPoolSize = 4
 
+const sqliteCommonPragmas = "&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+
 // SQLiteStore 使用纯 Go 驱动 modernc.org/sqlite。写连接保持串行，读取连接池用于发挥 WAL 的并发读取能力。
 type SQLiteStore struct {
 	db           *sql.DB
 	readDB       *sql.DB
 	debugDB      *sql.DB
 	secretCipher *keycrypt.Cipher
+	metrics      sqliteMetrics
 }
 
 // OpenSQLite 打开数据库、执行嵌入迁移并返回可用的 Store。
 func OpenSQLite(path string) (*SQLiteStore, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)")
+	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"+sqliteCommonPragmas)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -42,7 +45,7 @@ func OpenSQLite(path string) (*SQLiteStore, error) {
 		return &SQLiteStore{db: db, readDB: db, debugDB: debugDB}, nil
 	}
 
-	readDB, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=query_only(1)")
+	readDB, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=query_only(1)"+sqliteCommonPragmas)
 	if err != nil {
 		_ = debugDB.Close()
 		_ = db.Close()

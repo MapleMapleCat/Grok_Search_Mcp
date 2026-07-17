@@ -36,7 +36,7 @@ func openDebugSQLite(mainDatabasePath string) (*sql.DB, error) {
 		}
 	}
 
-	debugDB, err := sql.Open("sqlite", debugPath+"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)")
+	debugDB, err := sql.Open("sqlite", debugPath+"?_pragma=journal_mode(WAL)"+sqliteCommonPragmas)
 	if err != nil {
 		return nil, fmt.Errorf("open debug sqlite: %w", err)
 	}
@@ -125,19 +125,35 @@ func boolAsInteger(value bool) int {
 }
 
 func (s *SQLiteStore) persistUsageDebugRecord(ctx context.Context, usageID int64, record UsageRecord) error {
+	return s.persistUsageDebugRecords(ctx, []persistedUsageRecord{{usageID: usageID, record: record}})
+}
+
+type preparedUsageDebugRecord struct {
+	usageID               int64
+	record                UsageRecord
+	requestBody           []byte
+	responseBody          []byte
+	requestObservedBytes  int64
+	responseObservedBytes int64
+	requestTruncated      bool
+	responseTruncated     bool
+}
+
+func prepareUsageDebugRecord(persistedRecord persistedUsageRecord) (preparedUsageDebugRecord, bool, error) {
+	record := persistedRecord.record
 	if strings.TrimSpace(record.DebugJSON) == "" &&
 		strings.TrimSpace(record.DebugRequestBodyPath) == "" &&
 		strings.TrimSpace(record.DebugResponseBodyPath) == "" {
-		return nil
+		return preparedUsageDebugRecord{}, false, nil
 	}
 
 	requestBody, requestSpoolBytes, requestPersistenceTruncated, err := readBoundedDebugBody(record.DebugRequestBodyPath)
 	if err != nil {
-		return fmt.Errorf("read request debug body: %w", err)
+		return preparedUsageDebugRecord{}, false, fmt.Errorf("read request debug body: %w", err)
 	}
 	responseBody, responseSpoolBytes, responsePersistenceTruncated, err := readBoundedDebugBody(record.DebugResponseBodyPath)
 	if err != nil {
-		return fmt.Errorf("read response debug body: %w", err)
+		return preparedUsageDebugRecord{}, false, fmt.Errorf("read response debug body: %w", err)
 	}
 
 	requestObservedBytes := record.DebugRequestObservedBytes
@@ -148,8 +164,40 @@ func (s *SQLiteStore) persistUsageDebugRecord(ctx context.Context, usageID int64
 	if responseObservedBytes < responseSpoolBytes {
 		responseObservedBytes = responseSpoolBytes
 	}
+	return preparedUsageDebugRecord{
+		usageID:               persistedRecord.usageID,
+		record:                record,
+		requestBody:           requestBody,
+		responseBody:          responseBody,
+		requestObservedBytes:  requestObservedBytes,
+		responseObservedBytes: responseObservedBytes,
+		requestTruncated:      record.DebugRequestTruncated || requestPersistenceTruncated,
+		responseTruncated:     record.DebugResponseTruncated || responsePersistenceTruncated,
+	}, true, nil
+}
 
-	_, err = s.debugDB.ExecContext(ctx, `
+func (s *SQLiteStore) persistUsageDebugRecords(ctx context.Context, persistedRecords []persistedUsageRecord) error {
+	preparedRecords := make([]preparedUsageDebugRecord, 0, len(persistedRecords))
+	for _, persistedRecord := range persistedRecords {
+		preparedRecord, shouldPersist, err := prepareUsageDebugRecord(persistedRecord)
+		if err != nil {
+			return err
+		}
+		if shouldPersist {
+			preparedRecords = append(preparedRecords, preparedRecord)
+		}
+	}
+	if len(preparedRecords) == 0 {
+		return nil
+	}
+
+	transaction, err := s.debugDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	statement, err := transaction.PrepareContext(ctx, `
 		INSERT INTO usage_debug (
 			usage_id, key_id, usage_timestamp, debug_json,
 			request_body, response_body,
@@ -169,22 +217,38 @@ func (s *SQLiteStore) persistUsageDebugRecord(ctx context.Context, usageID int64
 			response_observed_bytes = excluded.response_observed_bytes,
 			request_truncated = excluded.request_truncated,
 			response_truncated = excluded.response_truncated,
-			created_at = excluded.created_at`,
-		usageID,
-		record.KeyID,
-		formatTime(record.Timestamp.UTC()),
-		record.DebugJSON,
-		requestBody,
-		responseBody,
-		len(requestBody),
-		len(responseBody),
-		requestObservedBytes,
-		responseObservedBytes,
-		boolAsInteger(record.DebugRequestTruncated || requestPersistenceTruncated),
-		boolAsInteger(record.DebugResponseTruncated || responsePersistenceTruncated),
-		formatTime(time.Now().UTC()),
-	)
-	return err
+			created_at = excluded.created_at`)
+	if err != nil {
+		return fmt.Errorf("prepare usage debug batch: %w", err)
+	}
+	defer statement.Close()
+
+	createdAt := formatTime(time.Now().UTC())
+	for _, preparedRecord := range preparedRecords {
+		record := preparedRecord.record
+		if _, err := statement.ExecContext(
+			ctx,
+			preparedRecord.usageID,
+			record.KeyID,
+			formatTime(record.Timestamp.UTC()),
+			record.DebugJSON,
+			preparedRecord.requestBody,
+			preparedRecord.responseBody,
+			len(preparedRecord.requestBody),
+			len(preparedRecord.responseBody),
+			preparedRecord.requestObservedBytes,
+			preparedRecord.responseObservedBytes,
+			boolAsInteger(preparedRecord.requestTruncated),
+			boolAsInteger(preparedRecord.responseTruncated),
+			createdAt,
+		); err != nil {
+			return fmt.Errorf("persist usage debug record: %w", err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit usage debug batch: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) loadUsageDebugBodySummaries(ctx context.Context, records []UsageRecord) error {

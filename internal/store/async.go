@@ -11,37 +11,77 @@ import (
 const (
 	defaultAsyncUsageWriteTimeout = 2 * time.Second
 	defaultAsyncUsageCloseTimeout = 3 * time.Second
+	defaultAsyncUsageBatchSize    = 32
+	defaultAsyncUsageBatchWait    = 10 * time.Millisecond
 	asyncUsageCancellationGrace   = 250 * time.Millisecond
 	asyncUsageDropLogInterval     = time.Second
 )
 
+type usageBatchRecorder interface {
+	RecordUsageBatch(ctx context.Context, records []UsageRecord) error
+}
+
+type queuedUsageRecord struct {
+	record     UsageRecord
+	enqueuedAt time.Time
+}
+
 // AsyncUsageWriter 将用量写入从请求路径解耦：主线程只入队，后台 goroutine 调用 Store。
 type AsyncUsageWriter struct {
 	store        Store
-	ch           chan UsageRecord
+	ch           chan queuedUsageRecord
 	writeTimeout time.Duration
 	closeTimeout time.Duration
+	batchSize    int
+	batchWait    time.Duration
 	cancelWorker context.CancelFunc
 	workerDone   chan struct{}
 
-	admissionMu sync.Mutex
-	accepting   bool
-	closeOnce   sync.Once
+	admissionMu  sync.Mutex
+	accepting    bool
+	closeOnce    sync.Once
+	queueStatsMu sync.Mutex
+	queuedAt     []time.Time
 
 	// 可观测计数：缓冲丢弃与写库失败/成功（原子累加，便于运维与测试断言）。
-	droppedRecords atomic.Uint64
-	writeFailures  atomic.Uint64
-	writeSuccesses atomic.Uint64
-	nextDropLogAt  atomic.Int64
+	acceptedRecords           atomic.Uint64
+	droppedRecords            atomic.Uint64
+	writeFailures             atomic.Uint64
+	writeSuccesses            atomic.Uint64
+	writeBatches              atomic.Uint64
+	failedBatches             atomic.Uint64
+	batchedRecords            atomic.Uint64
+	inFlightRecords           atomic.Int64
+	lastBatchSize             atomic.Int64
+	totalWriteDurationNanos   atomic.Uint64
+	lastWriteDurationNanos    atomic.Uint64
+	maximumWriteDurationNanos atomic.Uint64
+	totalQueueDelayNanos      atomic.Uint64
+	lastQueueDelayNanos       atomic.Uint64
+	maximumQueueDelayNanos    atomic.Uint64
+	nextDropLogAt             atomic.Int64
 }
 
 // AsyncUsageWriterStats 是异步用量写入器的快照统计。
 type AsyncUsageWriterStats struct {
-	DroppedRecords uint64
-	WriteFailures  uint64
-	WriteSuccesses uint64
-	QueueLength    int
-	QueueCapacity  int
+	AcceptedRecords        uint64  `json:"accepted_records"`
+	DroppedRecords         uint64  `json:"dropped_records"`
+	WriteFailures          uint64  `json:"write_failures"`
+	WriteSuccesses         uint64  `json:"write_successes"`
+	WriteBatches           uint64  `json:"write_batches"`
+	FailedBatches          uint64  `json:"failed_batches"`
+	BatchedRecords         uint64  `json:"batched_records"`
+	QueueLength            int     `json:"queue_length"`
+	QueueCapacity          int     `json:"queue_capacity"`
+	OldestQueuedAgeMs      float64 `json:"oldest_queued_age_ms"`
+	InFlightRecords        int64   `json:"in_flight_records"`
+	LastBatchSize          int64   `json:"last_batch_size"`
+	AverageWriteDurationMs float64 `json:"average_write_duration_ms"`
+	LastWriteDurationMs    float64 `json:"last_write_duration_ms"`
+	MaximumWriteDurationMs float64 `json:"maximum_write_duration_ms"`
+	AverageQueueDelayMs    float64 `json:"average_queue_delay_ms"`
+	LastQueueDelayMs       float64 `json:"last_queue_delay_ms"`
+	MaximumQueueDelayMs    float64 `json:"maximum_queue_delay_ms"`
 }
 
 // NewAsyncUsageWriter 启动消费者；buffer 为满时 Enqueue 会丢弃并限频记录日志（不阻塞 MCP）。
@@ -50,6 +90,24 @@ func NewAsyncUsageWriter(s Store, buffer int) *AsyncUsageWriter {
 }
 
 func newAsyncUsageWriter(s Store, buffer int, writeTimeout, closeTimeout time.Duration) *AsyncUsageWriter {
+	return newAsyncUsageWriterWithBatch(
+		s,
+		buffer,
+		writeTimeout,
+		closeTimeout,
+		defaultAsyncUsageBatchSize,
+		defaultAsyncUsageBatchWait,
+	)
+}
+
+func newAsyncUsageWriterWithBatch(
+	s Store,
+	buffer int,
+	writeTimeout time.Duration,
+	closeTimeout time.Duration,
+	batchSize int,
+	batchWait time.Duration,
+) *AsyncUsageWriter {
 	if buffer <= 0 {
 		buffer = 256
 	}
@@ -59,12 +117,20 @@ func newAsyncUsageWriter(s Store, buffer int, writeTimeout, closeTimeout time.Du
 	if closeTimeout <= 0 {
 		closeTimeout = defaultAsyncUsageCloseTimeout
 	}
+	if batchSize <= 0 {
+		batchSize = defaultAsyncUsageBatchSize
+	}
+	if batchWait <= 0 {
+		batchWait = defaultAsyncUsageBatchWait
+	}
 	workerContext, cancelWorker := context.WithCancel(context.Background())
 	writer := &AsyncUsageWriter{
 		store:        s,
-		ch:           make(chan UsageRecord, buffer),
+		ch:           make(chan queuedUsageRecord, buffer),
 		writeTimeout: writeTimeout,
 		closeTimeout: closeTimeout,
+		batchSize:    batchSize,
+		batchWait:    batchWait,
 		cancelWorker: cancelWorker,
 		workerDone:   make(chan struct{}),
 		accepting:    true,
@@ -80,31 +146,130 @@ func (w *AsyncUsageWriter) run(ctx context.Context) {
 		case <-ctx.Done():
 			w.discardQueuedRecords("shutdown deadline reached")
 			return
-		case rec, ok := <-w.ch:
+		case queuedRecord, ok := <-w.ch:
 			if !ok {
 				return
 			}
+			w.markRecordDequeued()
 			if ctx.Err() != nil {
-				w.discardRecord(rec, "shutdown deadline reached")
+				w.discardRecord(queuedRecord.record, "shutdown deadline reached")
 				w.discardQueuedRecords("shutdown deadline reached")
 				return
 			}
-			w.write(ctx, rec)
+
+			batch := []queuedUsageRecord{queuedRecord}
+			channelClosed, collectionCancelled := w.collectBatch(ctx, &batch)
+			if collectionCancelled {
+				w.discardBatch(batch, "shutdown deadline reached")
+				w.discardQueuedRecords("shutdown deadline reached")
+				return
+			}
+			w.writeBatch(ctx, batch)
+			if channelClosed {
+				return
+			}
 		}
 	}
 }
 
-func (w *AsyncUsageWriter) write(workerContext context.Context, rec UsageRecord) {
-	defer cleanupUsageRecord(rec)
+func (w *AsyncUsageWriter) collectBatch(ctx context.Context, batch *[]queuedUsageRecord) (channelClosed bool, cancelled bool) {
+	if len(*batch) >= w.batchSize {
+		return false, false
+	}
 
-	writeContext, cancelWrite := context.WithTimeout(workerContext, w.writeTimeout)
-	defer cancelWrite()
-	if err := w.store.RecordUsage(writeContext, rec); err != nil {
-		failures := w.writeFailures.Add(1)
-		log.Printf("usage record write failed key=%s tool=%s failures=%d: %v", rec.KeyID, rec.ToolName, failures, err)
+	batchTimer := time.NewTimer(w.batchWait)
+	defer batchTimer.Stop()
+	for len(*batch) < w.batchSize {
+		select {
+		case <-ctx.Done():
+			return false, true
+		case <-batchTimer.C:
+			return false, false
+		case queuedRecord, ok := <-w.ch:
+			if !ok {
+				return true, false
+			}
+			w.markRecordDequeued()
+			*batch = append(*batch, queuedRecord)
+		}
+	}
+	return false, false
+}
+
+func (w *AsyncUsageWriter) writeBatch(workerContext context.Context, batch []queuedUsageRecord) {
+	if len(batch) == 0 {
 		return
 	}
-	w.writeSuccesses.Add(1)
+	records := make([]UsageRecord, len(batch))
+	for recordIndex, queuedRecord := range batch {
+		records[recordIndex] = queuedRecord.record
+	}
+	defer func() {
+		for _, record := range records {
+			cleanupUsageRecord(record)
+		}
+	}()
+
+	w.inFlightRecords.Store(int64(len(records)))
+	w.lastBatchSize.Store(int64(len(records)))
+	defer w.inFlightRecords.Store(0)
+
+	w.observeQueueDelays(batch)
+	writeStartedAt := time.Now()
+	successfulRecords := 0
+	failedRecords := 0
+	var firstWriteError error
+
+	if batchRecorder, supportsBatching := w.store.(usageBatchRecorder); supportsBatching {
+		writeContext, cancelWrite := context.WithTimeout(workerContext, w.writeTimeout)
+		writeError := batchRecorder.RecordUsageBatch(writeContext, records)
+		cancelWrite()
+		if writeError == nil {
+			successfulRecords = len(records)
+		} else {
+			failedRecords = len(records)
+			firstWriteError = writeError
+		}
+	} else {
+		// Test and third-party stores that only implement the legacy single-record
+		// method retain per-record behavior. Production SQLite uses the atomic path.
+		for _, record := range records {
+			writeContext, cancelWrite := context.WithTimeout(workerContext, w.writeTimeout)
+			writeError := w.store.RecordUsage(writeContext, record)
+			cancelWrite()
+			if writeError == nil {
+				successfulRecords++
+				continue
+			}
+			failedRecords++
+			if firstWriteError == nil {
+				firstWriteError = writeError
+			}
+		}
+	}
+
+	writeDuration := time.Since(writeStartedAt)
+	w.observeWriteDuration(writeDuration)
+	w.writeBatches.Add(1)
+	w.batchedRecords.Add(uint64(len(records)))
+	if successfulRecords > 0 {
+		w.writeSuccesses.Add(uint64(successfulRecords))
+	}
+	if failedRecords > 0 {
+		failures := w.writeFailures.Add(uint64(failedRecords))
+		w.failedBatches.Add(1)
+		firstRecord := records[0]
+		log.Printf(
+			"usage batch write failed records=%d failed_records=%d key=%s tool=%s cumulative_failures=%d duration=%s: %v",
+			len(records),
+			failedRecords,
+			firstRecord.KeyID,
+			firstRecord.ToolName,
+			failures,
+			writeDuration,
+			firstWriteError,
+		)
+	}
 }
 
 // Enqueue 非阻塞入队；channel 已满时丢弃本条记录并累加计数。
@@ -121,30 +286,80 @@ func (w *AsyncUsageWriter) Enqueue(rec UsageRecord) {
 		return
 	}
 
+	queuedRecord := queuedUsageRecord{record: rec, enqueuedAt: time.Now()}
 	admitted := false
+	w.queueStatsMu.Lock()
 	select {
-	case w.ch <- rec:
+	case w.ch <- queuedRecord:
 		admitted = true
+		w.queuedAt = append(w.queuedAt, queuedRecord.enqueuedAt)
 	default:
 	}
+	w.queueStatsMu.Unlock()
 	w.admissionMu.Unlock()
 	if !admitted {
 		w.discardRecord(rec, "buffer full")
+		return
 	}
+	w.acceptedRecords.Add(1)
 }
 
 func (w *AsyncUsageWriter) discardQueuedRecords(reason string) {
 	for {
 		select {
-		case rec, ok := <-w.ch:
+		case queuedRecord, ok := <-w.ch:
 			if !ok {
 				return
 			}
-			w.discardRecord(rec, reason)
+			w.markRecordDequeued()
+			w.discardRecord(queuedRecord.record, reason)
 		default:
 			return
 		}
 	}
+}
+
+func (w *AsyncUsageWriter) discardBatch(batch []queuedUsageRecord, reason string) {
+	for _, queuedRecord := range batch {
+		w.discardRecord(queuedRecord.record, reason)
+	}
+}
+
+func (w *AsyncUsageWriter) markRecordDequeued() {
+	w.queueStatsMu.Lock()
+	if len(w.queuedAt) > 0 {
+		w.queuedAt[0] = time.Time{}
+		w.queuedAt = w.queuedAt[1:]
+	}
+	w.queueStatsMu.Unlock()
+}
+
+func (w *AsyncUsageWriter) observeWriteDuration(duration time.Duration) {
+	durationNanos := uint64(max(duration.Nanoseconds(), 0))
+	w.totalWriteDurationNanos.Add(durationNanos)
+	w.lastWriteDurationNanos.Store(durationNanos)
+	updateAtomicMaximum(&w.maximumWriteDurationNanos, durationNanos)
+}
+
+func (w *AsyncUsageWriter) observeQueueDelays(batch []queuedUsageRecord) {
+	if len(batch) == 0 {
+		return
+	}
+
+	observedAt := time.Now()
+	var totalDelayNanos uint64
+	var maximumDelayNanos uint64
+	for _, queuedRecord := range batch {
+		delayNanos := uint64(max(observedAt.Sub(queuedRecord.enqueuedAt).Nanoseconds(), 0))
+		totalDelayNanos += delayNanos
+		if delayNanos > maximumDelayNanos {
+			maximumDelayNanos = delayNanos
+		}
+	}
+	w.totalQueueDelayNanos.Add(totalDelayNanos)
+	// The oldest record represents the user-visible wait for the latest batch.
+	w.lastQueueDelayNanos.Store(maximumDelayNanos)
+	updateAtomicMaximum(&w.maximumQueueDelayNanos, maximumDelayNanos)
 }
 
 func (w *AsyncUsageWriter) discardRecord(rec UsageRecord, reason string) {
@@ -185,12 +400,44 @@ func cleanupUsageRecord(rec UsageRecord) {
 
 // Stats 返回丢弃/写库计数与当前队列深度快照。
 func (w *AsyncUsageWriter) Stats() AsyncUsageWriterStats {
+	w.queueStatsMu.Lock()
+	queueLength := len(w.queuedAt)
+	oldestQueuedAge := time.Duration(0)
+	if queueLength > 0 {
+		oldestQueuedAge = time.Since(w.queuedAt[0])
+	}
+	w.queueStatsMu.Unlock()
+
+	writeBatches := w.writeBatches.Load()
+	batchedRecords := w.batchedRecords.Load()
+	averageWriteDurationNanos := float64(0)
+	if writeBatches > 0 {
+		averageWriteDurationNanos = float64(w.totalWriteDurationNanos.Load()) / float64(writeBatches)
+	}
+	averageQueueDelayNanos := float64(0)
+	if batchedRecords > 0 {
+		averageQueueDelayNanos = float64(w.totalQueueDelayNanos.Load()) / float64(batchedRecords)
+	}
+
 	return AsyncUsageWriterStats{
-		DroppedRecords: w.droppedRecords.Load(),
-		WriteFailures:  w.writeFailures.Load(),
-		WriteSuccesses: w.writeSuccesses.Load(),
-		QueueLength:    len(w.ch),
-		QueueCapacity:  cap(w.ch),
+		AcceptedRecords:        w.acceptedRecords.Load(),
+		DroppedRecords:         w.droppedRecords.Load(),
+		WriteFailures:          w.writeFailures.Load(),
+		WriteSuccesses:         w.writeSuccesses.Load(),
+		WriteBatches:           writeBatches,
+		FailedBatches:          w.failedBatches.Load(),
+		BatchedRecords:         batchedRecords,
+		QueueLength:            queueLength,
+		QueueCapacity:          cap(w.ch),
+		OldestQueuedAgeMs:      float64(oldestQueuedAge) / float64(time.Millisecond),
+		InFlightRecords:        w.inFlightRecords.Load(),
+		LastBatchSize:          w.lastBatchSize.Load(),
+		AverageWriteDurationMs: nanosecondsToMilliseconds(averageWriteDurationNanos),
+		LastWriteDurationMs:    nanosecondsToMilliseconds(float64(w.lastWriteDurationNanos.Load())),
+		MaximumWriteDurationMs: nanosecondsToMilliseconds(float64(w.maximumWriteDurationNanos.Load())),
+		AverageQueueDelayMs:    nanosecondsToMilliseconds(averageQueueDelayNanos),
+		LastQueueDelayMs:       nanosecondsToMilliseconds(float64(w.lastQueueDelayNanos.Load())),
+		MaximumQueueDelayMs:    nanosecondsToMilliseconds(float64(w.maximumQueueDelayNanos.Load())),
 	}
 }
 

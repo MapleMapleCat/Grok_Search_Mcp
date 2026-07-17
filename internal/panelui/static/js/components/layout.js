@@ -57,6 +57,7 @@ function renderSidebar(state, isAdmin) {
               ${renderNavigationItem("users", "用户管理", "users")}
               ${renderNavigationItem("tiers", "配额方案", "layers")}
               ${renderNavigationItem("invites", "邀请码", "ticket")}
+              ${renderNavigationItem("operationsMetrics", "运行指标", "activity")}
               ${renderNavigationItem("settings", "服务设置", "settings")}
             </nav>
           </section>

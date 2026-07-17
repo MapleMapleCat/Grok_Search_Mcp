@@ -56,7 +56,12 @@ func (store *SQLiteStore) RunUsageMaintenance(
 	ctx context.Context,
 	policy UsageRetentionPolicy,
 	now time.Time,
-) (UsageMaintenanceResult, error) {
+) (result UsageMaintenanceResult, returnErr error) {
+	maintenanceStartedAt := time.Now()
+	defer func() {
+		store.metrics.observeMaintenance(time.Since(maintenanceStartedAt), returnErr)
+	}()
+
 	if err := policy.Validate(); err != nil {
 		return UsageMaintenanceResult{}, err
 	}
@@ -79,9 +84,23 @@ func (store *SQLiteStore) RunUsageMaintenance(
 		result.DebugRowsDeleted, debugDeleteErr = debugDeleteResult.RowsAffected()
 	}
 
+	primaryCheckpointStartedAt := time.Now()
 	primaryCheckpoint, primaryCheckpointErr := checkpointWAL(ctx, store.db)
+	store.metrics.observeCheckpoint(
+		true,
+		time.Since(primaryCheckpointStartedAt),
+		primaryCheckpoint,
+		primaryCheckpointErr,
+	)
 	result.PrimaryCheckpoint = primaryCheckpoint
+	debugCheckpointStartedAt := time.Now()
 	debugCheckpoint, debugCheckpointErr := checkpointWAL(ctx, store.debugDB)
+	store.metrics.observeCheckpoint(
+		false,
+		time.Since(debugCheckpointStartedAt),
+		debugCheckpoint,
+		debugCheckpointErr,
+	)
 	result.DebugCheckpoint = debugCheckpoint
 
 	return result, errors.Join(debugDeleteErr, primaryCheckpointErr, debugCheckpointErr)
@@ -186,7 +205,10 @@ func (store *SQLiteStore) compactPrimaryUsage(
 
 func checkpointWAL(ctx context.Context, database *sql.DB) (WALCheckpointResult, error) {
 	var result WALCheckpointResult
-	err := database.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(
+	// PASSIVE checkpoints completed frames without waiting for active readers or
+	// taking the stronger locks required by TRUNCATE. This keeps maintenance from
+	// becoming a periodic latency spike on the shared write path.
+	err := database.QueryRowContext(ctx, `PRAGMA wal_checkpoint(PASSIVE)`).Scan(
 		&result.BusyFrames,
 		&result.LogFrames,
 		&result.CheckpointedFrames,

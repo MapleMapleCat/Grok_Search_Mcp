@@ -153,6 +153,33 @@ set +a
 回收数据库文件本身空间时，才应由运维人员低频显式执行 `VACUUM` 或
 `VACUUM INTO`。
 
+SQLite 主库有意保持单写连接，避免通过增加连接数制造更多写锁竞争。连接设置
+包含 5 秒 `busy_timeout`，usage 后台写入器会将最多 32 条记录或 10ms 内到达的
+记录合并为一个事务；定时维护使用非阻塞读者的 `PASSIVE` checkpoint。生产环境
+必须把数据库放在本地 SSD 上，不应放在 NFS、SMB 或高延迟网络块存储上。
+
+管理员可以查询实时运行指标：
+
+```bash
+curl -sS "http://127.0.0.1:8080/panel/v1/admin/operations/metrics" \
+  -H "Authorization: Bearer ${login_token}" | jq
+```
+
+该接口仅允许管理员访问，包含：主写库、读库和 debug 库的连接池状态与等待时间；
+quota reserve/release 延迟和错误；SQLite busy/locked 次数；usage 批次、队列深度、
+最老排队记录年龄、写入/排队延迟和丢弃量；维护及主库/debug 库 WAL checkpoint
+延迟与 frame 计数。建议至少为以下情况配置告警：
+
+- `primary_write_pool.wait_count` 或 `wait_duration_ms` 持续快速增长；
+- `busy_or_locked_errors` 非零并持续增长；
+- usage 队列长期接近容量、`oldest_queued_age_ms` 增长或出现丢弃；
+- quota reserve/release 最大或平均延迟持续升高；
+- checkpoint 持续出现 busy frame 或耗时升高。
+
+如果在本地 SSD 和批量写入下仍长期出现上述压力，说明工作负载已超过内嵌
+SQLite 单写者模型的目标范围。高写入 QPS 部署应迁移到 PostgreSQL/MySQL，或将
+quota 计数迁移到具备原子操作的外部计数器，而不是继续增加 SQLite 写连接数。
+
 ### 3. 登录并创建 MCP 客户端 Key
 
 当数据库中没有已启用的管理员时，服务会初始化 `admin` 账号，并在启动日志中输出一次性随机密码。登录后应尽快轮换凭据，再创建 MCP 客户端 API Key。

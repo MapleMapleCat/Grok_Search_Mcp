@@ -157,8 +157,10 @@ func Run(ctx context.Context, cfg *config.Config) error {
 			upstreamApplier:          grokClient,
 			searchConcurrencyLimiter: searchConcurrencyLimiter,
 		},
-		ModelLister: grokClient,
-		AuthCache:   authResolver,
+		ModelLister:        grokClient,
+		AuthCache:          authResolver,
+		SQLiteMetrics:      st,
+		UsageWriterMetrics: usageWriter,
 	}
 	httpHandler := BuildHTTPHandler(HTTPDependencies{
 		Store:                    st,

@@ -51,6 +51,36 @@ func TestHandlerServesConfigurationGuideModule(t *testing.T) {
 	}
 }
 
+func TestHandlerServesOperationsMetricsModule(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/panel/js/pages/operations-metrics.js", nil)
+	responseRecorder := httptest.NewRecorder()
+
+	Handler().ServeHTTP(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", responseRecorder.Code, http.StatusOK)
+	}
+	assertPanelUICacheHeaders(t, responseRecorder)
+	if body := responseRecorder.Body.String(); !strings.Contains(body, "export function renderOperationsMetricsPage") {
+		t.Fatalf("expected operations metrics module, got %q", body)
+	}
+}
+
+func TestHandlerServesOperationsMetricsStylesheet(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/panel/styles/pages/operations-metrics.css", nil)
+	responseRecorder := httptest.NewRecorder()
+
+	Handler().ServeHTTP(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", responseRecorder.Code, http.StatusOK)
+	}
+	assertPanelUICacheHeaders(t, responseRecorder)
+	if contentType := responseRecorder.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/css") {
+		t.Fatalf("Content-Type = %q, want text/css", contentType)
+	}
+}
+
 func TestHandlerServesNestedStylesheetAsCSS(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/panel/styles/foundation/tokens.css", nil)
 	responseRecorder := httptest.NewRecorder()

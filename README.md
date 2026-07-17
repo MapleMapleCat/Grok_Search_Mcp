@@ -156,6 +156,40 @@ any WAL/SHM sidecars. Scheduled maintenance checkpoints WAL files but does not
 run `VACUUM`; use `VACUUM` or `VACUUM INTO` only as an explicit, infrequent
 operator action when file-level space reclamation is required.
 
+The primary SQLite database intentionally keeps a single write connection;
+adding writers would increase lock competition rather than remove SQLite's
+single-writer constraint. Connections use a 5-second `busy_timeout`. The
+background usage writer combines up to 32 records, or records arriving within
+10ms, into one transaction. Scheduled maintenance uses `PASSIVE` checkpoints
+so active readers are not blocked by a periodic `TRUNCATE` checkpoint. Store
+both SQLite databases on local SSD storage, not NFS, SMB, or a high-latency
+network block volume.
+
+Administrators can query live operational metrics:
+
+```bash
+curl -sS "http://127.0.0.1:8080/panel/v1/admin/operations/metrics" \
+  -H "Authorization: Bearer ${login_token}" | jq
+```
+
+This admin-only endpoint reports connection-pool utilization and wait time for
+the primary, read, and debug databases; quota reserve/release latency and
+errors; SQLite busy/locked counts; usage batch, queue-depth, oldest-record,
+write/queue latency, failure, and drop metrics; and maintenance plus WAL
+checkpoint latency/frame counters. At minimum, alert on:
+
+- sustained growth in `primary_write_pool.wait_count` or `wait_duration_ms`;
+- any continuously increasing `busy_or_locked_errors` value;
+- a usage queue that remains near capacity, increasing
+  `oldest_queued_age_ms`, or dropped records;
+- sustained quota reserve/release average or maximum latency growth;
+- repeated checkpoint busy frames or increasing checkpoint duration.
+
+If these signals remain elevated on local SSD storage after batching, the
+workload has exceeded the intended embedded SQLite write envelope. High-write-
+QPS deployments should migrate to PostgreSQL/MySQL or move quota accounting to
+an external atomic counter instead of increasing SQLite write connections.
+
 ### 3. Sign in and create an MCP client key
 
 When no enabled administrator exists, the server bootstraps an `admin` account and writes its one-time random password to the startup log. Sign in, rotate the credentials as soon as possible, and create an MCP client API key.

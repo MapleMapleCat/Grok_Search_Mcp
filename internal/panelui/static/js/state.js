@@ -48,6 +48,7 @@ export const state = {
     tiers: null,
     invites: null,
     settings: null,
+    operationsMetrics: null,
     models: null
   }
 };
@@ -156,6 +157,8 @@ export function pageHasExistingData(page) {
       return Boolean(state.data.invites);
     case "settings":
       return Boolean(state.data.settings);
+    case "operationsMetrics":
+      return Boolean(state.data.operationsMetrics);
     case "account":
       return Boolean(state.user);
     default:
@@ -195,6 +198,9 @@ export function commitPageData(page, pageResult) {
       break;
     case "settings":
       state.data.settings = pageResult.settings;
+      break;
+    case "operationsMetrics":
+      state.data.operationsMetrics = pageResult.operationsMetrics;
       break;
     case "account":
       state.user = pageResult.user;

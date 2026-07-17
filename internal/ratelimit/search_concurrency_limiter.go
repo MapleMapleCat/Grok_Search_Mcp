@@ -117,6 +117,7 @@ func (limiter *SearchConcurrencyLimiter) Middleware(isSearchTool func(string) bo
 				return
 			}
 			defer release()
+			request = request.WithContext(usage.WithSearchPermitRelease(request.Context(), release))
 
 			next.ServeHTTP(responseWriter, request)
 		})

@@ -290,3 +290,102 @@ func TestAsyncUsageWriterCloseRacesSafelyWithAdmission(t *testing.T) {
 		t.Fatalf("cleanup count = %d, want %d", got, enqueueCount)
 	}
 }
+
+type recordingBatchUsageStore struct {
+	TestStore
+	mu      sync.Mutex
+	batches [][]UsageRecord
+	err     error
+	written chan struct{}
+}
+
+func (store *recordingBatchUsageStore) RecordUsageBatch(_ context.Context, records []UsageRecord) error {
+	copiedRecords := append([]UsageRecord(nil), records...)
+	store.mu.Lock()
+	store.batches = append(store.batches, copiedRecords)
+	store.mu.Unlock()
+	select {
+	case store.written <- struct{}{}:
+	default:
+	}
+	return store.err
+}
+
+func (store *recordingBatchUsageStore) snapshotBatches() [][]UsageRecord {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return append([][]UsageRecord(nil), store.batches...)
+}
+
+func TestAsyncUsageWriterPersistsFullBatchInOneStoreCall(t *testing.T) {
+	batchStore := &recordingBatchUsageStore{written: make(chan struct{}, 1)}
+	writer := newAsyncUsageWriterWithBatch(batchStore, 8, time.Second, time.Second, 4, time.Second)
+
+	for recordIndex := 0; recordIndex < 4; recordIndex++ {
+		writer.Enqueue(UsageRecord{KeyID: "batch-key", ToolName: "grok_web_search"})
+	}
+	select {
+	case <-batchStore.written:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for usage batch")
+	}
+	writer.Close()
+
+	batches := batchStore.snapshotBatches()
+	if len(batches) != 1 || len(batches[0]) != 4 {
+		t.Fatalf("persisted batches = %+v, want one four-record batch", batches)
+	}
+	stats := writer.Stats()
+	if stats.WriteBatches != 1 || stats.BatchedRecords != 4 || stats.WriteSuccesses != 4 {
+		t.Fatalf("unexpected batch stats: %+v", stats)
+	}
+}
+
+func TestAsyncUsageWriterFlushesPartialBatchAfterBoundedWait(t *testing.T) {
+	batchStore := &recordingBatchUsageStore{written: make(chan struct{}, 1)}
+	writer := newAsyncUsageWriterWithBatch(batchStore, 8, time.Second, time.Second, 8, 20*time.Millisecond)
+	defer writer.Close()
+
+	startedAt := time.Now()
+	writer.Enqueue(UsageRecord{KeyID: "partial-key", ToolName: "grok_x_search"})
+	select {
+	case <-batchStore.written:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for partial usage batch")
+	}
+	if elapsed := time.Since(startedAt); elapsed < 10*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("partial batch flush delay = %s, want bounded wait near 20ms", elapsed)
+	}
+
+	batches := batchStore.snapshotBatches()
+	if len(batches) != 1 || len(batches[0]) != 1 {
+		t.Fatalf("persisted batches = %+v, want one single-record batch", batches)
+	}
+}
+
+func TestAsyncUsageWriterFailedBatchCountsAndCleansEveryRecord(t *testing.T) {
+	batchStore := &recordingBatchUsageStore{
+		err:     errors.New("batch database unavailable"),
+		written: make(chan struct{}, 1),
+	}
+	writer := newAsyncUsageWriterWithBatch(batchStore, 8, time.Second, time.Second, 3, time.Second)
+	var cleanupCount atomic.Int64
+	for recordIndex := 0; recordIndex < 3; recordIndex++ {
+		writer.Enqueue(UsageRecord{
+			KeyID:    "failed-batch-key",
+			ToolName: "grok_web_search",
+			Cleanup: func() {
+				cleanupCount.Add(1)
+			},
+		})
+	}
+	writer.Close()
+
+	stats := writer.Stats()
+	if stats.WriteFailures != 3 || stats.FailedBatches != 1 || stats.WriteSuccesses != 0 {
+		t.Fatalf("unexpected failed batch stats: %+v", stats)
+	}
+	if cleanupCount.Load() != 3 {
+		t.Fatalf("cleanup count = %d, want 3", cleanupCount.Load())
+	}
+}

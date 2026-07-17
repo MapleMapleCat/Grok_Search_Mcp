@@ -78,6 +78,17 @@ func TestUsageMaintenanceCompactsRetainsAndPreservesStatistics(t *testing.T) {
 	if result.DebugRowsDeleted != 3 {
 		t.Fatalf("debug rows deleted = %d, want 3", result.DebugRowsDeleted)
 	}
+	maintenanceMetrics := sqliteStore.SQLiteMetrics()
+	if maintenanceMetrics.UsageMaintenance.Attempts != 1 {
+		t.Fatalf("maintenance attempts = %d, want 1", maintenanceMetrics.UsageMaintenance.Attempts)
+	}
+	if maintenanceMetrics.PrimaryWALCheckpoint.Operation.Attempts != 1 ||
+		maintenanceMetrics.DebugWALCheckpoint.Operation.Attempts != 1 {
+		t.Fatalf("unexpected checkpoint metrics: primary=%+v debug=%+v",
+			maintenanceMetrics.PrimaryWALCheckpoint,
+			maintenanceMetrics.DebugWALCheckpoint,
+		)
+	}
 
 	assertTableRowCount(t, sqliteStore, "usage_log", 1)
 	assertTableRowCount(t, sqliteStore, "usage_hourly_rollups", 1)

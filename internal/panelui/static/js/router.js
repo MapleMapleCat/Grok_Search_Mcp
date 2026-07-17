@@ -4,6 +4,7 @@ import { renderConfigurationGuidePage } from "./pages/configuration-guide.js";
 import { renderInvitesPage } from "./pages/invite-codes.js";
 import { renderKeysPage } from "./pages/keys.js";
 import { renderOverviewPage } from "./pages/overview.js";
+import { renderOperationsMetricsPage } from "./pages/operations-metrics.js";
 import { renderSettingsPage } from "./pages/settings.js";
 import { renderTiersPage } from "./pages/tiers.js";
 import { renderUsagePage } from "./pages/usage.js";
@@ -17,12 +18,13 @@ export const pageMetadata = {
   users: { title: "用户管理", section: "系统管理" },
   tiers: { title: "配额方案", section: "系统管理" },
   invites: { title: "邀请码", section: "系统管理" },
+  operationsMetrics: { title: "运行指标", section: "系统管理" },
   settings: { title: "服务设置", section: "系统管理" },
   account: { title: "账户信息", section: "账户" }
 };
 
 export const availablePages = new Set(Object.keys(pageMetadata));
-export const adminPages = new Set(["users", "tiers", "invites", "settings"]);
+export const adminPages = new Set(["users", "tiers", "invites", "operationsMetrics", "settings"]);
 
 export function isStaticPage(page) {
   return pageMetadata[page]?.dataMode === "static";
@@ -50,6 +52,8 @@ export function renderCurrentPage(state) {
       return renderTiersPage(state);
     case "invites":
       return renderInvitesPage(state);
+    case "operationsMetrics":
+      return renderOperationsMetricsPage(state);
     case "settings":
       return renderSettingsPage(state);
     case "account":

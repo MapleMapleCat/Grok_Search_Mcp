@@ -34,6 +34,29 @@ type UsageStore interface {
 // toolNameCtxKey 为 context 中存放 tools/call 工具名的私有键类型。
 type toolNameCtxKey struct{}
 
+// searchPermitReleaseCtxKey stores an idempotent callback supplied by the
+// search-concurrency middleware. Failed requests can release scarce search
+// capacity before waiting for the synchronous quota rollback write.
+type searchPermitReleaseCtxKey struct{}
+
+// WithSearchPermitRelease attaches a callback that releases the current
+// search-concurrency permit. The callback is intentionally generic so the
+// usage middleware does not depend on the ratelimit package.
+func WithSearchPermitRelease(ctx context.Context, release func()) context.Context {
+	if release == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, searchPermitReleaseCtxKey{}, release)
+}
+
+func releaseSearchPermitBeforeQuotaRollback(ctx context.Context) {
+	release, ok := ctx.Value(searchPermitReleaseCtxKey{}).(func())
+	if !ok || release == nil {
+		return
+	}
+	release()
+}
+
 type jsonRPCRequestInspection struct {
 	ToolName       string
 	IsBatchRequest bool
@@ -221,6 +244,9 @@ func releaseReservedSuccessCall(releaser SuccessQuotaReleaser, requestContext co
 	if releaser == nil || strings.TrimSpace(userID) == "" {
 		return
 	}
+	// Search capacity is scarcer than the quota write path. Release it before
+	// the bounded rollback so a slow SQLite write does not retain a search slot.
+	releaseSearchPermitBeforeQuotaRollback(requestContext)
 	releaseContext, cancel := context.WithTimeout(context.WithoutCancel(requestContext), quotaReleaseTimeout)
 	defer cancel()
 	if err := releaser.ReleaseSuccessCall(releaseContext, userID); err != nil {
