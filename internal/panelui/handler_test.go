@@ -66,6 +66,24 @@ func TestHandlerServesOperationsMetricsModule(t *testing.T) {
 	}
 }
 
+func TestHandlerServesRegistrationProofWorker(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/panel/js/workers/registration-proof-worker.js", nil)
+	responseRecorder := httptest.NewRecorder()
+
+	Handler().ServeHTTP(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", responseRecorder.Code, http.StatusOK)
+	}
+	assertPanelUICacheHeaders(t, responseRecorder)
+	if contentType := responseRecorder.Header().Get("Content-Type"); !strings.Contains(contentType, "javascript") {
+		t.Fatalf("Content-Type = %q, want JavaScript", contentType)
+	}
+	if body := responseRecorder.Body.String(); !strings.Contains(body, "grok-registration-pow-v1") {
+		t.Fatalf("expected registration proof worker, got %q", body)
+	}
+}
+
 func TestHandlerServesOperationsMetricsStylesheet(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/panel/styles/pages/operations-metrics.css", nil)
 	responseRecorder := httptest.NewRecorder()

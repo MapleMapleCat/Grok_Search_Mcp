@@ -224,6 +224,7 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 		JWTSecret:             cfg.JWTSecret,
 		InitialServerSettings: cfg.ServerSettings(),
 		AuthCache:             authResolver,
+		AuthProtector:         lowDifficultyAuthProtector(),
 	}
 	handler := app.BuildHTTPHandler(app.HTTPDependencies{
 		Store:                    st,
@@ -239,8 +240,8 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 	ts := httptest.NewServer(handler)
 	defer ts.Close()
 
-	regBody := `{"username":"intuser","password":"password123"}`
-	regReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(regBody))
+	regBody := buildRegistrationRequestBody(t, ts.URL, "intuser", "password123", "")
+	regReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewReader(regBody))
 	regResp, err := http.DefaultClient.Do(regReq)
 	if err != nil {
 		t.Fatal(err)

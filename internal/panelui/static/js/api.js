@@ -154,6 +154,10 @@ function translateBackendError(message, status) {
     "rate limit exceeded": "请求过于频繁，请稍后再试。",
     "username already taken": "该用户名已被使用。",
     "registration is disabled": "当前服务已关闭公开注册。",
+    "registration proof is required": "请完成注册前的本地计算验证。",
+    "registration proof is invalid": "注册计算验证无效，请重试。",
+    "registration proof expired": "注册计算任务已过期，请重试。",
+    "registration proof already used": "注册计算任务已使用，请重试。",
     "valid invite code is required": "请输入有效的邀请码。",
     "invite code is disabled": "该邀请码已被停用。",
     "invite code registration limit reached": "该邀请码的注册名额已用完。",
@@ -199,6 +203,13 @@ export const panelAPI = new PanelAPI();
 
 export function fetchRegistrationSettings() {
   return panelAPI.request("/panel/v1/auth/registration-settings", { auth: false });
+}
+
+export function fetchRegistrationChallenge() {
+  return panelAPI.request("/panel/v1/auth/registration-challenge", {
+    method: "POST",
+    auth: false
+  });
 }
 
 export function login(credentials) {

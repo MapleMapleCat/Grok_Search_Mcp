@@ -1,6 +1,7 @@
-import { login, panelAPI, register } from "../api.js";
+import { fetchRegistrationChallenge, login, panelAPI, register } from "../api.js";
 import { renderIcon } from "../components/icons.js";
 import { showToast } from "../components/toast.js";
+import { solveRegistrationProof } from "../registration-proof.js";
 import { clearAuthenticatedState, clearCachedData } from "../state.js";
 import { createFormDataObject } from "../utils.js";
 import { getErrorMessage, withRetryAfter } from "./event-helpers.js";
@@ -72,17 +73,31 @@ export function createAuthEvents({
 
   async function submitRegistration(formElement) {
     const registrationData = createFormDataObject(formElement);
+    const username = String(registrationData.username || "").trim();
+    const password = String(registrationData.password || "");
+    const inviteCode = state.registrationMode === "invite"
+      ? String(registrationData.invite_code || "").trim()
+      : "";
     state.authBusy = true;
     state.authError = "";
     renderApplication();
 
     try {
+      const challenge = await fetchRegistrationChallenge();
+      const proof = await solveRegistrationProof({
+        challenge: challenge.challenge,
+        difficulty: challenge.difficulty,
+        expiresAt: challenge.expires_at,
+        username,
+        inviteCode
+      });
       await register({
-        username: String(registrationData.username || "").trim(),
-        password: String(registrationData.password || ""),
+        username,
+        password,
         ...(state.registrationMode === "invite"
-          ? { invite_code: String(registrationData.invite_code || "").trim() }
-          : {})
+          ? { invite_code: inviteCode }
+          : {}),
+        proof
       });
       state.authBusy = false;
       state.authMode = "login";

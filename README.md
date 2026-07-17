@@ -437,9 +437,12 @@ Public authentication routes:
 
 ```text
 GET  /panel/v1/auth/registration-settings
+POST /panel/v1/auth/registration-challenge
 POST /panel/v1/auth/register
 POST /panel/v1/auth/login
 ```
+
+Registration uses a one-time proof of work. The client first requests a signed challenge that is valid for five minutes, locally finds a SHA-256 nonce satisfying the required difficulty, and submits `proof.challenge` plus `proof.nonce` with the registration request. The default target requires 20 leading zero bits. A successfully verified challenge is consumed and cannot be replayed. The embedded panel performs this work in a Web Worker so the page remains responsive.
 
 Authenticated user routes cover profile information, API-key management, and usage:
 

@@ -74,6 +74,7 @@ func bootIntegrationEnvWithSearchConcurrency(t *testing.T, cpa *httptest.Server,
 		JWTSecret:             cfg.JWTSecret,
 		InitialServerSettings: cfg.ServerSettings(),
 		AuthCache:             authResolver,
+		AuthProtector:         lowDifficultyAuthProtector(),
 	}
 	handler := app.BuildHTTPHandler(app.HTTPDependencies{
 		Store:                    st,
@@ -96,7 +97,8 @@ func bootIntegrationEnvWithSearchConcurrency(t *testing.T, cpa *httptest.Server,
 		st.Close()
 	})
 
-	regReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(`{"username":"guarduser","password":"password123"}`))
+	registrationBody := buildRegistrationRequestBody(t, ts.URL, "guarduser", "password123", "")
+	regReq, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewReader(registrationBody))
 	regResp, err := http.DefaultClient.Do(regReq)
 	if err != nil {
 		t.Fatal(err)

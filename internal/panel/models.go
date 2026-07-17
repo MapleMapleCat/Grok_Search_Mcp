@@ -11,9 +11,18 @@ import (
 )
 
 type RegisterRequest struct {
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	InviteCode string `json:"invite_code,omitempty"`
+	Username   string            `json:"username"`
+	Password   string            `json:"password"`
+	InviteCode string            `json:"invite_code,omitempty"`
+	Proof      RegistrationProof `json:"proof"`
+}
+
+// RegistrationChallengeResponse describes the one-time proof-of-work task
+// that must be solved before a registration request can be accepted.
+type RegistrationChallengeResponse struct {
+	Challenge  string    `json:"challenge"`
+	Difficulty int       `json:"difficulty"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 type LoginRequest struct {

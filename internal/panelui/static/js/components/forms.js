@@ -94,9 +94,9 @@ function renderRegisterForm(state, registrationCopy) {
         </label>
       ` : ""}
       <button class="button button-primary button-wide auth-submit" type="submit" ${state.authBusy ? "disabled" : ""}>
-        ${state.authBusy ? `${renderIcon("refresh")} 正在创建` : `创建账户 ${renderIcon("arrowRight")}`}
+        ${state.authBusy ? `${renderIcon("refresh")} 正在完成本地验证` : `创建账户 ${renderIcon("arrowRight")}`}
       </button>
-      <p class="auth-footnote">${escapeHTML(registrationCopy)}</p>
+      <p class="auth-footnote">${escapeHTML(registrationCopy)} 提交时浏览器会完成一次短暂的本地计算验证。</p>
     </form>
   `;
 }

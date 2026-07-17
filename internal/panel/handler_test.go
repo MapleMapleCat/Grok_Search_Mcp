@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,11 +22,72 @@ import (
 )
 
 func panelTestServer(t *testing.T) (*httptest.Server, *store.SQLiteStore, *config.Config) {
-	return panelTestServerWithAuthProtector(t, nil)
+	return panelTestServerWithAuthProtector(t, newTestAuthProtector())
+}
+
+func newTestAuthProtector() *AuthProtector {
+	return NewAuthProtector(AuthProtectorConfig{
+		RegistrationProofDifficultyBits: 4,
+		RegistrationProofValidity:       time.Minute,
+	})
+}
+
+func solveRegistrationProof(t *testing.T, serverURL, username, inviteCode string) RegistrationProof {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, serverURL+"/panel/v1/auth/registration-challenge", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("registration challenge status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+
+	var challengeResponse RegistrationChallengeResponse
+	if err := json.NewDecoder(response.Body).Decode(&challengeResponse); err != nil {
+		t.Fatal(err)
+	}
+	return solveIssuedRegistrationProof(t, challengeResponse, username, inviteCode)
+}
+
+func solveIssuedRegistrationProof(t *testing.T, challengeResponse RegistrationChallengeResponse, username, inviteCode string) RegistrationProof {
+	t.Helper()
+	for nonce := uint64(0); ; nonce++ {
+		if hasLeadingZeroBits(calculateRegistrationProofDigest(challengeResponse.Challenge, username, inviteCode, nonce), challengeResponse.Difficulty) {
+			return RegistrationProof{
+				Challenge: challengeResponse.Challenge,
+				Nonce:     strconv.FormatUint(nonce, 10),
+			}
+		}
+	}
+}
+
+func registrationRequestBody(t *testing.T, serverURL, username, password, inviteCode string) []byte {
+	t.Helper()
+	requestBody, err := json.Marshal(RegisterRequest{
+		Username:   username,
+		Password:   password,
+		InviteCode: inviteCode,
+		Proof:      solveRegistrationProof(t, serverURL, username, inviteCode),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return requestBody
 }
 
 func panelTestServerWithAuthProtector(t *testing.T, authProtector *AuthProtector) (*httptest.Server, *store.SQLiteStore, *config.Config) {
 	t.Helper()
+	if authProtector == nil {
+		authProtector = newTestAuthProtector()
+	} else {
+		authProtector.registrationProof.difficultyBits = 4
+		authProtector.registrationProof.validity = time.Minute
+	}
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "panel.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -61,9 +121,10 @@ func panelTestServerWithModelLister(t *testing.T, modelLister ModelLister) (*htt
 		t.Fatal(err)
 	}
 	h := &Handler{
-		Store:       st,
-		JWTSecret:   cfg.JWTSecret,
-		ModelLister: modelLister,
+		Store:         st,
+		JWTSecret:     cfg.JWTSecret,
+		ModelLister:   modelLister,
+		AuthProtector: newTestAuthProtector(),
 	}
 	return httptest.NewServer(NewMux(h)), st, cfg
 }
@@ -448,20 +509,7 @@ func TestRegisterCreatesRegularUser(t *testing.T) {
 	ts, _, _ := panelTestServer(t)
 	defer ts.Close()
 
-	body := `{"username":"alice","password":"password123"}`
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(body))
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("register status %d", resp.StatusCode)
-	}
-	var u UserResponse
-	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
-		t.Fatal(err)
-	}
+	u := registerPanelUser(t, ts, "alice", "password123")
 	if u.Role != store.RoleUser {
 		t.Fatalf("expected regular user, got %s", u.Role)
 	}
@@ -510,18 +558,28 @@ func TestRegisterEnforcesModeObservedAtCreationBoundary(t *testing.T) {
 				inviteCodeExists: testCase.inviteCodeExists,
 			}
 			handler := &Handler{
-				Store: testStore,
+				Store:         testStore,
+				AuthProtector: newTestAuthProtector(),
 				passwordHashGenerator: func([]byte, int) ([]byte, error) {
 					testStore.currentMode = testCase.modeAfterPasswordHash
 					return []byte("password-hash"), nil
 				},
 			}
 
-			requestBody := fmt.Sprintf(
-				`{"username":"mode-switch-user","password":"password123","invite_code":%q}`,
-				testCase.inviteCode,
-			)
-			request := httptest.NewRequest(http.MethodPost, "/panel/v1/auth/register", strings.NewReader(requestBody))
+			challengeResponse, err := handler.AuthProtector.registrationProof.issue(handler.AuthProtector.now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			requestBody, err := json.Marshal(RegisterRequest{
+				Username:   "mode-switch-user",
+				Password:   "password123",
+				InviteCode: testCase.inviteCode,
+				Proof:      solveIssuedRegistrationProof(t, challengeResponse, "mode-switch-user", testCase.inviteCode),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := httptest.NewRequest(http.MethodPost, "/panel/v1/auth/register", bytes.NewReader(requestBody))
 			responseRecorder := httptest.NewRecorder()
 
 			handler.register(responseRecorder, request)
@@ -539,6 +597,35 @@ func TestRegisterEnforcesModeObservedAtCreationBoundary(t *testing.T) {
 	}
 }
 
+func TestRegisterRequiresRegistrationProof(t *testing.T) {
+	ts, _, _ := panelTestServer(t)
+	defer ts.Close()
+
+	request, err := http.NewRequest(
+		http.MethodPost,
+		ts.URL+"/panel/v1/auth/register",
+		strings.NewReader(`{"username":"without-proof","password":"password123"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("registration without proof status = %d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+	var responseBody map[string]string
+	if err := json.NewDecoder(response.Body).Decode(&responseBody); err != nil {
+		t.Fatal(err)
+	}
+	if responseBody["error"] != errRegistrationProofRequired.Error() {
+		t.Fatalf("registration without proof error = %q, want %q", responseBody["error"], errRegistrationProofRequired.Error())
+	}
+}
+
 func TestInviteRegistrationRejectsInvalidCodeBeforeUsernameLookupAndPasswordHash(t *testing.T) {
 	precheckStore := &inviteRegistrationPrecheckStore{
 		existingUser: &store.User{Username: "existing-user"},
@@ -547,16 +634,30 @@ func TestInviteRegistrationRejectsInvalidCodeBeforeUsernameLookupAndPasswordHash
 	handler := &Handler{
 		Store:                 precheckStore,
 		InitialServerSettings: config.ServerSettings{RegistrationMode: store.RegistrationModeInvite},
+		AuthProtector:         newTestAuthProtector(),
 		passwordHashGenerator: func([]byte, int) ([]byte, error) {
 			passwordHashCalled = true
 			return []byte("hash"), nil
 		},
 	}
 
+	challengeResponse, err := handler.AuthProtector.registrationProof.issue(handler.AuthProtector.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestBody, err := json.Marshal(RegisterRequest{
+		Username:   "existing-user",
+		Password:   "password123",
+		InviteCode: "invalid-code",
+		Proof:      solveIssuedRegistrationProof(t, challengeResponse, "existing-user", "invalid-code"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/panel/v1/auth/register",
-		strings.NewReader(`{"username":"existing-user","password":"password123","invite_code":"invalid-code"}`),
+		bytes.NewReader(requestBody),
 	)
 	responseRecorder := httptest.NewRecorder()
 	handler.register(responseRecorder, request)
@@ -585,6 +686,7 @@ func TestInviteRegistrationReturnsInviteErrorForExistingUsername(t *testing.T) {
 		Store:                 sqliteStore,
 		JWTSecret:             "jwt-secret-must-be-at-least-32-bytes!",
 		InitialServerSettings: config.ServerSettings{RegistrationMode: store.RegistrationModeInvite},
+		AuthProtector:         newTestAuthProtector(),
 	}))
 	defer testServer.Close()
 	ctx := context.Background()
@@ -596,7 +698,7 @@ func TestInviteRegistrationReturnsInviteErrorForExistingUsername(t *testing.T) {
 	request, err := http.NewRequest(
 		http.MethodPost,
 		testServer.URL+"/panel/v1/auth/register",
-		strings.NewReader(`{"username":"existing-invite-user","password":"password123","invite_code":"invalid-code"}`),
+		bytes.NewReader(registrationRequestBody(t, testServer.URL, "existing-invite-user", "password123", "invalid-code")),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -623,8 +725,8 @@ func TestRegisterWithoutHeadersSucceeds(t *testing.T) {
 	ts, _, _ := panelTestServer(t)
 	defer ts.Close()
 
-	body := `{"username":"bob","password":"password123"}`
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(body))
+	body := registrationRequestBody(t, ts.URL, "bob", "password123", "")
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewReader(body))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -639,8 +741,8 @@ func TestLoginAndMe(t *testing.T) {
 	ts, _, _ := panelTestServer(t)
 	defer ts.Close()
 
-	reg := `{"username":"carol","password":"password123"}`
-	r1, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(reg))
+	reg := registrationRequestBody(t, ts.URL, "carol", "password123", "")
+	r1, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewReader(reg))
 	http.DefaultClient.Do(r1)
 
 	login := `{"username":"carol","password":"password123"}`
@@ -671,14 +773,8 @@ func TestSecondUserIsNotAdmin(t *testing.T) {
 	ts, _, _ := panelTestServer(t)
 	defer ts.Close()
 
-	for _, body := range []string{
-		`{"username":"first","password":"password123"}`,
-		`{"username":"second","password":"password123"}`,
-	} {
-		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(body))
-		resp, _ := http.DefaultClient.Do(req)
-		resp.Body.Close()
-	}
+	registerPanelUser(t, ts, "first", "password123")
+	registerPanelUser(t, ts, "second", "password123")
 
 	login := `{"username":"second","password":"password123"}`
 	r2, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/login", bytes.NewBufferString(login))
@@ -758,8 +854,8 @@ func TestLoginFailureLocksUsernameIPPair(t *testing.T) {
 	ts, _, _ := panelTestServerWithAuthProtector(t, authProtector)
 	defer ts.Close()
 
-	registerBody := `{"username":"lockuser","password":"password123"}`
-	registerRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(registerBody))
+	registerBody := registrationRequestBody(t, ts.URL, "lockuser", "password123", "")
+	registerRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewReader(registerBody))
 	registerResponse, err := http.DefaultClient.Do(registerRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -810,8 +906,8 @@ func TestHeaderlessLoginFailureDoesNotCreateIPLockout(t *testing.T) {
 	testServer, _, _ := panelTestServerWithAuthProtector(t, authProtector)
 	defer testServer.Close()
 
-	registerBody := `{"username":"directuser","password":"password123"}`
-	registerRequest, _ := http.NewRequest(http.MethodPost, testServer.URL+"/panel/v1/auth/register", bytes.NewBufferString(registerBody))
+	registerBody := registrationRequestBody(t, testServer.URL, "directuser", "password123", "")
+	registerRequest, _ := http.NewRequest(http.MethodPost, testServer.URL+"/panel/v1/auth/register", bytes.NewReader(registerBody))
 	registerResponse, err := http.DefaultClient.Do(registerRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -850,7 +946,8 @@ func TestRegisterRejectsDuplicateUsernameAndInvalidJSON(t *testing.T) {
 
 	registerPanelUser(t, ts, "duplicate", "password123")
 
-	duplicateRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(`{"username":"duplicate","password":"password123"}`))
+	duplicateBody := registrationRequestBody(t, ts.URL, "duplicate", "password123", "")
+	duplicateRequest, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewReader(duplicateBody))
 	duplicateResponse, err := http.DefaultClient.Do(duplicateRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -1079,8 +1176,8 @@ func TestAdminRevokeTokensInvalidatesExistingJWT(t *testing.T) {
 
 func registerPanelUser(t *testing.T, ts *httptest.Server, username string, password string) UserResponse {
 	t.Helper()
-	requestBody := `{"username":"` + username + `","password":"` + password + `"}`
-	request, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewBufferString(requestBody))
+	requestBody := registrationRequestBody(t, ts.URL, username, password, "")
+	request, _ := http.NewRequest(http.MethodPost, ts.URL+"/panel/v1/auth/register", bytes.NewReader(requestBody))
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)

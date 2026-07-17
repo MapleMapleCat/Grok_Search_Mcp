@@ -11,6 +11,7 @@ func NewMux(handler *Handler) http.Handler {
 	mux := http.NewServeMux()
 	authProtector := handler.authProtector()
 	mux.HandleFunc("GET /panel/v1/auth/registration-settings", handler.registrationSettings)
+	mux.Handle("POST /panel/v1/auth/registration-challenge", authProtector.RateLimitAuthEndpoint(authEndpointRegistrationChallenge, http.HandlerFunc(handler.registrationChallenge)))
 	mux.Handle("POST /panel/v1/auth/register", authProtector.RateLimitAuthEndpoint(authEndpointRegister, http.HandlerFunc(handler.register)))
 	mux.Handle("POST /panel/v1/auth/login", authProtector.RateLimitAuthEndpoint(authEndpointLogin, http.HandlerFunc(handler.login)))
 

@@ -43,6 +43,28 @@ func (handler *Handler) loadUserTierForResponse(ctx context.Context, user *store
 	return tier
 }
 
+func (handler *Handler) registrationChallenge(writer http.ResponseWriter, request *http.Request) {
+	registrationMode, err := handler.currentRegistrationMode(request)
+	if err != nil {
+		log.Printf("load registration mode before issuing challenge failed: %v", err)
+		writeError(writer, http.StatusInternalServerError, "registration failed")
+		return
+	}
+	if registrationMode == store.RegistrationModeDisabled {
+		writeError(writer, http.StatusForbidden, "registration is disabled")
+		return
+	}
+
+	authProtector := handler.authProtector()
+	challenge, err := authProtector.registrationProof.issue(authProtector.now())
+	if err != nil {
+		log.Printf("issue registration challenge failed: %v", err)
+		writeError(writer, http.StatusInternalServerError, "registration failed")
+		return
+	}
+	writeJSON(writer, http.StatusOK, challenge)
+}
+
 func (handler *Handler) register(writer http.ResponseWriter, request *http.Request) {
 	var registerRequest RegisterRequest
 	if !decodeJSONBody(writer, request, &registerRequest) {
@@ -60,6 +82,16 @@ func (handler *Handler) register(writer http.ResponseWriter, request *http.Reque
 	}
 	username, err := validatePanelAuthCredentials(registerRequest.Username, registerRequest.Password)
 	if err != nil {
+		writeError(writer, http.StatusBadRequest, err.Error())
+		return
+	}
+	authProtector := handler.authProtector()
+	if err := authProtector.registrationProof.verifyAndConsume(
+		authProtector.now(),
+		registerRequest.Proof,
+		username,
+		registerRequest.InviteCode,
+	); err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}

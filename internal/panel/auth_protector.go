@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	authEndpointLogin    authEndpoint = "login"
-	authEndpointRegister authEndpoint = "register"
+	authEndpointLogin                 authEndpoint = "login"
+	authEndpointRegister              authEndpoint = "register"
+	authEndpointRegistrationChallenge authEndpoint = "registration-challenge"
 
 	minPanelUsernameBytes = 1
 	maxPanelUsernameBytes = 128
@@ -48,18 +49,20 @@ type loginFailureEntry struct {
 // AuthProtectorConfig controls the in-memory protections for unauthenticated
 // panel auth endpoints. Zero values are replaced with conservative defaults.
 type AuthProtectorConfig struct {
-	LoginIPRequestsPerMinute    int
-	LoginIPBurst                int
-	RegisterIPRequestsPerMinute int
-	RegisterIPBurst             int
-	LoginFailureThreshold       int
-	LoginFailureWindow          time.Duration
-	LoginBaseLockout            time.Duration
-	LoginMaxLockout             time.Duration
+	LoginIPRequestsPerMinute        int
+	LoginIPBurst                    int
+	RegisterIPRequestsPerMinute     int
+	RegisterIPBurst                 int
+	RegistrationProofDifficultyBits int
+	RegistrationProofValidity       time.Duration
+	LoginFailureThreshold           int
+	LoginFailureWindow              time.Duration
+	LoginBaseLockout                time.Duration
+	LoginMaxLockout                 time.Duration
 }
 
-// AuthProtector adds cheap request throttling and short-term login-failure
-// lockouts ahead of expensive bcrypt work.
+// AuthProtector adds request throttling, registration proof-of-work state, and
+// short-term login-failure lockouts ahead of expensive bcrypt work.
 type AuthProtector struct {
 	mu sync.Mutex
 
@@ -74,6 +77,7 @@ type AuthProtector struct {
 	loginFailureWindow    time.Duration
 	loginBaseLockout      time.Duration
 	loginMaxLockout       time.Duration
+	registrationProof     *registrationProofState
 
 	lastCleanup time.Time
 }
@@ -121,6 +125,10 @@ func NewAuthProtector(config AuthProtectorConfig) *AuthProtector {
 				requestsPerMinute: config.RegisterIPRequestsPerMinute,
 				burst:             config.RegisterIPBurst,
 			},
+			authEndpointRegistrationChallenge: {
+				requestsPerMinute: config.RegisterIPRequestsPerMinute,
+				burst:             config.RegisterIPBurst,
+			},
 		},
 		limiters:              make(map[string]*authRateLimitEntry),
 		failures:              make(map[string]*loginFailureEntry),
@@ -128,7 +136,12 @@ func NewAuthProtector(config AuthProtectorConfig) *AuthProtector {
 		loginFailureWindow:    config.LoginFailureWindow,
 		loginBaseLockout:      config.LoginBaseLockout,
 		loginMaxLockout:       config.LoginMaxLockout,
-		lastCleanup:           now(),
+		registrationProof: newRegistrationProofState(
+			config.RegistrationProofDifficultyBits,
+			config.RegistrationProofValidity,
+			now(),
+		),
+		lastCleanup: now(),
 	}
 }
 
@@ -139,8 +152,8 @@ func (h *Handler) authProtector() *AuthProtector {
 	return h.AuthProtector
 }
 
-// RateLimitAuthEndpoint applies an IP-scoped token bucket to login/register
-// only when a valid forwarded client IP can be resolved.
+// RateLimitAuthEndpoint applies an IP-scoped token bucket to public auth
+// endpoints only when a valid forwarded client IP can be resolved.
 func (p *AuthProtector) RateLimitAuthEndpoint(endpoint authEndpoint, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientIP, shouldApplyIPProtection, err := p.clientIPForProtection(r)

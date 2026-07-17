@@ -426,9 +426,12 @@ MaxBody -> IP RPM -> API Key -> ExtractToolName -> User RPM -> Search Concurrenc
 
 ```text
 GET  /panel/v1/auth/registration-settings
+POST /panel/v1/auth/registration-challenge
 POST /panel/v1/auth/register
 POST /panel/v1/auth/login
 ```
+
+注册采用一次性工作量证明：客户端先请求有效期为 5 分钟的签名挑战，在本地计算满足难度要求的 SHA-256 nonce，再将 `proof.challenge` 和 `proof.nonce` 随注册请求提交。默认难度为 20 个前导零位；验证成功后挑战立即失效，不能复用。内嵌面板会在 Web Worker 中完成计算，避免阻塞页面交互。
 
 登录用户路由涵盖用户信息、API Key 和用量：
 
