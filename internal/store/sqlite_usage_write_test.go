@@ -10,6 +10,7 @@ import (
 
 func TestRecordUsageBatchPersistsRowsAndCoalescesAPIKeyUpdates(t *testing.T) {
 	sqliteStore := openTestDB(t)
+	sqliteStore.SetMetricsEnabled(true)
 	ctx := context.Background()
 	userID := testUserID(t, sqliteStore)
 	apiKey, _, err := sqliteStore.CreateKey(ctx, userID, "batch-usage-key")
@@ -47,6 +48,7 @@ func TestRecordUsageBatchPersistsRowsAndCoalescesAPIKeyUpdates(t *testing.T) {
 
 func TestRecordUsageBatchRollsBackPrimaryTransactionOnInvalidRecord(t *testing.T) {
 	sqliteStore := openTestDB(t)
+	sqliteStore.SetMetricsEnabled(true)
 	ctx := context.Background()
 	userID := testUserID(t, sqliteStore)
 	apiKey, _, err := sqliteStore.CreateKey(ctx, userID, "rollback-batch-key")

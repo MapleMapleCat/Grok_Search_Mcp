@@ -174,6 +174,9 @@ export function commitPageData(page, pageResult) {
       state.data.keys = pageResult.keyResponse?.keys || [];
       commitPagination("keys", pageResult.keyResponse);
       state.data.overviewUsage = pageResult.overviewUsage;
+      if (pageResult.settings) {
+        state.data.settings = pageResult.settings;
+      }
       break;
     case "keys":
       state.data.keys = pageResult.keyResponse?.keys || [];

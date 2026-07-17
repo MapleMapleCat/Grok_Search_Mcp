@@ -22,8 +22,9 @@ type usageBatchRecorder interface {
 }
 
 type queuedUsageRecord struct {
-	record     UsageRecord
-	enqueuedAt time.Time
+	record         UsageRecord
+	enqueuedAt     time.Time
+	metricsTracked bool
 }
 
 // AsyncUsageWriter 将用量写入从请求路径解耦：主线程只入队，后台 goroutine 调用 Store。
@@ -42,6 +43,8 @@ type AsyncUsageWriter struct {
 	closeOnce    sync.Once
 	queueStatsMu sync.Mutex
 	queuedAt     []time.Time
+
+	metricsEnabled atomic.Bool
 
 	// 可观测计数：缓冲丢弃与写库失败/成功（原子累加，便于运维与测试断言）。
 	acceptedRecords           atomic.Uint64
@@ -87,6 +90,15 @@ type AsyncUsageWriterStats struct {
 // NewAsyncUsageWriter 启动消费者；buffer 为满时 Enqueue 会丢弃并限频记录日志（不阻塞 MCP）。
 func NewAsyncUsageWriter(s Store, buffer int) *AsyncUsageWriter {
 	return newAsyncUsageWriter(s, buffer, defaultAsyncUsageWriteTimeout, defaultAsyncUsageCloseTimeout)
+}
+
+// SetMetricsEnabled controls optional queue and write performance collection.
+// Usage persistence remains active regardless of this setting.
+func (w *AsyncUsageWriter) SetMetricsEnabled(enabled bool) {
+	if w == nil {
+		return
+	}
+	w.metricsEnabled.Store(enabled)
 }
 
 func newAsyncUsageWriter(s Store, buffer int, writeTimeout, closeTimeout time.Duration) *AsyncUsageWriter {
@@ -150,7 +162,7 @@ func (w *AsyncUsageWriter) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			w.markRecordDequeued()
+			w.markRecordDequeued(queuedRecord)
 			if ctx.Err() != nil {
 				w.discardRecord(queuedRecord.record, "shutdown deadline reached")
 				w.discardQueuedRecords("shutdown deadline reached")
@@ -189,7 +201,7 @@ func (w *AsyncUsageWriter) collectBatch(ctx context.Context, batch *[]queuedUsag
 			if !ok {
 				return true, false
 			}
-			w.markRecordDequeued()
+			w.markRecordDequeued(queuedRecord)
 			*batch = append(*batch, queuedRecord)
 		}
 	}
@@ -210,11 +222,16 @@ func (w *AsyncUsageWriter) writeBatch(workerContext context.Context, batch []que
 		}
 	}()
 
-	w.inFlightRecords.Store(int64(len(records)))
-	w.lastBatchSize.Store(int64(len(records)))
-	defer w.inFlightRecords.Store(0)
+	metricsEnabled := w.metricsEnabled.Load()
+	if metricsEnabled {
+		w.inFlightRecords.Store(int64(len(records)))
+		w.lastBatchSize.Store(int64(len(records)))
+		defer w.inFlightRecords.Store(0)
+	}
 
-	w.observeQueueDelays(batch)
+	if metricsEnabled {
+		w.observeQueueDelays(batch)
+	}
 	writeStartedAt := time.Now()
 	successfulRecords := 0
 	failedRecords := 0
@@ -249,15 +266,20 @@ func (w *AsyncUsageWriter) writeBatch(workerContext context.Context, batch []que
 	}
 
 	writeDuration := time.Since(writeStartedAt)
-	w.observeWriteDuration(writeDuration)
-	w.writeBatches.Add(1)
-	w.batchedRecords.Add(uint64(len(records)))
-	if successfulRecords > 0 {
-		w.writeSuccesses.Add(uint64(successfulRecords))
+	if metricsEnabled {
+		w.observeWriteDuration(writeDuration)
+		w.writeBatches.Add(1)
+		w.batchedRecords.Add(uint64(len(records)))
+		if successfulRecords > 0 {
+			w.writeSuccesses.Add(uint64(successfulRecords))
+		}
 	}
 	if failedRecords > 0 {
-		failures := w.writeFailures.Add(uint64(failedRecords))
-		w.failedBatches.Add(1)
+		failures := uint64(0)
+		if metricsEnabled {
+			failures = w.writeFailures.Add(uint64(failedRecords))
+			w.failedBatches.Add(1)
+		}
 		firstRecord := records[0]
 		log.Printf(
 			"usage batch write failed records=%d failed_records=%d key=%s tool=%s cumulative_failures=%d duration=%s: %v",
@@ -286,22 +308,37 @@ func (w *AsyncUsageWriter) Enqueue(rec UsageRecord) {
 		return
 	}
 
-	queuedRecord := queuedUsageRecord{record: rec, enqueuedAt: time.Now()}
-	admitted := false
-	w.queueStatsMu.Lock()
-	select {
-	case w.ch <- queuedRecord:
-		admitted = true
-		w.queuedAt = append(w.queuedAt, queuedRecord.enqueuedAt)
-	default:
+	queuedRecord := queuedUsageRecord{record: rec}
+	metricsEnabled := w.metricsEnabled.Load()
+	if metricsEnabled {
+		queuedRecord.enqueuedAt = time.Now()
+		queuedRecord.metricsTracked = true
 	}
-	w.queueStatsMu.Unlock()
+	admitted := false
+	if queuedRecord.metricsTracked {
+		w.queueStatsMu.Lock()
+		select {
+		case w.ch <- queuedRecord:
+			admitted = true
+			w.queuedAt = append(w.queuedAt, queuedRecord.enqueuedAt)
+		default:
+		}
+		w.queueStatsMu.Unlock()
+	} else {
+		select {
+		case w.ch <- queuedRecord:
+			admitted = true
+		default:
+		}
+	}
 	w.admissionMu.Unlock()
 	if !admitted {
 		w.discardRecord(rec, "buffer full")
 		return
 	}
-	w.acceptedRecords.Add(1)
+	if metricsEnabled {
+		w.acceptedRecords.Add(1)
+	}
 }
 
 func (w *AsyncUsageWriter) discardQueuedRecords(reason string) {
@@ -311,7 +348,7 @@ func (w *AsyncUsageWriter) discardQueuedRecords(reason string) {
 			if !ok {
 				return
 			}
-			w.markRecordDequeued()
+			w.markRecordDequeued(queuedRecord)
 			w.discardRecord(queuedRecord.record, reason)
 		default:
 			return
@@ -325,7 +362,10 @@ func (w *AsyncUsageWriter) discardBatch(batch []queuedUsageRecord, reason string
 	}
 }
 
-func (w *AsyncUsageWriter) markRecordDequeued() {
+func (w *AsyncUsageWriter) markRecordDequeued(queuedRecord queuedUsageRecord) {
+	if !queuedRecord.metricsTracked {
+		return
+	}
 	w.queueStatsMu.Lock()
 	if len(w.queuedAt) > 0 {
 		w.queuedAt[0] = time.Time{}
@@ -350,6 +390,9 @@ func (w *AsyncUsageWriter) observeQueueDelays(batch []queuedUsageRecord) {
 	var totalDelayNanos uint64
 	var maximumDelayNanos uint64
 	for _, queuedRecord := range batch {
+		if queuedRecord.enqueuedAt.IsZero() {
+			continue
+		}
 		delayNanos := uint64(max(observedAt.Sub(queuedRecord.enqueuedAt).Nanoseconds(), 0))
 		totalDelayNanos += delayNanos
 		if delayNanos > maximumDelayNanos {
@@ -364,7 +407,10 @@ func (w *AsyncUsageWriter) observeQueueDelays(batch []queuedUsageRecord) {
 
 func (w *AsyncUsageWriter) discardRecord(rec UsageRecord, reason string) {
 	defer cleanupUsageRecord(rec)
-	dropped := w.droppedRecords.Add(1)
+	dropped := uint64(0)
+	if w.metricsEnabled.Load() {
+		dropped = w.droppedRecords.Add(1)
+	}
 	if !w.shouldLogDrop() {
 		return
 	}
@@ -400,8 +446,11 @@ func cleanupUsageRecord(rec UsageRecord) {
 
 // Stats 返回丢弃/写库计数与当前队列深度快照。
 func (w *AsyncUsageWriter) Stats() AsyncUsageWriterStats {
+	if w == nil || !w.metricsEnabled.Load() {
+		return AsyncUsageWriterStats{}
+	}
 	w.queueStatsMu.Lock()
-	queueLength := len(w.queuedAt)
+	queueLength := len(w.ch)
 	oldestQueuedAge := time.Duration(0)
 	if queueLength > 0 {
 		oldestQueuedAge = time.Since(w.queuedAt[0])

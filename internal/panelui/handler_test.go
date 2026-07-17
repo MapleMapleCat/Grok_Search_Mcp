@@ -109,7 +109,11 @@ func TestHandlerServesSearchConcurrencySettingsFields(t *testing.T) {
 		t.Fatalf("status = %d, want %d", responseRecorder.Code, http.StatusOK)
 	}
 	body := responseRecorder.Body.String()
-	for _, expectedField := range []string{"mcp_global_search_concurrency", "mcp_user_search_concurrency"} {
+	for _, expectedField := range []string{
+		"mcp_global_search_concurrency",
+		"mcp_user_search_concurrency",
+		"operations_metrics_enabled",
+	} {
 		if !strings.Contains(body, expectedField) {
 			t.Fatalf("settings module does not contain %q", expectedField)
 		}

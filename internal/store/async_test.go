@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,6 +35,7 @@ func TestAsyncUsageWriterStatsTrackDroppedRecords(t *testing.T) {
 		unblock: make(chan struct{}),
 	}
 	writer := NewAsyncUsageWriter(blockingStore, 1)
+	writer.SetMetricsEnabled(true)
 
 	writer.Enqueue(UsageRecord{KeyID: "key-1", ToolName: "grok_web_search"})
 	select {
@@ -81,6 +83,7 @@ func TestAsyncUsageWriterRateLimitsQueueFullLogs(t *testing.T) {
 		unblock: make(chan struct{}),
 	}
 	writer := NewAsyncUsageWriter(blockingStore, 1)
+	writer.SetMetricsEnabled(true)
 
 	writer.Enqueue(UsageRecord{KeyID: "in-flight", ToolName: "grok_web_search"})
 	select {
@@ -133,6 +136,7 @@ func TestAsyncUsageWriterStatsTrackWriteFailures(t *testing.T) {
 	}
 
 	writer := NewAsyncUsageWriter(failingUsageStore{recordUsageErr: errors.New("db unavailable")}, 1)
+	writer.SetMetricsEnabled(true)
 	writer.Enqueue(UsageRecord{
 		KeyID:    "key-1",
 		ToolName: "grok_web_search",
@@ -195,6 +199,7 @@ func (s *deadlineAwareUsageStore) RecordUsage(ctx context.Context, _ UsageRecord
 func TestAsyncUsageWriterAppliesPerWriteDeadline(t *testing.T) {
 	deadlineStore := &deadlineAwareUsageStore{started: make(chan struct{}, 1)}
 	writer := newAsyncUsageWriter(deadlineStore, 1, 30*time.Millisecond, 250*time.Millisecond)
+	writer.SetMetricsEnabled(true)
 	writer.Enqueue(UsageRecord{KeyID: "key-1", ToolName: "grok_web_search"})
 
 	startedAt := time.Now()
@@ -213,6 +218,7 @@ func TestAsyncUsageWriterCloseIsBoundedAndCleansQueuedCapture(t *testing.T) {
 		unblock: make(chan struct{}),
 	}
 	writer := newAsyncUsageWriter(blockingStore, 2, 20*time.Millisecond, 50*time.Millisecond)
+	writer.SetMetricsEnabled(true)
 	writer.Enqueue(UsageRecord{KeyID: "in-flight", ToolName: "grok_web_search"})
 	select {
 	case <-blockingStore.started:
@@ -299,6 +305,26 @@ type recordingBatchUsageStore struct {
 	written chan struct{}
 }
 
+func TestAsyncUsageWriterMetricsAreDisabledByDefault(t *testing.T) {
+	batchStore := &recordingBatchUsageStore{written: make(chan struct{}, 1)}
+	writer := newAsyncUsageWriterWithBatch(batchStore, 1, time.Second, time.Second, 1, time.Millisecond)
+
+	writer.Enqueue(UsageRecord{KeyID: "default-off-key", ToolName: "grok_web_search"})
+	select {
+	case <-batchStore.written:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for usage persistence")
+	}
+	writer.Close()
+
+	if batches := batchStore.snapshotBatches(); len(batches) != 1 || len(batches[0]) != 1 {
+		t.Fatalf("usage was not persisted while metrics were disabled: %+v", batches)
+	}
+	if stats := writer.Stats(); !reflect.DeepEqual(stats, AsyncUsageWriterStats{}) {
+		t.Fatalf("metrics collected while disabled: %+v", stats)
+	}
+}
+
 func (store *recordingBatchUsageStore) RecordUsageBatch(_ context.Context, records []UsageRecord) error {
 	copiedRecords := append([]UsageRecord(nil), records...)
 	store.mu.Lock()
@@ -320,6 +346,7 @@ func (store *recordingBatchUsageStore) snapshotBatches() [][]UsageRecord {
 func TestAsyncUsageWriterPersistsFullBatchInOneStoreCall(t *testing.T) {
 	batchStore := &recordingBatchUsageStore{written: make(chan struct{}, 1)}
 	writer := newAsyncUsageWriterWithBatch(batchStore, 8, time.Second, time.Second, 4, time.Second)
+	writer.SetMetricsEnabled(true)
 
 	for recordIndex := 0; recordIndex < 4; recordIndex++ {
 		writer.Enqueue(UsageRecord{KeyID: "batch-key", ToolName: "grok_web_search"})
@@ -369,6 +396,7 @@ func TestAsyncUsageWriterFailedBatchCountsAndCleansEveryRecord(t *testing.T) {
 		written: make(chan struct{}, 1),
 	}
 	writer := newAsyncUsageWriterWithBatch(batchStore, 8, time.Second, time.Second, 3, time.Second)
+	writer.SetMetricsEnabled(true)
 	var cleanupCount atomic.Int64
 	for recordIndex := 0; recordIndex < 3; recordIndex++ {
 		writer.Enqueue(UsageRecord{

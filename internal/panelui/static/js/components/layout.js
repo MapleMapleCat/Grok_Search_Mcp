@@ -26,6 +26,7 @@ export function renderShell(state, currentMetadata, currentPageHTML) {
 }
 
 function renderSidebar(state, isAdmin) {
+  const operationsMetricsEnabled = Boolean(state.data.settings?.operations_metrics_enabled);
   const renderNavigationItem = (page, label, icon) => `
     <button class="nav-item ${state.currentPage === page ? "is-active" : ""}" type="button" data-action="navigate" data-page="${page}">
       ${renderIcon(icon)}<span>${escapeHTML(label)}</span>
@@ -57,7 +58,7 @@ function renderSidebar(state, isAdmin) {
               ${renderNavigationItem("users", "用户管理", "users")}
               ${renderNavigationItem("tiers", "配额方案", "layers")}
               ${renderNavigationItem("invites", "邀请码", "ticket")}
-              ${renderNavigationItem("operationsMetrics", "运行指标", "activity")}
+              ${operationsMetricsEnabled ? renderNavigationItem("operationsMetrics", "运行指标", "activity") : ""}
               ${renderNavigationItem("settings", "服务设置", "settings")}
             </nav>
           </section>

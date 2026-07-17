@@ -17,7 +17,7 @@ export function renderSettingsPage(state) {
     : modelOptions;
 
   return `
-    ${renderPageHeading("服务设置", "热更新上游连接、搜索并发、默认模型、代理与注册策略。")}
+    ${renderPageHeading("服务设置", "热更新上游连接、搜索并发、默认模型、代理、注册策略与运维观测。")}
     <div class="settings-layout">
       <form class="data-card" data-form="settings">
         <section class="settings-section">
@@ -56,7 +56,7 @@ export function renderSettingsPage(state) {
           </div>
         </section>
         <section class="settings-section">
-          <div class="settings-section-copy"><h3>访问策略</h3><p>控制公开注册入口与调试日志。调试模式可能记录更多请求信息。</p></div>
+          <div class="settings-section-copy"><h3>访问策略与运维观测</h3><p>控制公开注册入口、调试日志与数据库运行指标。调试模式可能记录更多请求信息。</p></div>
           <div class="form-grid">
             <label class="field-group"><span class="field-label">注册模式</span><select class="select-input" name="registration_mode">
               <option value="free" ${settings.registration_mode === "free" ? "selected" : ""}>自由注册</option>
@@ -64,6 +64,7 @@ export function renderSettingsPage(state) {
               <option value="disabled" ${settings.registration_mode === "disabled" ? "selected" : ""}>关闭注册</option>
             </select></label>
             <label class="switch-row"><span class="switch-copy"><strong>调试模式</strong><span>输出扩展诊断信息</span></span><span class="switch"><input name="debug" type="checkbox" ${settings.debug ? "checked" : ""}><span class="switch-track"></span></span></label>
+            <label class="switch-row"><span class="switch-copy"><strong>启用数据库运行指标</strong><span>开启后显示 SQLite、Usage 队列与 WAL 性能指标</span></span><span class="switch"><input name="operations_metrics_enabled" type="checkbox" ${settings.operations_metrics_enabled ? "checked" : ""}><span class="switch-track"></span></span></label>
           </div>
         </section>
         <footer class="settings-footer"><button class="button button-primary" type="submit" ${state.formBusy ? "disabled" : ""}>${state.formBusy ? `${renderIcon("refresh")} 正在保存` : `${renderIcon("check")} 保存并应用`}</button></footer>

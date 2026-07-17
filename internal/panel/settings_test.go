@@ -27,11 +27,15 @@ func (applier *recordingSettingsApplier) ApplyServerSettings(settings config.Ser
 func TestServerSettingsResponseNeverIncludesCPAAPIKey(t *testing.T) {
 	const sensitiveAPIKey = "cpa-panel-never-return-this-full-secret-7f0d5b"
 	response := toServerSettingsResponse(config.ServerSettings{
-		CPABaseURL:       "https://cpa.example.test",
-		CPAAPIKey:        sensitiveAPIKey,
-		UpstreamProtocol: config.UpstreamProtocolResponses,
-		Model:            "grok-4.3",
+		CPABaseURL:               "https://cpa.example.test",
+		CPAAPIKey:                sensitiveAPIKey,
+		UpstreamProtocol:         config.UpstreamProtocolResponses,
+		Model:                    "grok-4.3",
+		OperationsMetricsEnabled: true,
 	}, nil)
+	if !response.OperationsMetricsEnabled {
+		t.Fatal("panel settings response did not expose the enabled operational metrics setting")
+	}
 
 	encodedResponse, err := json.Marshal(response)
 	if err != nil {
@@ -79,7 +83,7 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPatch,
 		"/panel/v1/admin/settings",
-		bytes.NewBufferString(`{"model":"grok-4.4","mcp_global_search_concurrency":10,"mcp_user_search_concurrency":2}`),
+		bytes.NewBufferString(`{"model":"grok-4.4","mcp_global_search_concurrency":10,"mcp_user_search_concurrency":2,"operations_metrics_enabled":true}`),
 	)
 	responseRecorder := httptest.NewRecorder()
 
@@ -98,6 +102,9 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 	if response.MCPGlobalSearchConcurrency != 10 || response.MCPUserSearchConcurrency != 2 {
 		t.Fatalf("response search concurrency = %+v", response)
 	}
+	if !response.OperationsMetricsEnabled {
+		t.Fatalf("response operations metrics setting = false, want true")
+	}
 	if handler.InitialServerSettings != initialSettings {
 		t.Fatalf("initial settings mutated: before=%+v after=%+v", initialSettings, handler.InitialServerSettings)
 	}
@@ -106,6 +113,9 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 	}
 	if settingsApplier.appliedSettings.MCPGlobalSearchConcurrency != 10 || settingsApplier.appliedSettings.MCPUserSearchConcurrency != 2 {
 		t.Fatalf("applied search concurrency = %+v", settingsApplier.appliedSettings)
+	}
+	if !settingsApplier.appliedSettings.OperationsMetricsEnabled {
+		t.Fatalf("applied operations metrics setting = false, want true")
 	}
 
 	storedSettings, err := sqliteStore.GetServerSettings(context.Background())
@@ -117,6 +127,9 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 	}
 	if storedSettings.MCPGlobalSearchConcurrency != 10 || storedSettings.MCPUserSearchConcurrency != 2 {
 		t.Fatalf("stored search concurrency = %+v", storedSettings)
+	}
+	if !storedSettings.OperationsMetricsEnabled {
+		t.Fatalf("stored operations metrics setting = false, want true")
 	}
 }
 

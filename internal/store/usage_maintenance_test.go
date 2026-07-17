@@ -25,6 +25,7 @@ func TestUsageRollupMigrationCreatesHistoryTables(t *testing.T) {
 
 func TestUsageMaintenanceCompactsRetainsAndPreservesStatistics(t *testing.T) {
 	sqliteStore := openTestDB(t)
+	sqliteStore.SetMetricsEnabled(true)
 	ctx := context.Background()
 	userID := testUserID(t, sqliteStore)
 	apiKey, _, err := sqliteStore.CreateKey(ctx, userID, "maintenance-key")

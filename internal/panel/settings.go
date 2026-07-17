@@ -133,5 +133,8 @@ func mergeServerSettingsRequest(currentSettings config.ServerSettings, req Updat
 	if req.Debug != nil {
 		mergedSettings.Debug = *req.Debug
 	}
+	if req.OperationsMetricsEnabled != nil {
+		mergedSettings.OperationsMetricsEnabled = *req.OperationsMetricsEnabled
+	}
 	return mergedSettings
 }

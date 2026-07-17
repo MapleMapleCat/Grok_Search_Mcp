@@ -73,6 +73,16 @@ async function initializeApplication() {
 
   try {
     state.user = await fetchCurrentUser();
+    if (state.user?.role === "admin") {
+      try {
+        state.data.settings = await fetchSettings();
+      } catch (error) {
+        if (error instanceof APIError && error.status === 401) {
+          throw error;
+        }
+        state.data.settings = null;
+      }
+    }
     state.authenticated = true;
     normalizeCurrentPageForRole();
     renderApplication();
@@ -105,6 +115,10 @@ function normalizeCurrentPageForRole() {
     state.currentPage = "overview";
   }
   if (adminPages.has(state.currentPage) && state.user?.role !== "admin") {
+    state.currentPage = "overview";
+    window.history.replaceState(null, "", "#overview");
+  }
+  if (state.currentPage === "operationsMetrics" && !state.data.settings?.operations_metrics_enabled) {
     state.currentPage = "overview";
     window.history.replaceState(null, "", "#overview");
   }
@@ -162,15 +176,20 @@ async function loadCurrentPage(options = {}) {
 async function loadPageData(page, signal) {
   switch (page) {
     case "overview": {
-      const [user, keyResponse, usage] = await Promise.all([
+      const settingsRequest = state.user?.role === "admin"
+        ? fetchSettings({ signal })
+        : Promise.resolve(null);
+      const [user, keyResponse, usage, settings] = await Promise.all([
         fetchCurrentUser({ signal }),
         fetchKeys({ signal, limit: COLLECTION_PAGE_SIZE }),
-        fetchUsage(getUsagePeriodSince("24h"), { signal })
+        fetchUsage(getUsagePeriodSince("24h"), { signal }),
+        settingsRequest
       ]);
       return {
         user,
         keyResponse,
-        overviewUsage: normalizeUsage(usage)
+        overviewUsage: normalizeUsage(usage),
+        settings
       };
     }
     case "keys": {

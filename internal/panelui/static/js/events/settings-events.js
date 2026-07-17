@@ -31,7 +31,8 @@ export function createSettingsEvents({
       proxy_url: String(formData.proxy_url || "").trim(),
       proxy_enabled: formElement.elements.proxy_enabled.checked,
       registration_mode: formElement.elements.registration_mode.value,
-      debug: formElement.elements.debug.checked
+      debug: formElement.elements.debug.checked,
+      operations_metrics_enabled: formElement.elements.operations_metrics_enabled.checked
     };
     const apiKey = String(formData.cpa_api_key || "").trim();
     if (apiKey) {
@@ -43,6 +44,9 @@ export function createSettingsEvents({
     try {
       state.data.settings = await updateSettings(settingsPayload);
       state.registrationMode = state.data.settings.registration_mode || state.registrationMode;
+      if (!state.data.settings.operations_metrics_enabled) {
+        state.data.operationsMetrics = null;
+      }
       state.formBusy = false;
       renderApplication();
       showToast("设置已应用", "上游客户端和搜索并发控制已使用新的运行时配置。", "success");

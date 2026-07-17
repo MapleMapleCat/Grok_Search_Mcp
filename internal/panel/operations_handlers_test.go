@@ -1,14 +1,34 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
+	"github.com/grok-mcp/internal/config"
 	"github.com/grok-mcp/internal/store"
 )
+
+type recordingSQLiteMetricsProvider struct {
+	callCount int
+}
+
+func (provider *recordingSQLiteMetricsProvider) SQLiteMetrics() store.SQLiteMetricsSnapshot {
+	provider.callCount++
+	return store.SQLiteMetricsSnapshot{}
+}
+
+type recordingUsageWriterMetricsProvider struct {
+	callCount int
+}
+
+func (provider *recordingUsageWriterMetricsProvider) Stats() store.AsyncUsageWriterStats {
+	provider.callCount++
+	return store.AsyncUsageWriterStats{}
+}
 
 func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 	sqliteStore, err := store.OpenSQLite(filepath.Join(t.TempDir(), "operations.db"))
@@ -21,7 +41,23 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	usageWriter := store.NewAsyncUsageWriter(sqliteStore, 17)
+	usageWriter.SetMetricsEnabled(true)
 	defer usageWriter.Close()
+	sqliteStore.SetMetricsEnabled(true)
+	_, err = sqliteStore.UpsertServerSettings(context.Background(), store.ServerSettings{Runtime: config.ServerSettings{
+		CPABaseURL:                 "https://cpa.example.test",
+		CPAAPIKey:                  "operations-api-key",
+		UpstreamProtocol:           config.UpstreamProtocolResponses,
+		Model:                      "grok-4.3",
+		TimeoutSeconds:             120,
+		MCPGlobalSearchConcurrency: 16,
+		MCPUserSearchConcurrency:   4,
+		RegistrationMode:           store.RegistrationModeFree,
+		OperationsMetricsEnabled:   true,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	server := httptest.NewServer(NewMux(&Handler{
 		Store:              sqliteStore,
@@ -53,6 +89,31 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 	}
 	if payload.UsageWriter.QueueCapacity != 17 {
 		t.Fatalf("usage writer queue capacity = %d, want 17", payload.UsageWriter.QueueCapacity)
+	}
+}
+
+func TestAdminOperationalMetricsAreDisabledByDefault(t *testing.T) {
+	sqliteStore, err := store.OpenSQLite(filepath.Join(t.TempDir(), "operations-disabled.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqliteStore.Close()
+
+	sqliteProvider := &recordingSQLiteMetricsProvider{}
+	usageWriterProvider := &recordingUsageWriterMetricsProvider{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/panel/v1/admin/operations/metrics", nil)
+	(&Handler{
+		Store:              sqliteStore,
+		SQLiteMetrics:      sqliteProvider,
+		UsageWriterMetrics: usageWriterProvider,
+	}).adminOperationalMetrics(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("metrics status = %d, want 404", recorder.Code)
+	}
+	if sqliteProvider.callCount != 0 || usageWriterProvider.callCount != 0 {
+		t.Fatalf("disabled endpoint read metric snapshots: sqlite=%d writer=%d", sqliteProvider.callCount, usageWriterProvider.callCount)
 	}
 }
 

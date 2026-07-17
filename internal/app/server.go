@@ -69,19 +69,29 @@ type HTTPDependencies struct {
 type runtimeServerSettingsApplier struct {
 	upstreamApplier          panel.ServerSettingsApplier
 	searchConcurrencyLimiter *ratelimit.SearchConcurrencyLimiter
+	sqliteStore              *store.SQLiteStore
+	usageWriter              *store.AsyncUsageWriter
 }
 
 func (applier *runtimeServerSettingsApplier) ApplyServerSettings(settings config.ServerSettings) error {
+	if applier.sqliteStore != nil {
+		applier.sqliteStore.SetMetricsEnabled(settings.OperationsMetricsEnabled)
+	}
+	if applier.usageWriter != nil {
+		applier.usageWriter.SetMetricsEnabled(settings.OperationsMetricsEnabled)
+	}
 	if applier.upstreamApplier != nil {
 		if err := applier.upstreamApplier.ApplyServerSettings(settings); err != nil {
 			return err
 		}
 	}
 	if applier.searchConcurrencyLimiter != nil {
-		return applier.searchConcurrencyLimiter.UpdateLimits(
+		if err := applier.searchConcurrencyLimiter.UpdateLimits(
 			settings.MCPGlobalSearchConcurrency,
 			settings.MCPUserSearchConcurrency,
-		)
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -101,6 +111,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("initialize server settings: %w", err)
 	}
+	st.SetMetricsEnabled(serverSettings.OperationsMetricsEnabled)
 
 	debugState := logx.NewDebugState(serverSettings.Debug)
 	grokClient, err := grok.NewClientWithServerSettings(serverSettings, debugState)
@@ -121,6 +132,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 
 	usageWriter := store.NewAsyncUsageWriter(st, 256)
+	usageWriter.SetMetricsEnabled(serverSettings.OperationsMetricsEnabled)
 	defer usageWriter.Close()
 	usageMaintenanceRunner, err := store.StartUsageMaintenance(
 		ctx,
@@ -156,6 +168,8 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		SettingsApplier: &runtimeServerSettingsApplier{
 			upstreamApplier:          grokClient,
 			searchConcurrencyLimiter: searchConcurrencyLimiter,
+			sqliteStore:              st,
+			usageWriter:              usageWriter,
 		},
 		ModelLister:        grokClient,
 		AuthCache:          authResolver,

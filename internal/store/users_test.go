@@ -93,6 +93,7 @@ func TestReserveSuccessCallDistinguishesMissingUserFromQuota(t *testing.T) {
 
 func TestSuccessQuotaOperationsExposeLatencyAndOutcomeMetrics(t *testing.T) {
 	sqliteStore := openTestDB(t)
+	sqliteStore.SetMetricsEnabled(true)
 	ctx := context.Background()
 	userID := testUserID(t, sqliteStore)
 

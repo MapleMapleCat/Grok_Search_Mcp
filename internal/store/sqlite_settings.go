@@ -24,6 +24,7 @@ func scanServerSettings(row interface {
 	var proxyEnabled int
 	var registrationMode string
 	var debug int
+	var operationsMetricsEnabled int
 	var createdAt string
 	var updatedAt string
 	err := row.Scan(
@@ -41,6 +42,7 @@ func scanServerSettings(row interface {
 		&proxyEnabled,
 		&registrationMode,
 		&debug,
+		&operationsMetricsEnabled,
 		&createdAt,
 		&updatedAt,
 	)
@@ -54,6 +56,7 @@ func scanServerSettings(row interface {
 		return nil, storedServerSettingsAPIKey{}, normalizeErr
 	}
 	settings.Debug = debug != 0
+	settings.OperationsMetricsEnabled = operationsMetricsEnabled != 0
 	var parseErr error
 	settings.CreatedAt, parseErr = parseTime(createdAt)
 	if parseErr != nil {
@@ -66,7 +69,7 @@ func scanServerSettings(row interface {
 	return &settings, storedAPIKey, nil
 }
 
-const serverSettingsColumns = `id, cpa_base_url, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version, upstream_protocol, model, timeout_seconds, mcp_global_search_concurrency, mcp_user_search_concurrency, proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at`
+const serverSettingsColumns = `id, cpa_base_url, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version, upstream_protocol, model, timeout_seconds, mcp_global_search_concurrency, mcp_user_search_concurrency, proxy_url, proxy_enabled, registration_mode, debug, operations_metrics_enabled, created_at, updated_at`
 
 func serverSettingsAPIKeyRecordIdentity(settingsID string) string {
 	return "server-settings:" + settingsID + ":cpa-api-key"
@@ -157,13 +160,17 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 	if settings.Debug {
 		debug = 1
 	}
+	operationsMetricsEnabled := 0
+	if settings.OperationsMetricsEnabled {
+		operationsMetricsEnabled = 1
+	}
 	now := formatTime(time.Now().UTC())
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO server_settings (
 			id, cpa_base_url, cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version,
 			upstream_protocol, model, timeout_seconds, mcp_global_search_concurrency, mcp_user_search_concurrency,
-			proxy_url, proxy_enabled, registration_mode, debug, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			proxy_url, proxy_enabled, registration_mode, debug, operations_metrics_enabled, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			cpa_base_url = excluded.cpa_base_url,
 			cpa_api_key_ciphertext = excluded.cpa_api_key_ciphertext,
@@ -178,6 +185,7 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 			proxy_enabled = excluded.proxy_enabled,
 			registration_mode = excluded.registration_mode,
 			debug = excluded.debug,
+			operations_metrics_enabled = excluded.operations_metrics_enabled,
 			updated_at = excluded.updated_at`,
 		serverSettingsID,
 		cpaBaseURL,
@@ -193,6 +201,7 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 		proxyEnabled,
 		string(registrationMode),
 		debug,
+		operationsMetricsEnabled,
 		now,
 		now,
 	)

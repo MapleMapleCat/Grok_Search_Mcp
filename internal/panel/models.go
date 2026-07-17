@@ -145,6 +145,7 @@ type ServerSettingsResponse struct {
 	ProxyEnabled               bool                    `json:"proxy_enabled"`
 	RegistrationMode           store.RegistrationMode  `json:"registration_mode"`
 	Debug                      bool                    `json:"debug"`
+	OperationsMetricsEnabled   bool                    `json:"operations_metrics_enabled"`
 	UpdatedAt                  *time.Time              `json:"updated_at,omitempty"`
 }
 
@@ -172,6 +173,7 @@ type UpdateServerSettingsRequest struct {
 	ProxyEnabled               *bool                    `json:"proxy_enabled,omitempty"`
 	RegistrationMode           *store.RegistrationMode  `json:"registration_mode,omitempty"`
 	Debug                      *bool                    `json:"debug,omitempty"`
+	OperationsMetricsEnabled   *bool                    `json:"operations_metrics_enabled,omitempty"`
 }
 
 type InviteCodeResponse struct {
@@ -319,6 +321,7 @@ func toServerSettingsResponse(settings config.ServerSettings, updatedAt *time.Ti
 		ProxyEnabled:               settings.ProxyEnabled,
 		RegistrationMode:           settings.RegistrationMode,
 		Debug:                      settings.Debug,
+		OperationsMetricsEnabled:   settings.OperationsMetricsEnabled,
 		UpdatedAt:                  updatedAt,
 	}
 }

@@ -22,6 +22,10 @@ export function createNavigationEvents({
       showToast("权限不足", "当前账户无法访问系统管理页面。", "error");
       return;
     }
+    if (page === "operationsMetrics" && !state.data.settings?.operations_metrics_enabled) {
+      showToast("运行指标未启用", "请先在服务设置中启用数据库运行指标。", "error");
+      return;
+    }
 
     state.sidebarOpen = false;
     modalController.abortCurrentModalRequest();

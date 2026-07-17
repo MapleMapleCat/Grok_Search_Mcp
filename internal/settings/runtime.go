@@ -59,4 +59,5 @@ type Runtime struct {
 	ProxyEnabled               bool
 	RegistrationMode           RegistrationMode
 	Debug                      bool
+	OperationsMetricsEnabled   bool
 }

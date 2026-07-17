@@ -137,6 +137,7 @@ func (observer *sqliteCheckpointObserver) snapshot() SQLiteCheckpointMetrics {
 }
 
 type sqliteMetrics struct {
+	enabled               atomic.Bool
 	busyOrLockedErrors    atomic.Uint64
 	quotaReserve          sqliteOperationObserver
 	quotaRelease          sqliteOperationObserver
@@ -151,7 +152,18 @@ type sqliteMetrics struct {
 	debugCheckpoint       sqliteCheckpointObserver
 }
 
+func (metrics *sqliteMetrics) setEnabled(enabled bool) {
+	metrics.enabled.Store(enabled)
+}
+
+func (metrics *sqliteMetrics) isEnabled() bool {
+	return metrics.enabled.Load()
+}
+
 func (metrics *sqliteMetrics) observeQuotaReserve(duration time.Duration, operationError error) {
+	if !metrics.isEnabled() {
+		return
+	}
 	observedError := operationError
 	switch {
 	case errors.Is(operationError, ErrQuotaSuccess):
@@ -165,10 +177,16 @@ func (metrics *sqliteMetrics) observeQuotaReserve(duration time.Duration, operat
 }
 
 func (metrics *sqliteMetrics) observeQuotaRelease(duration time.Duration, operationError error) {
+	if !metrics.isEnabled() {
+		return
+	}
 	metrics.addContention(metrics.quotaRelease.observe(duration, operationError))
 }
 
 func (metrics *sqliteMetrics) observeUsageWrite(duration time.Duration, recordCount int, operationError error) {
+	if !metrics.isEnabled() {
+		return
+	}
 	recordCountValue := uint64(max(recordCount, 0))
 	metrics.usageRecordsAttempted.Add(recordCountValue)
 	if operationError == nil {
@@ -180,10 +198,16 @@ func (metrics *sqliteMetrics) observeUsageWrite(duration time.Duration, recordCo
 }
 
 func (metrics *sqliteMetrics) observeMaintenance(duration time.Duration, operationError error) {
+	if !metrics.isEnabled() {
+		return
+	}
 	metrics.addContention(metrics.usageMaintenance.observe(duration, operationError))
 }
 
 func (metrics *sqliteMetrics) observeCheckpoint(primary bool, duration time.Duration, result WALCheckpointResult, operationError error) {
+	if !metrics.isEnabled() {
+		return
+	}
 	if primary {
 		metrics.addContention(metrics.primaryCheckpoint.observe(duration, result, operationError))
 		return
@@ -197,8 +221,17 @@ func (metrics *sqliteMetrics) addContention(contentionObserved bool) {
 	}
 }
 
+// SetMetricsEnabled controls collection of optional database performance
+// observations. Collection is disabled until an administrator enables it.
+func (store *SQLiteStore) SetMetricsEnabled(enabled bool) {
+	store.metrics.setEnabled(enabled)
+}
+
 // SQLiteMetrics returns a lock-free snapshot of pool and operation metrics.
 func (store *SQLiteStore) SQLiteMetrics() SQLiteMetricsSnapshot {
+	if !store.metrics.isEnabled() {
+		return SQLiteMetricsSnapshot{}
+	}
 	return SQLiteMetricsSnapshot{
 		CapturedAt:           time.Now().UTC(),
 		PrimaryWritePool:     sqliteConnectionPoolMetrics(store.db),
