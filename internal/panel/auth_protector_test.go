@@ -34,7 +34,7 @@ func TestAuthProtectorBypassesHeaderlessRequests(t *testing.T) {
 	}
 }
 
-func TestAuthProtectorBypassesInvalidForwardedClientIPHeaders(t *testing.T) {
+func TestAuthProtectorRejectsInvalidForwardedClientIPHeaders(t *testing.T) {
 	authProtector := NewAuthProtector(AuthProtectorConfig{
 		RegisterIPRequestsPerMinute: 1,
 		RegisterIPBurst:             1,
@@ -52,13 +52,30 @@ func TestAuthProtectorBypassesInvalidForwardedClientIPHeaders(t *testing.T) {
 		request.Header.Set("X-Forwarded-For", "unknown, invalid")
 		responseRecorder := httptest.NewRecorder()
 		protectedHandler.ServeHTTP(responseRecorder, request)
-		if responseRecorder.Code != http.StatusOK {
-			t.Fatalf("invalid-header request %d status = %d, want %d", requestIndex+1, responseRecorder.Code, http.StatusOK)
+		if responseRecorder.Code != http.StatusBadRequest {
+			t.Fatalf("invalid-header request %d status = %d, want %d", requestIndex+1, responseRecorder.Code, http.StatusBadRequest)
 		}
 	}
 
-	if allowedRequestCount != 2 {
-		t.Fatalf("allowed request count = %d, want %d", allowedRequestCount, 2)
+	if allowedRequestCount != 0 {
+		t.Fatalf("allowed request count = %d, want 0", allowedRequestCount)
+	}
+}
+
+func TestAuthProtectorRejectsConflictingForwardedClientIPHeaders(t *testing.T) {
+	authProtector := NewAuthProtector(AuthProtectorConfig{})
+	protectedHandler := authProtector.RateLimitAuthEndpoint(authEndpointLogin, http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		responseWriter.WriteHeader(http.StatusOK)
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/panel/v1/auth/login", nil)
+	request.Header.Set("X-Real-IP", "198.51.100.10")
+	request.Header.Set("X-Forwarded-For", "198.51.100.11")
+	responseRecorder := httptest.NewRecorder()
+	protectedHandler.ServeHTTP(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusBadRequest {
+		t.Fatalf("conflicting-header request status = %d, want %d", responseRecorder.Code, http.StatusBadRequest)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/grok-mcp/internal/auth"
+	"github.com/grok-mcp/internal/ratelimit"
 	"github.com/grok-mcp/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -153,7 +154,11 @@ func (handler *Handler) login(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	authProtector := handler.authProtector()
-	clientIP, shouldApplyIPProtection := authProtector.clientIPForProtection(request)
+	clientIP, shouldApplyIPProtection, clientIPError := authProtector.clientIPForProtection(request)
+	if clientIPError != nil {
+		writeError(writer, http.StatusBadRequest, ratelimit.ErrInvalidForwardedClientIPHeaders.Error())
+		return
+	}
 	if shouldApplyIPProtection {
 		if locked, retryAfter := authProtector.LoginLocked(username, clientIP); locked {
 			writeRetryAfter(writer, retryAfter)

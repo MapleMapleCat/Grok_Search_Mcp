@@ -143,7 +143,11 @@ func (h *Handler) authProtector() *AuthProtector {
 // only when a valid forwarded client IP can be resolved.
 func (p *AuthProtector) RateLimitAuthEndpoint(endpoint authEndpoint, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clientIP, shouldApplyIPProtection := p.clientIPForProtection(r)
+		clientIP, shouldApplyIPProtection, err := p.clientIPForProtection(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ratelimit.ErrInvalidForwardedClientIPHeaders.Error())
+			return
+		}
 		if !shouldApplyIPProtection {
 			next.ServeHTTP(w, r)
 			return
@@ -163,12 +167,15 @@ func (p *AuthProtector) clientIP(request *http.Request) string {
 	return p.clientIPResolver.Resolve(request)
 }
 
-func (p *AuthProtector) clientIPForProtection(request *http.Request) (string, bool) {
-	clientIP := p.clientIP(request)
-	if clientIP == "" {
-		return "", false
+func (p *AuthProtector) clientIPForProtection(request *http.Request) (string, bool, error) {
+	clientAddress, err := p.clientIPResolver.ResolveAddress(request)
+	if err != nil {
+		return "", false, err
 	}
-	return clientIP, true
+	if !clientAddress.IsValid() {
+		return "", false, nil
+	}
+	return clientAddress.String(), true, nil
 }
 
 func (p *AuthProtector) allowAuthRequest(endpoint authEndpoint, clientIP string) (bool, time.Duration) {
