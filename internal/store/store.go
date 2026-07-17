@@ -145,6 +145,18 @@ type InviteCode struct {
 	UpdatedAt         time.Time
 }
 
+// InviteCodeRedemption records the account created by one successful invite
+// redemption. The identity fields are immutable snapshots so audit history is
+// retained even if the invite code or user is later deleted.
+type InviteCodeRedemption struct {
+	ID               string
+	InviteCodeID     string
+	InviteCodePrefix string
+	UserID           string
+	Username         string
+	RedeemedAt       time.Time
+}
+
 // UsageRecord 为单次 MCP 工具调用的明细日志（工具名、耗时、是否成功等）。
 type UsageRecord struct {
 	ID         int64
@@ -365,6 +377,7 @@ type Store interface {
 	ListUsageRecordsPage(ctx context.Context, scope UsageRecordListScope, since time.Time, cursor *UsageRecordCursor, limit int) (*UsageRecordPage, error)
 	GetUsageRecordDetail(ctx context.Context, usageID int64, scope UsageRecordScope) (*UsageRecord, error)
 	ListInviteCodesPage(ctx context.Context, cursor *TimeIDCursor, limit int) (*InviteCodePage, error)
+	ListInviteCodeRedemptions(ctx context.Context, inviteCodeID string) ([]*InviteCodeRedemption, error)
 	CreateInviteCode(ctx context.Context, createdByUserID string, registrationLimit int) (*InviteCode, string, error)
 	UpdateInviteCode(ctx context.Context, id string, updates InviteCodeUpdates) (*InviteCode, error)
 	DeleteInviteCode(ctx context.Context, id string) error

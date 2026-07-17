@@ -319,8 +319,15 @@ export function deleteTier(tierIdentifier) {
 }
 
 export function fetchInviteCodes(options = {}) {
-  const { cursor = "", limit = 50, ...requestOptions } = options;
-  return panelAPI.request(buildCollectionPath("/panel/v1/admin/invite-codes", { cursor, limit }), requestOptions);
+	const { cursor = "", limit = 50, ...requestOptions } = options;
+	return panelAPI.request(buildCollectionPath("/panel/v1/admin/invite-codes", { cursor, limit }), requestOptions);
+}
+
+export function fetchInviteCodeRedemptions(inviteIdentifier, options = {}) {
+	return panelAPI.request(
+		`/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}/redemptions`,
+		options
+	);
 }
 
 export function createInviteCode(inviteCodeData) {

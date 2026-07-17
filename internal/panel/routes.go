@@ -50,6 +50,7 @@ func (handler *Handler) registerAdminRoutes(mux *http.ServeMux) {
 	admin.HandleFunc("PATCH /panel/v1/admin/settings", handler.adminUpdateServerSettings)
 	admin.HandleFunc("GET /panel/v1/admin/invite-codes", handler.adminListInviteCodes)
 	admin.HandleFunc("POST /panel/v1/admin/invite-codes", handler.adminCreateInviteCode)
+	admin.HandleFunc("GET /panel/v1/admin/invite-codes/{id}/redemptions", handler.adminListInviteCodeRedemptions)
 	admin.HandleFunc("PATCH /panel/v1/admin/invite-codes/{id}", handler.adminUpdateInviteCode)
 	admin.HandleFunc("DELETE /panel/v1/admin/invite-codes/{id}", handler.adminDeleteInviteCode)
 	admin.HandleFunc("GET /panel/v1/admin/models", handler.adminListModels)

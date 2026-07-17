@@ -40,6 +40,22 @@ func (h *Handler) adminListInviteCodes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (h *Handler) adminListInviteCodeRedemptions(w http.ResponseWriter, r *http.Request) {
+	inviteCodeID := strings.TrimSpace(r.PathValue("id"))
+	if inviteCodeID == "" {
+		writeError(w, http.StatusBadRequest, "invite code id is required")
+		return
+	}
+
+	redemptions, err := h.Store.ListInviteCodeRedemptions(r.Context(), inviteCodeID)
+	if err != nil {
+		log.Printf("admin list invite code %q redemptions failed: %v", inviteCodeID, err)
+		writeError(w, http.StatusInternalServerError, "failed to list invite code registrations")
+		return
+	}
+	writeJSON(w, http.StatusOK, toInviteCodeRedemptionsResponse(redemptions))
+}
+
 func (h *Handler) adminCreateInviteCode(w http.ResponseWriter, r *http.Request) {
 	var req CreateInviteCodeRequest
 	if !decodeJSONBody(w, r, &req) {

@@ -173,3 +173,66 @@ func TestRegisterUserWithCurrentModeSupportsInitialFreeAndInviteModes(t *testing
 		}
 	})
 }
+
+func TestInviteRegistrationPersistsAuditHistoryAfterResourceDeletion(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+	administrator, err := sqliteStore.CreateUser(ctx, "audit-admin", "hash", RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inviteCode, rawInviteCode, err := sqliteStore.CreateInviteCode(ctx, administrator.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	registeredUser, err := sqliteStore.RegisterUserWithCurrentMode(
+		ctx,
+		"audited-invite-user",
+		"password-hash",
+		rawInviteCode,
+		RegistrationModeInvite,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	redemptions, err := sqliteStore.ListInviteCodeRedemptions(ctx, inviteCode.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(redemptions) != 1 {
+		t.Fatalf("invite redemption count = %d, want 1", len(redemptions))
+	}
+	redemption := redemptions[0]
+	if redemption.InviteCodeID != inviteCode.ID {
+		t.Fatalf("invite code ID = %q, want %q", redemption.InviteCodeID, inviteCode.ID)
+	}
+	if redemption.InviteCodePrefix != inviteCode.CodePrefix {
+		t.Fatalf("invite code prefix = %q, want %q", redemption.InviteCodePrefix, inviteCode.CodePrefix)
+	}
+	if redemption.UserID != registeredUser.ID || redemption.Username != registeredUser.Username {
+		t.Fatalf("unexpected redeemed user snapshot: %+v", redemption)
+	}
+	if redemption.RedeemedAt.IsZero() {
+		t.Fatal("redeemed_at must be persisted")
+	}
+
+	if err := sqliteStore.DeleteInviteCode(ctx, inviteCode.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.DeleteUser(ctx, registeredUser.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	retainedRedemptions, err := sqliteStore.ListInviteCodeRedemptions(ctx, inviteCode.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retainedRedemptions) != 1 {
+		t.Fatalf("retained invite redemption count = %d, want 1", len(retainedRedemptions))
+	}
+	if retainedRedemptions[0].UserID != registeredUser.ID || retainedRedemptions[0].Username != registeredUser.Username {
+		t.Fatalf("audit snapshot changed after deletion: %+v", retainedRedemptions[0])
+	}
+}

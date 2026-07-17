@@ -1,5 +1,6 @@
 import { escapeHTML, formatDateTime, formatNumber, formatPercent, getSuccessRate } from "../utils.js";
 import { renderIcon } from "./icons.js";
+import { renderInviteRedemptionsModal } from "./invite-redemptions-modal.js";
 import { renderMetricCard } from "./metric-card.js";
 import { renderChart } from "./usage-chart.js";
 import { renderUsageRecords } from "./usage-records.js";
@@ -32,6 +33,8 @@ export function renderModal(state) {
       return renderTierModal(modal, true);
     case "createInvite":
       return renderCreateInviteModal(modal);
+    case "inviteRedemptions":
+      return renderInviteRedemptionsModal(modal, renderModalFrame);
     case "debugJSON":
       return renderDebugJSONModal(modal);
     case "confirm":

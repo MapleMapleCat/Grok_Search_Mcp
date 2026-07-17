@@ -77,6 +77,52 @@
   transition: width 600ms var(--transition-smooth);
 }
 
+.invite-redemptions-list {
+  display: grid;
+  gap: 10px;
+}
+
+.invite-redemption-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--canvas-soft);
+}
+
+.invite-redemption-copy {
+  min-width: 0;
+}
+
+.invite-redemption-copy strong,
+.invite-redemption-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invite-redemption-copy strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.invite-redemption-copy span {
+  margin-top: 4px;
+  color: var(--ink-faint);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.invite-redemption-row time {
+  flex: 0 0 auto;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
 @media (max-width: 980px) {
 .invite-card {
     grid-template-columns: minmax(0, 1fr) minmax(160px, 0.65fr) auto;
@@ -99,5 +145,11 @@
 
   .invite-card .table-actions {
     justify-content: flex-start;
+  }
+
+  .invite-redemption-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
   }
 }

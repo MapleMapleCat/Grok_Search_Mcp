@@ -164,5 +164,15 @@ func registerUserWithInviteCodeInTransaction(
 	if updatedInviteCodeRows != 1 {
 		return "", ErrInviteCodeExhausted
 	}
+	if err := recordInviteCodeRedemptionInTransaction(
+		ctx,
+		transaction,
+		inviteCode,
+		userID,
+		username,
+		now,
+	); err != nil {
+		return "", err
+	}
 	return userID, nil
 }

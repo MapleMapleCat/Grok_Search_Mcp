@@ -102,6 +102,9 @@ func (TestStore) UpsertServerSettings(context.Context, ServerSettings) (*ServerS
 func (TestStore) ListInviteCodesPage(context.Context, *TimeIDCursor, int) (*InviteCodePage, error) {
 	return &InviteCodePage{}, nil
 }
+func (TestStore) ListInviteCodeRedemptions(context.Context, string) ([]*InviteCodeRedemption, error) {
+	return nil, nil
+}
 func (TestStore) CreateInviteCode(context.Context, string, int) (*InviteCode, string, error) {
 	return nil, "", nil
 }

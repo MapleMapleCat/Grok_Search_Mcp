@@ -53,6 +53,88 @@ func scanInviteCode(row interface {
 	return &inviteCode, nil
 }
 
+const inviteCodeRedemptionColumns = `id, invite_code_id, invite_code_prefix, user_id, username, redeemed_at`
+
+func scanInviteCodeRedemption(row interface {
+	Scan(dest ...any) error
+}) (*InviteCodeRedemption, error) {
+	var redemption InviteCodeRedemption
+	var redeemedAt string
+	if err := row.Scan(
+		&redemption.ID,
+		&redemption.InviteCodeID,
+		&redemption.InviteCodePrefix,
+		&redemption.UserID,
+		&redemption.Username,
+		&redeemedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	parsedRedeemedAt, err := parseTime(redeemedAt)
+	if err != nil {
+		return nil, err
+	}
+	redemption.RedeemedAt = parsedRedeemedAt
+	return &redemption, nil
+}
+
+func (s *SQLiteStore) ListInviteCodeRedemptions(ctx context.Context, inviteCodeID string) ([]*InviteCodeRedemption, error) {
+	rows, err := s.readDB.QueryContext(ctx,
+		`SELECT `+inviteCodeRedemptionColumns+`
+		 FROM invite_code_redemptions
+		 WHERE invite_code_id = ?
+		 ORDER BY redeemed_at DESC, id DESC`,
+		strings.TrimSpace(inviteCodeID),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	redemptions := make([]*InviteCodeRedemption, 0)
+	for rows.Next() {
+		redemption, scanErr := scanInviteCodeRedemption(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		redemptions = append(redemptions, redemption)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return redemptions, nil
+}
+
+func recordInviteCodeRedemptionInTransaction(
+	ctx context.Context,
+	transaction *sql.Tx,
+	inviteCode *InviteCode,
+	userID string,
+	username string,
+	redeemedAt string,
+) error {
+	redemptionID, err := randomID()
+	if err != nil {
+		return err
+	}
+	_, err = transaction.ExecContext(ctx,
+		`INSERT INTO invite_code_redemptions (
+			id, invite_code_id, invite_code_prefix, user_id, username, redeemed_at
+		 ) VALUES (?, ?, ?, ?, ?, ?)`,
+		redemptionID,
+		inviteCode.ID,
+		inviteCode.CodePrefix,
+		userID,
+		username,
+		redeemedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("insert invite code redemption: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) ListInviteCodesPage(ctx context.Context, cursor *TimeIDCursor, limit int) (*InviteCodePage, error) {
 	pageLimit := normalizePanelPageLimit(limit)
 	query := `SELECT ` + inviteCodeColumns + ` FROM invite_codes`
@@ -305,6 +387,16 @@ func (s *SQLiteStore) RegisterUserWithInviteCode(ctx context.Context, username, 
 	}
 	if updatedInviteCodeRows != 1 {
 		return nil, ErrInviteCodeExhausted
+	}
+	if err := recordInviteCodeRedemptionInTransaction(
+		ctx,
+		transaction,
+		inviteCode,
+		userID,
+		username,
+		now,
+	); err != nil {
+		return nil, err
 	}
 
 	if err := transaction.Commit(); err != nil {

@@ -349,6 +349,23 @@ func toInviteCodeResponse(inviteCode *store.InviteCode) InviteCodeResponse {
 	}
 }
 
+func toInviteCodeRedemptionsResponse(redemptions []*store.InviteCodeRedemption) InviteCodeRedemptionsResponse {
+	response := InviteCodeRedemptionsResponse{
+		Redemptions: make([]InviteCodeRedemptionResponse, 0, len(redemptions)),
+	}
+	for _, redemption := range redemptions {
+		response.Redemptions = append(response.Redemptions, InviteCodeRedemptionResponse{
+			ID:               redemption.ID,
+			InviteCodeID:     redemption.InviteCodeID,
+			InviteCodePrefix: redemption.InviteCodePrefix,
+			UserID:           redemption.UserID,
+			Username:         redemption.Username,
+			RedeemedAt:       redemption.RedeemedAt,
+		})
+	}
+	return response
+}
+
 func toModelsResponse(models []grok.Model) ModelsResponse {
 	filteredModels := grok.FilterGrokModels(models)
 	responseModels := make([]ModelResponse, 0, len(filteredModels))

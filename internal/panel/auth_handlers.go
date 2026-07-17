@@ -153,7 +153,7 @@ func (handler *Handler) register(writer http.ResponseWriter, request *http.Reque
 			return
 		}
 		log.Printf("register user %q failed: %v", username, err)
-		writeError(writer, http.StatusBadRequest, "registration failed")
+		writeError(writer, http.StatusInternalServerError, "registration failed")
 		return
 	}
 	writeJSON(writer, http.StatusCreated, toUserResponseWithTier(user, handler.loadUserTierForResponse(request.Context(), user)))

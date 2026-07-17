@@ -150,6 +150,10 @@ type registrationModeSwitchStore struct {
 	inviteCodeConsumed bool
 }
 
+type registrationInternalFailureStore struct {
+	store.TestStore
+}
+
 func (testStore *inviteRegistrationPrecheckStore) InviteCodeExists(context.Context, string) (bool, error) {
 	return testStore.inviteCodeExists, nil
 }
@@ -196,6 +200,26 @@ func (testStore *registrationModeSwitchStore) RegisterUserWithCurrentMode(
 		Role:     store.RoleUser,
 		Enabled:  true,
 	}, nil
+}
+
+func (testStore *registrationInternalFailureStore) GetServerSettings(context.Context) (*store.ServerSettings, error) {
+	serverSettings := &store.ServerSettings{}
+	serverSettings.RegistrationMode = store.RegistrationModeFree
+	return serverSettings, nil
+}
+
+func (testStore *registrationInternalFailureStore) GetUserByUsername(context.Context, string) (*store.User, error) {
+	return nil, nil
+}
+
+func (testStore *registrationInternalFailureStore) RegisterUserWithCurrentMode(
+	context.Context,
+	string,
+	string,
+	string,
+	store.RegistrationMode,
+) (*store.User, error) {
+	return nil, errors.New("database unavailable")
 }
 
 func (l staticModelLister) ListModels(context.Context) ([]grok.Model, error) {
@@ -594,6 +618,48 @@ func TestRegisterEnforcesModeObservedAtCreationBoundary(t *testing.T) {
 				t.Fatalf("inviteCodeConsumed = %t, want %t", testStore.inviteCodeConsumed, testCase.expectInviteCodeConsumed)
 			}
 		})
+	}
+}
+
+func TestRegisterReportsUnexpectedStoreFailureAsServerError(t *testing.T) {
+	testStore := &registrationInternalFailureStore{}
+	handler := &Handler{
+		Store:         testStore,
+		AuthProtector: newTestAuthProtector(),
+		passwordHashGenerator: func([]byte, int) ([]byte, error) {
+			return []byte("password-hash"), nil
+		},
+	}
+
+	challengeResponse, err := handler.AuthProtector.registrationProof.issue(handler.AuthProtector.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestBody, err := json.Marshal(RegisterRequest{
+		Username: "internal-failure-user",
+		Password: "password123",
+		Proof: solveIssuedRegistrationProof(
+			t,
+			challengeResponse,
+			"internal-failure-user",
+			"",
+		),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/panel/v1/auth/register", bytes.NewReader(requestBody))
+	responseRecorder := httptest.NewRecorder()
+
+	handler.register(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"status = %d, want %d; body = %s",
+			responseRecorder.Code,
+			http.StatusInternalServerError,
+			responseRecorder.Body.String(),
+		)
 	}
 }
 

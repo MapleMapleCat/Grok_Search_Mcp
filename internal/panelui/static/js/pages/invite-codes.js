@@ -27,6 +27,7 @@ export function renderInvitesPage(state) {
               <div class="progress-track"><span style="width:${usagePercent}%"></span></div>
             </div>
             <div class="table-actions">
+              <button class="table-action" type="button" data-action="view-invite-redemptions" data-id="${escapeHTML(inviteCode.id)}" aria-label="查看邀请码注册记录">${renderIcon("activity")}</button>
               ${inviteCode.code ? `<button class="table-action" type="button" data-action="copy-value" data-value="${escapeHTML(inviteCode.code)}" aria-label="复制邀请码">${renderIcon("copy")}</button>` : ""}
               <button class="table-action" type="button" data-action="toggle-invite" data-id="${escapeHTML(inviteCode.id)}" aria-label="${inviteCode.enabled ? "停用" : "启用"}邀请码">${inviteCode.enabled ? renderIcon("close") : renderIcon("check")}</button>
               <button class="table-action is-danger" type="button" data-action="confirm-delete-invite" data-id="${escapeHTML(inviteCode.id)}" aria-label="删除邀请码">${renderIcon("trash")}</button>
