@@ -46,6 +46,120 @@ func TestUpstreamProtocolsRejectOversizedResponses(t *testing.T) {
 	}
 }
 
+func TestForEachSSEEventAcceptsEventAtByteLimit(t *testing.T) {
+	payload := strings.Repeat("a", maxSSEEventBytes)
+	stream := "data: " + payload + "\n\n"
+
+	processedEvents := 0
+	err := forEachSSEEvent(strings.NewReader(stream), func(receivedPayload []byte) error {
+		processedEvents++
+		if len(receivedPayload) != maxSSEEventBytes {
+			t.Fatalf("payload length = %d, want %d", len(receivedPayload), maxSSEEventBytes)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse event at byte limit: %v", err)
+	}
+	if processedEvents != 1 {
+		t.Fatalf("processed event count = %d, want 1", processedEvents)
+	}
+}
+
+func TestForEachSSEEventRejectsEventOneByteOverLimit(t *testing.T) {
+	payload := strings.Repeat("a", maxSSEEventBytes+1)
+	stream := "data: " + payload + "\n\n"
+
+	err := forEachSSEEvent(strings.NewReader(stream), func([]byte) error {
+		t.Fatal("oversized event must not reach callback")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "stream event exceeded byte limit") {
+		t.Fatalf("expected explicit event byte limit error, got %v", err)
+	}
+}
+
+func TestForEachSSEEventCountsMultilineSeparatorBytes(t *testing.T) {
+	firstDataLine := strings.Repeat("a", maxSSEEventBytes-1)
+	stream := "data: " + firstDataLine + "\ndata: b\n\n"
+
+	err := forEachSSEEvent(strings.NewReader(stream), func([]byte) error {
+		t.Fatal("oversized multiline event must not reach callback")
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "stream event exceeded byte limit") {
+		t.Fatalf("expected multiline event byte limit error, got %v", err)
+	}
+}
+
+func TestForEachSSEEventRejectsAggregateStreamOverTotalLimit(t *testing.T) {
+	event := "data: " + strings.Repeat("a", 2048) + "\n\n"
+	eventCount := int(maxUpstreamResponseBytes)/len(event) + 1
+	stream := strings.Repeat(event, eventCount)
+
+	err := forEachSSEEvent(strings.NewReader(stream), func([]byte) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "total byte limit") {
+		t.Fatalf("expected total byte limit error, got %v", err)
+	}
+}
+
+func TestUpstreamSSEProtocolsRejectOversizedEvents(t *testing.T) {
+	oversizedStream := "data: " + strings.Repeat("a", maxSSEEventBytes+1) + "\n\n"
+	testCases := []struct {
+		name  string
+		parse func() error
+	}{
+		{
+			name: "responses",
+			parse: func() error {
+				_, err := parseSearchStream(strings.NewReader(oversizedStream), nil, nil)
+				return err
+			},
+		},
+		{
+			name: "chat completions",
+			parse: func() error {
+				_, err := parseChatCompletionsResponse(strings.NewReader(oversizedStream), nil, nil)
+				return err
+			},
+		},
+		{
+			name: "anthropic messages",
+			parse: func() error {
+				_, err := parseAnthropicMessagesResponse(strings.NewReader(oversizedStream))
+				return err
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := testCase.parse()
+			if err == nil || !strings.Contains(err.Error(), "stream event exceeded byte limit") {
+				t.Fatalf("expected event byte limit error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestForEachSSEEventIgnoresDoneAndNonDataFields(t *testing.T) {
+	stream := "event: message\nid: 1\ndata: [DONE]\n\n: comment\ndata: {}\n\n"
+	processedEvents := 0
+	err := forEachSSEEvent(strings.NewReader(stream), func(payload []byte) error {
+		processedEvents++
+		if string(payload) != "{}" {
+			t.Fatalf("unexpected payload: %q", payload)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("parse SSE control fields: %v", err)
+	}
+	if processedEvents != 1 {
+		t.Fatalf("processed event count = %d, want 1", processedEvents)
+	}
+}
+
 func TestForEachSSEEventRejectsExcessiveEventCount(t *testing.T) {
 	var stream strings.Builder
 	for eventIndex := 0; eventIndex <= maxSSEEventCount; eventIndex++ {
@@ -53,7 +167,7 @@ func TestForEachSSEEventRejectsExcessiveEventCount(t *testing.T) {
 	}
 
 	processedEvents := 0
-	err := forEachSSEEvent(strings.NewReader(stream.String()), func(string) error {
+	err := forEachSSEEvent(strings.NewReader(stream.String()), func([]byte) error {
 		processedEvents++
 		return nil
 	})

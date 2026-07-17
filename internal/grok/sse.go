@@ -2,6 +2,7 @@ package grok
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -9,64 +10,74 @@ import (
 
 const (
 	maxUpstreamResponseBytes   int64 = 8 * 1024 * 1024
-	maxSSEEventBytes                 = 8 * 1024 * 1024
+	maxSSEEventBytes                 = 1 * 1024 * 1024
 	maxSSEEventCount                 = 4096
 	maxSearchRoundCount              = 64
 	maxAggregatedAnswerBytes         = 2 * 1024 * 1024
 	maxCitationCount                 = 256
 	maxAggregatedCitationBytes       = 256 * 1024
+	maxSSELineBytes                  = maxSSEEventBytes + len("data: ") + 3
 )
 
 // forEachSSEEvent 按 SSE 规范解析响应体：空行分隔事件，多行 data: 拼接为一条 payload。
 // 忽略 "[DONE]" 哨兵；对每条有效 JSON payload 调用 onEvent。
-func forEachSSEEvent(r io.Reader, onEvent func(payload string) error) error {
+// payload 只在 onEvent 回调期间有效；需要跨事件保留时，调用方必须复制。
+func forEachSSEEvent(r io.Reader, onEvent func(payload []byte) error) error {
 	limitedReader := &io.LimitedReader{R: r, N: maxUpstreamResponseBytes + 1}
 	scanner := bufio.NewScanner(limitedReader)
-	// 上游可能推送较大的 completed 事件，放宽 Scanner 缓冲区上限。
-	scanner.Buffer(make([]byte, 0, 64*1024), maxSSEEventBytes+1)
+	// 为 data: 前缀、可选空格以及行尾预留空间，让 payload 上限由显式检查报告。
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
 
-	var dataLines []string
-	eventBytes := 0
+	var eventBuffer bytes.Buffer
+	dataLineCount := 0
 	eventCount := 0
 
 	flushEvent := func() error {
-		if len(dataLines) == 0 {
+		if dataLineCount == 0 {
 			return nil
 		}
-		payload := strings.Join(dataLines, "\n")
-		dataLines = nil
-		eventBytes = 0
+		payload := eventBuffer.Bytes()
 		eventCount++
 		if eventCount > maxSSEEventCount {
 			return fmt.Errorf("upstream stream exceeded event limit of %d", maxSSEEventCount)
 		}
 
-		if payload == "[DONE]" {
+		if bytes.Equal(payload, []byte("[DONE]")) {
+			eventBuffer.Reset()
+			dataLineCount = 0
 			return nil
 		}
 
-		return onEvent(payload)
+		if err := onEvent(payload); err != nil {
+			return err
+		}
+		eventBuffer.Reset()
+		dataLineCount = 0
+		return nil
 	}
 
 	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
+		line := scanner.Bytes()
+		if len(line) == 0 {
 			if err := flushEvent(); err != nil {
 				return err
 			}
 			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			dataLine := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if bytes.HasPrefix(line, []byte("data:")) {
+			dataLine := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
 			additionalBytes := len(dataLine)
-			if len(dataLines) > 0 {
+			if dataLineCount > 0 {
 				additionalBytes++
 			}
-			if eventBytes > maxSSEEventBytes-additionalBytes {
+			if additionalBytes > maxSSEEventBytes || eventBuffer.Len() > maxSSEEventBytes-additionalBytes {
 				return fmt.Errorf("upstream stream event exceeded byte limit of %d", maxSSEEventBytes)
 			}
-			eventBytes += additionalBytes
-			dataLines = append(dataLines, dataLine)
+			if dataLineCount > 0 {
+				eventBuffer.WriteByte('\n')
+			}
+			eventBuffer.Write(dataLine)
+			dataLineCount++
 		}
 	}
 

@@ -202,6 +202,79 @@ func TestParseChatCompletionsResponseDoesNotMisclassifyJSONTextAsSSE(t *testing.
 	}
 }
 
+func TestParseChatCompletionsResponsePreservesRawSSEBody(t *testing.T) {
+	stream := "data: {\"choices\":[{\"delta\":{\"content\":\"first answer\"}}]}\n\ndata: [DONE]\n\n"
+	result, err := parseChatCompletionsResponse(strings.NewReader(stream), nil, nil)
+	if err != nil {
+		t.Fatalf("parse chat completions SSE response: %v", err)
+	}
+	if string(result.RawResponse) != stream {
+		t.Fatalf("raw response changed:\n got: %q\nwant: %q", result.RawResponse, stream)
+	}
+
+	preservedRawResponse := string(result.RawResponse)
+	secondStream := "data: {\"choices\":[{\"delta\":{\"content\":\"second answer\"}}]}\n\ndata: [DONE]\n\n"
+	if _, err := parseChatCompletionsResponse(strings.NewReader(secondStream), nil, nil); err != nil {
+		t.Fatalf("parse second chat completions SSE response: %v", err)
+	}
+	if string(result.RawResponse) != preservedRawResponse {
+		t.Fatalf("later parse mutated prior raw response: %q", result.RawResponse)
+	}
+}
+
+func TestParseChatCompletionsResponseAcceptsLargeNonSSEBody(t *testing.T) {
+	responseBody := `{"padding":"` + strings.Repeat("a", maxSSEEventBytes+1) + `","choices":[{"message":{"content":"answer"}}]}`
+	result, err := parseChatCompletionsResponse(strings.NewReader(responseBody), nil, nil)
+	if err != nil {
+		t.Fatalf("parse large non-SSE response: %v", err)
+	}
+	if result.Answer != "answer" {
+		t.Fatalf("unexpected answer: %q", result.Answer)
+	}
+	if string(result.RawResponse) != responseBody {
+		t.Fatal("large non-SSE raw response was not preserved")
+	}
+}
+
+func TestParseChatCompletionsResponseAllowsTrailingWhitespace(t *testing.T) {
+	responseBody := " \n" + `{"choices":[{"message":{"content":"answer"}}]}` + "\n\t"
+	result, err := parseChatCompletionsResponse(strings.NewReader(responseBody), nil, nil)
+	if err != nil {
+		t.Fatalf("parse response with trailing whitespace: %v", err)
+	}
+	if result.Answer != "answer" {
+		t.Fatalf("unexpected answer: %q", result.Answer)
+	}
+	if string(result.RawResponse) != responseBody {
+		t.Fatalf("raw response changed: got %q, want %q", result.RawResponse, responseBody)
+	}
+}
+
+func TestParseChatCompletionsResponseRejectsTrailingJSONValue(t *testing.T) {
+	responseBody := `{"choices":[{"message":{"content":"answer"}}]} {"extra":true}`
+	_, err := parseChatCompletionsResponse(strings.NewReader(responseBody), nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "unexpected trailing JSON value") {
+		t.Fatalf("expected trailing JSON value error, got %v", err)
+	}
+}
+
+func TestParseSearchStreamRetainsCompletedPayloadAcrossLaterEvents(t *testing.T) {
+	completedPayload := `{"type":"response.completed","response":{"output":[{"content":[{"text":"answer"}]}]}}`
+	laterPayload := `{"type":"provider.status","padding":"` + strings.Repeat("x", len(completedPayload)) + `"}`
+	stream := "data: " + completedPayload + "\n\ndata: " + laterPayload + "\n\n"
+
+	result, err := parseSearchStream(strings.NewReader(stream), nil, nil)
+	if err != nil {
+		t.Fatalf("parse Responses stream: %v", err)
+	}
+	if result.Answer != "answer" {
+		t.Fatalf("unexpected answer: %q", result.Answer)
+	}
+	if string(result.RawResponse) != completedPayload {
+		t.Fatalf("completed payload changed: got %q, want %q", result.RawResponse, completedPayload)
+	}
+}
+
 func TestIsChatIntermediateAnswer(t *testing.T) {
 	testCases := []struct {
 		name         string

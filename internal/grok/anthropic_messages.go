@@ -178,9 +178,9 @@ func parseAnthropicMessagesResponse(body io.Reader) (*SearchResult, error) {
 	}
 
 	if bytes.Contains(rawBody, []byte("data:")) {
-		err = forEachSSEEvent(bytes.NewReader(rawBody), func(payload string) error {
+		err = forEachSSEEvent(bytes.NewReader(rawBody), func(payload []byte) error {
 			var response anthropicMessagesResponse
-			if decodeErr := json.Unmarshal([]byte(payload), &response); decodeErr != nil {
+			if decodeErr := json.Unmarshal(payload, &response); decodeErr != nil {
 				return fmt.Errorf("decode anthropic stream event: %w", decodeErr)
 			}
 			return consumeResponse(response)

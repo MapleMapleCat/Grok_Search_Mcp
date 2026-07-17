@@ -1,6 +1,7 @@
 package grok
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,43 +14,27 @@ type searchRoundTracker struct {
 	seen      map[string]struct{}
 }
 
-type searchOutputItemEvent struct {
-	Type string `json:"type"`
-	Item struct {
-		ID     string          `json:"id"`
-		Type   string          `json:"type"`
-		Action webSearchAction `json:"action"`
-		Query  string          `json:"query"`
-		URL    string          `json:"url"`
-	} `json:"item"`
-}
-
 func newSearchRoundTracker() *searchRoundTracker {
 	return &searchRoundTracker{seen: make(map[string]struct{})}
 }
 
 // emitSearchRound recognizes completed Responses search output items. Other
 // event shapes are ignored so they cannot create false progress notifications.
-func (t *searchRoundTracker) emitSearchRound(payload string, onRound func(SearchRound), log *logx.Logger) error {
-	var event searchOutputItemEvent
-	if err := json.Unmarshal([]byte(payload), &event); err != nil {
-		return fmt.Errorf("decode search event: %w", err)
-	}
-
-	if event.Type != "response.output_item.done" || !isSearchCallItem(event.Item.Type) {
+func (t *searchRoundTracker) emitSearchRound(eventType string, item streamOutputItem, onRound func(SearchRound), log *logx.Logger) error {
+	if eventType != "response.output_item.done" || !isSearchCallItem(item.Type) {
 		return nil
 	}
-	itemType := event.Item.Type
+	itemType := item.Type
 
 	query := firstNonEmptyString(
-		event.Item.Action.Query,
-		event.Item.Query,
+		item.Action.Query,
+		item.Query,
 	)
 	url := firstNonEmptyString(
-		event.Item.Action.URL,
-		event.Item.URL,
+		item.Action.URL,
+		item.URL,
 	)
-	eventID := event.Item.ID
+	eventID := item.ID
 	deduplicationKey := eventID
 	if deduplicationKey == "" {
 		deduplicationKey = itemType + "\x00" + query + "\x00" + url
@@ -77,9 +62,9 @@ func parseSearchStream(body io.Reader, onRound func(SearchRound), log *logx.Logg
 	var completedBody []byte
 	searchRounds := newSearchRoundTracker()
 
-	err := forEachSSEEvent(body, func(payload string) error {
+	err := forEachSSEEvent(body, func(payload []byte) error {
 		var event streamEvent
-		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		if err := json.Unmarshal(payload, &event); err != nil {
 			return fmt.Errorf("decode stream event: %w", err)
 		}
 
@@ -87,13 +72,13 @@ func parseSearchStream(body io.Reader, onRound func(SearchRound), log *logx.Logg
 		case "response.output_item.done":
 			// action（query/url）只在 output_item.done 时才完整。
 			// CPA 源码证据：output_item.added 的 item 只有 {id,type,status}，无 action。
-			if err := searchRounds.emitSearchRound(payload, onRound, log); err != nil {
+			if err := searchRounds.emitSearchRound(event.Type, event.Item, onRound, log); err != nil {
 				return err
 			}
 		case "response.completed":
-			completedBody = []byte(payload)
+			completedBody = bytes.Clone(payload)
 		case "error":
-			return fmt.Errorf("upstream stream error: %s", logx.Truncate(payload, 1024))
+			return fmt.Errorf("upstream stream error: %s", logx.Truncate(string(payload), 1024))
 		}
 		return nil
 	})

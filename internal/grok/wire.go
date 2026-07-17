@@ -64,8 +64,11 @@ type streamEvent struct {
 }
 
 type streamOutputItem struct {
+	ID     string          `json:"id"`
 	Type   string          `json:"type"`
 	Action webSearchAction `json:"action"`
+	Query  string          `json:"query"`
+	URL    string          `json:"url"`
 }
 
 type webSearchAction struct {

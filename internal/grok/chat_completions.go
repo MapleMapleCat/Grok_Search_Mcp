@@ -46,6 +46,8 @@ type chatSearchSource struct {
 }
 
 type chatCompletionsResponse struct {
+	Type          string            `json:"type"`
+	Item          streamOutputItem  `json:"item"`
 	Choices       []chatChoice      `json:"choices"`
 	Usage         chatUsage         `json:"usage"`
 	Citations     []json.RawMessage `json:"citations"`
@@ -176,10 +178,11 @@ func buildChatCompletionsRequest(req SearchRequest, defaultModel string) (string
 }
 
 func isChatIntermediateAnswer(answer string) bool {
-	normalizedAnswer := strings.ToLower(strings.TrimSpace(answer))
-	if normalizedAnswer == "" || len([]rune(normalizedAnswer)) > 320 {
+	trimmedAnswer := strings.TrimSpace(answer)
+	if trimmedAnswer == "" || exceedsRuneLimit(trimmedAnswer, 320) {
 		return false
 	}
+	normalizedAnswer := strings.ToLower(trimmedAnswer)
 
 	intermediatePhrases := []string{
 		"正在检索",
@@ -207,6 +210,17 @@ func isChatIntermediateAnswer(answer string) bool {
 	}
 	for _, phrase := range intermediatePhrases {
 		if strings.Contains(normalizedAnswer, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func exceedsRuneLimit(value string, maximumRunes int) bool {
+	runeCount := 0
+	for range value {
+		runeCount++
+		if runeCount > maximumRunes {
 			return true
 		}
 	}
@@ -262,23 +276,19 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 
 	if isSSE {
 		searchRounds := newSearchRoundTracker()
-		err = forEachSSEEvent(capturedBody, func(payload string) error {
-			if searchErr := searchRounds.emitSearchRound(payload, onRound, log); searchErr != nil {
-				return searchErr
-			}
+		err = forEachSSEEvent(capturedBody, func(payload []byte) error {
 			var response chatCompletionsResponse
-			if decodeErr := json.Unmarshal([]byte(payload), &response); decodeErr != nil {
+			if decodeErr := json.Unmarshal(payload, &response); decodeErr != nil {
 				return fmt.Errorf("decode chat completions stream event: %w", decodeErr)
+			}
+			if searchErr := searchRounds.emitSearchRound(response.Type, response.Item, onRound, log); searchErr != nil {
+				return searchErr
 			}
 			return consumeResponse(response)
 		})
 	} else {
-		responseBody, readErr := io.ReadAll(capturedBody)
-		if readErr != nil {
-			return nil, fmt.Errorf("read chat completions response: %w", readErr)
-		}
 		var response chatCompletionsResponse
-		err = json.Unmarshal(responseBody, &response)
+		err = decodeSingleChatCompletionsResponse(capturedBody, &response)
 		if err == nil {
 			err = consumeResponse(response)
 		}
@@ -303,6 +313,23 @@ func parseChatCompletionsResponse(body io.Reader, onRound func(SearchRound), log
 	}, nil
 }
 
+func decodeSingleChatCompletionsResponse(reader io.Reader, response *chatCompletionsResponse) error {
+	decoder := json.NewDecoder(reader)
+	if err := decoder.Decode(response); err != nil {
+		return fmt.Errorf("decode chat completions response: %w", err)
+	}
+
+	var trailingValue json.RawMessage
+	err := decoder.Decode(&trailingValue)
+	if err == io.EOF {
+		return nil
+	}
+	if err == nil {
+		return fmt.Errorf("decode chat completions response: unexpected trailing JSON value")
+	}
+	return fmt.Errorf("decode chat completions response trailing data: %w", err)
+}
+
 func collectChatMessageCitations(collector *citationCollector, message chatResponseMessage) {
 	collectRawCitations(collector, message.Annotations)
 	collectRawCitations(collector, message.Citations)
@@ -318,22 +345,81 @@ func collectRawCitations(collector *citationCollector, rawCitations []json.RawMe
 func identifyChatCompletionsResponse(bufferedBody *bufio.Reader) (io.Reader, bool, error) {
 	var inspectedPrefix bytes.Buffer
 	for {
-		line, readErr := bufferedBody.ReadString('\n')
-		inspectedPrefix.WriteString(line)
-
-		trimmedLine := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmedLine, "data:") || strings.HasPrefix(trimmedLine, "event:") {
-			return io.MultiReader(bytes.NewReader(inspectedPrefix.Bytes()), bufferedBody), true, nil
-		}
-		if strings.HasPrefix(trimmedLine, "{") || strings.HasPrefix(trimmedLine, "[") {
-			return io.MultiReader(bytes.NewReader(inspectedPrefix.Bytes()), bufferedBody), false, nil
-		}
-
+		firstNonWhitespaceByte, readErr := readFirstNonWhitespaceByte(bufferedBody, &inspectedPrefix)
 		if readErr == io.EOF {
 			return bytes.NewReader(inspectedPrefix.Bytes()), false, nil
 		}
 		if readErr != nil {
 			return nil, false, fmt.Errorf("inspect chat completions response: %w", readErr)
+		}
+		if firstNonWhitespaceByte == '{' || firstNonWhitespaceByte == '[' {
+			return io.MultiReader(bytes.NewReader(inspectedPrefix.Bytes()), bufferedBody), false, nil
+		}
+		checkedStreamPrefix := firstNonWhitespaceByte == 'd' || firstNonWhitespaceByte == 'e'
+		if checkedStreamPrefix {
+			expectedSuffix := "ata:"
+			if firstNonWhitespaceByte == 'e' {
+				expectedSuffix = "vent:"
+			}
+			matched, reachedEOF, matchErr := captureExpectedBytes(bufferedBody, &inspectedPrefix, expectedSuffix)
+			if matchErr != nil {
+				return nil, false, fmt.Errorf("inspect chat completions response: %w", matchErr)
+			}
+			if matched {
+				return io.MultiReader(bytes.NewReader(inspectedPrefix.Bytes()), bufferedBody), true, nil
+			}
+			if reachedEOF {
+				return bytes.NewReader(inspectedPrefix.Bytes()), false, nil
+			}
+		}
+
+		lineRemainder, lineReadErr := bufferedBody.ReadString('\n')
+		inspectedPrefix.WriteString(lineRemainder)
+		if !checkedStreamPrefix {
+			trimmedLine := strings.TrimSpace(string(firstNonWhitespaceByte) + lineRemainder)
+			if strings.HasPrefix(trimmedLine, "data:") || strings.HasPrefix(trimmedLine, "event:") {
+				return io.MultiReader(bytes.NewReader(inspectedPrefix.Bytes()), bufferedBody), true, nil
+			}
+			if strings.HasPrefix(trimmedLine, "{") || strings.HasPrefix(trimmedLine, "[") {
+				return io.MultiReader(bytes.NewReader(inspectedPrefix.Bytes()), bufferedBody), false, nil
+			}
+		}
+
+		if lineReadErr == io.EOF {
+			return bytes.NewReader(inspectedPrefix.Bytes()), false, nil
+		}
+		if lineReadErr != nil {
+			return nil, false, fmt.Errorf("inspect chat completions response: %w", lineReadErr)
+		}
+	}
+}
+
+func captureExpectedBytes(bufferedBody *bufio.Reader, inspectedPrefix *bytes.Buffer, expected string) (bool, bool, error) {
+	for expectedIndex := 0; expectedIndex < len(expected); expectedIndex++ {
+		value, err := bufferedBody.ReadByte()
+		if err == io.EOF {
+			return false, true, nil
+		}
+		if err != nil {
+			return false, false, err
+		}
+		inspectedPrefix.WriteByte(value)
+		if value != expected[expectedIndex] {
+			return false, false, nil
+		}
+	}
+	return true, false, nil
+}
+
+func readFirstNonWhitespaceByte(bufferedBody *bufio.Reader, inspectedPrefix *bytes.Buffer) (byte, error) {
+	for {
+		value, err := bufferedBody.ReadByte()
+		if err != nil {
+			return 0, err
+		}
+		inspectedPrefix.WriteByte(value)
+		if value != ' ' && value != '\t' && value != '\r' && value != '\n' {
+			return value, nil
 		}
 	}
 }
