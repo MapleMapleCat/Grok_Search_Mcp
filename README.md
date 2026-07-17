@@ -468,7 +468,7 @@ Authorization: Bearer <panel JWT>
 Published release images are available from Docker Hub:
 
 ```bash
-docker pull maplemaplecat/grok-search-mcp:v0.2.0
+docker pull maplemaplecat/grok-search-mcp:v0.2.1
 ```
 
 ```bash

@@ -457,7 +457,7 @@ Authorization: Bearer <面板 JWT>
 已发布的版本镜像可从 Docker Hub 拉取：
 
 ```bash
-docker pull maplemaplecat/grok-search-mcp:v0.2.0
+docker pull maplemaplecat/grok-search-mcp:v0.2.1
 ```
 
 ```bash
