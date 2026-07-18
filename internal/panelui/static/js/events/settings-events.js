@@ -1,6 +1,7 @@
 import { fetchModels, updateSettings } from "../api.js";
 import { renderIcon } from "../components/icons.js";
 import { showToast } from "../components/toast.js";
+import { renderSafeHTML } from "../safe-html.js";
 import { createFormDataObject } from "../utils.js";
 import { getErrorMessage } from "./event-helpers.js";
 
@@ -60,9 +61,12 @@ export function createSettingsEvents({
   }
 
   async function loadAvailableModels(actionElement) {
-    const previousContent = actionElement.innerHTML;
+    const previousContentNodes = Array.from(
+      actionElement.childNodes,
+      (childNode) => childNode.cloneNode(true)
+    );
     actionElement.disabled = true;
-    actionElement.innerHTML = `${renderIcon("refresh")} 正在拉取`;
+    renderSafeHTML(actionElement, `${renderIcon("refresh")} 正在拉取`);
     try {
       const modelResponse = await fetchModels();
       state.data.models = modelResponse?.models || [];
@@ -71,7 +75,7 @@ export function createSettingsEvents({
     } catch (error) {
       if (!handleSessionError(error)) {
         actionElement.disabled = false;
-        actionElement.innerHTML = previousContent;
+        actionElement.replaceChildren(...previousContentNodes);
         showToast("模型加载失败", getErrorMessage(error), "error");
       }
     }

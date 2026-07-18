@@ -1,4 +1,5 @@
 import { renderIcon } from "./icons.js";
+import { renderSafeHTML } from "../safe-html.js";
 
 let configuredToastRegionElement = null;
 
@@ -14,11 +15,11 @@ export function showToast(title, message, type = "success") {
 
   const toastElement = document.createElement("article");
   toastElement.className = `toast ${type === "error" ? "is-error" : ""}`;
-  toastElement.innerHTML = `
+  renderSafeHTML(toastElement, `
     <span class="toast-icon">${renderIcon(type === "error" ? "alert" : "check")}</span>
     <span class="toast-copy"><strong></strong><span></span></span>
     <button class="toast-close" type="button" aria-label="关闭通知">${renderIcon("close")}</button>
-  `;
+  `);
   toastElement.querySelector("strong").textContent = title;
   toastElement.querySelector(".toast-copy span").textContent = message;
 

@@ -1,6 +1,7 @@
 package panelui
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -96,6 +97,46 @@ func TestHandlerServesOperationsMetricsStylesheet(t *testing.T) {
 	assertPanelUICacheHeaders(t, responseRecorder)
 	if contentType := responseRecorder.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/css") {
 		t.Fatalf("Content-Type = %q, want text/css", contentType)
+	}
+}
+
+func TestPanelUIHTMLSinksAreCentralized(t *testing.T) {
+	const safeHTMLModulePath = "static/js/safe-html.js"
+	const innerHTMLSink = ".innerHTML"
+
+	err := fs.WalkDir(embeddedStatic, "static", func(assetPath string, directoryEntry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if directoryEntry.IsDir() || !strings.HasSuffix(assetPath, ".js") {
+			return nil
+		}
+
+		assetContent, readErr := embeddedStatic.ReadFile(assetPath)
+		if readErr != nil {
+			return readErr
+		}
+		content := string(assetContent)
+		for _, forbiddenSink := range []string{".outerHTML", "insertAdjacentHTML(", "document.write("} {
+			if strings.Contains(content, forbiddenSink) {
+				t.Errorf("%s contains forbidden HTML sink %q", assetPath, forbiddenSink)
+			}
+		}
+
+		innerHTMLCount := strings.Count(content, innerHTMLSink)
+		if assetPath == safeHTMLModulePath {
+			if innerHTMLCount != 1 {
+				t.Errorf("%s innerHTML sink count = %d, want 1", assetPath, innerHTMLCount)
+			}
+			return nil
+		}
+		if innerHTMLCount != 0 {
+			t.Errorf("%s bypasses renderSafeHTML with %d innerHTML sink(s)", assetPath, innerHTMLCount)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

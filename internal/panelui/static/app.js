@@ -17,6 +17,7 @@ import { renderModal } from "./js/components/modal.js";
 import { configureToastRegion, showToast } from "./js/components/toast.js";
 import { createApplicationEvents } from "./js/events.js";
 import { adminPages, availablePages, isStaticPage, pageMetadata, renderShell } from "./js/router.js";
+import { renderSafeHTML } from "./js/safe-html.js";
 import {
   clearAuthenticatedState,
   COLLECTION_PAGE_SIZE,
@@ -41,7 +42,7 @@ function abortCurrentPageLoad() {
 }
 
 function renderApplication() {
-  applicationElement.innerHTML = state.authenticated ? renderShell(state) : renderAuthView(state);
+  renderSafeHTML(applicationElement, state.authenticated ? renderShell(state) : renderAuthView(state));
   renderModalRegion();
   document.title = state.authenticated
     ? `${pageMetadata[state.currentPage]?.title || "控制台"} · Grok Search MCP`
@@ -49,7 +50,7 @@ function renderApplication() {
 }
 
 function renderModalRegion() {
-  modalRegionElement.innerHTML = renderModal(state);
+  renderSafeHTML(modalRegionElement, renderModal(state));
 }
 
 async function initializeApplication() {

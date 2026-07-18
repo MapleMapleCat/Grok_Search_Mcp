@@ -6,11 +6,12 @@ const legacyPanelTokenStorageKey = "grok-mcp-panel-token";
 const legacyPanelTokenExpiryStorageKey = "grok-mcp-panel-token-expiry";
 
 export class APIError extends Error {
-  constructor(message, status, retryAfterSeconds = null) {
+  constructor(message, status, retryAfterSeconds = null, code = "") {
     super(message);
     this.name = "APIError";
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.code = code;
   }
 }
 
@@ -100,7 +101,13 @@ export class PanelAPI {
       const retryAfterHeader = response.headers.get("Retry-After");
       const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : null;
       const upstreamMessage = typeof responseData === "object" ? responseData?.error : "";
-      throw new APIError(translateBackendError(upstreamMessage, response.status), response.status, retryAfterSeconds);
+      const errorCode = typeof responseData === "object" ? String(responseData?.code || "") : "";
+      throw new APIError(
+        translateBackendError(upstreamMessage, response.status),
+        response.status,
+        retryAfterSeconds,
+        errorCode
+      );
     }
 
     return responseData;

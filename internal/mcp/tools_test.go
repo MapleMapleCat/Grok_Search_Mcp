@@ -197,7 +197,7 @@ func TestXSearchInputSchemaOmitsWebOnlyFields(t *testing.T) {
 
 func TestFormatSearchRoundMessageSearch(t *testing.T) {
 	got := formatSearchRoundMessage(grok.SearchRound{Round: 1, Query: "capital of France"})
-	want := `🔍 第1轮：搜索 "capital of France"`
+	want := `Search round 1: querying "capital of France"`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -205,7 +205,7 @@ func TestFormatSearchRoundMessageSearch(t *testing.T) {
 
 func TestFormatSearchRoundMessageFetch(t *testing.T) {
 	got := formatSearchRoundMessage(grok.SearchRound{Round: 2, URL: "https://example.com/france"})
-	want := "📄 第2轮：读取 https://example.com/france"
+	want := "Search round 2: reading https://example.com/france"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -213,7 +213,7 @@ func TestFormatSearchRoundMessageFetch(t *testing.T) {
 
 func TestFormatSearchRoundMessageEmpty(t *testing.T) {
 	got := formatSearchRoundMessage(grok.SearchRound{Round: 3})
-	want := "🔍 第3轮：搜索中"
+	want := "Search round 3: searching"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

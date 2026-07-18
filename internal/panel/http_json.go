@@ -14,8 +14,47 @@ func writeJSON(writer http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(writer).Encode(value)
 }
 
+type errorResponse struct {
+	Code  string `json:"code"`
+	Error string `json:"error"`
+}
+
 func writeError(writer http.ResponseWriter, status int, message string) {
-	writeJSON(writer, status, map[string]string{"error": message})
+	writeJSON(writer, status, errorResponse{
+		Code:  defaultErrorCode(status),
+		Error: message,
+	})
+}
+
+func defaultErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "invalid_request"
+	case http.StatusUnauthorized:
+		return "unauthorized"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusMethodNotAllowed:
+		return "method_not_allowed"
+	case http.StatusConflict:
+		return "conflict"
+	case http.StatusRequestEntityTooLarge:
+		return "payload_too_large"
+	case http.StatusUnsupportedMediaType:
+		return "unsupported_media_type"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
+	case http.StatusBadGateway:
+		return "upstream_error"
+	case http.StatusServiceUnavailable:
+		return "unavailable"
+	case http.StatusInternalServerError:
+		return "internal_error"
+	default:
+		return "request_failed"
+	}
 }
 
 func decodeJSONBody(writer http.ResponseWriter, request *http.Request, destination any) bool {

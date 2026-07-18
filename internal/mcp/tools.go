@@ -211,15 +211,16 @@ func runSearch(ctx context.Context, req *mcp.CallToolRequest, client *grok.Clien
 	return nil, output, nil
 }
 
-// formatSearchRoundMessage 将上游搜索轮次格式化为面向终端用户的进度文案。
+// formatSearchRoundMessage keeps protocol-facing progress messages in English,
+// matching the language used by MCP tool errors and schema descriptions.
 func formatSearchRoundMessage(round grok.SearchRound) string {
 	if q := strings.TrimSpace(round.Query); q != "" {
-		return fmt.Sprintf("🔍 第%d轮：搜索 \"%s\"", round.Round, q)
+		return fmt.Sprintf("Search round %d: querying \"%s\"", round.Round, q)
 	}
 	if u := strings.TrimSpace(round.URL); u != "" {
-		return fmt.Sprintf("📄 第%d轮：读取 %s", round.Round, u)
+		return fmt.Sprintf("Search round %d: reading %s", round.Round, u)
 	}
-	return fmt.Sprintf("🔍 第%d轮：搜索中", round.Round)
+	return fmt.Sprintf("Search round %d: searching", round.Round)
 }
 
 // toolError 构造 MCP 约定的 IsError 工具结果（不向 Go error 传播，避免断开会话）。

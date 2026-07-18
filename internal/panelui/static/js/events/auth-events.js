@@ -2,6 +2,7 @@ import { fetchRegistrationChallenge, login, panelAPI, register } from "../api.js
 import { renderIcon } from "../components/icons.js";
 import { showToast } from "../components/toast.js";
 import { solveRegistrationProof } from "../registration-proof.js";
+import { renderSafeHTML } from "../safe-html.js";
 import { clearAuthenticatedState, clearCachedData } from "../state.js";
 import { createFormDataObject } from "../utils.js";
 import { getErrorMessage, withRetryAfter } from "./event-helpers.js";
@@ -26,7 +27,7 @@ export function createAuthEvents({
     }
     const shouldShowPassword = passwordInput.type === "password";
     passwordInput.type = shouldShowPassword ? "text" : "password";
-    actionElement.innerHTML = renderIcon(shouldShowPassword ? "eyeOff" : "eye");
+    renderSafeHTML(actionElement, renderIcon(shouldShowPassword ? "eyeOff" : "eye"));
     passwordInput.focus();
   }
 
