@@ -8,6 +8,7 @@ FROM ${GO_IMG} AS builder
 
 # Use the upstream Go module proxy by default.
 ARG GOPROXY=https://proxy.golang.org,direct
+ARG RELEASE_VERSION=""
 ENV GOPROXY=${GOPROXY}
 
 WORKDIR /src
@@ -19,11 +20,15 @@ RUN go mod download
 COPY . .
 
 # modernc.org/sqlite is pure Go, so CGO can stay disabled and the runtime image
-# does not need a compiler toolchain or libc compatibility packages. The image
-# version comes directly from internal/version.Version in the copied source.
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# does not need a compiler toolchain or libc compatibility packages. Release
+# builds can override the source version without changing local build defaults.
+RUN release_ldflags="-s -w" \
+        && if [ -n "${RELEASE_VERSION}" ]; then \
+            release_ldflags="${release_ldflags} -X github.com/MapleMapleCat/Grok_Search_Mcp/internal/version.Version=${RELEASE_VERSION}"; \
+        fi \
+        && CGO_ENABLED=0 GOOS=linux go build \
         -trimpath \
-        -ldflags "-s -w" \
+        -ldflags "${release_ldflags}" \
         -o /out/grok-search-mcp ./cmd/grok-search-mcp
 
 # ---- runtime stage ----
