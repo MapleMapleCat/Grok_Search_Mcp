@@ -314,6 +314,58 @@ export function fetchTiers(options = {}) {
   return panelAPI.request(buildCollectionPath("/panel/v1/admin/tiers", { cursor, limit }), requestOptions);
 }
 
+export async function fetchAllTiers(options = {}) {
+  const { cursor = "", limit = 100, ...requestOptions } = options;
+  const tiers = [];
+  const seenCursors = new Set();
+  const seenTierIdentifiers = new Set();
+  let currentCursor = cursor;
+  let firstPageResponse = null;
+
+  while (true) {
+    if (seenCursors.has(currentCursor)) {
+      throw new Error("配额方案分页游标重复，无法加载完整列表。");
+    }
+    seenCursors.add(currentCursor);
+
+    const pageResponse = await fetchTiers({
+      ...requestOptions,
+      cursor: currentCursor,
+      limit
+    });
+    if (!Array.isArray(pageResponse?.tiers)) {
+      throw new Error("配额方案分页响应无效，无法加载完整列表。");
+    }
+    if (!firstPageResponse) {
+      firstPageResponse = pageResponse;
+    }
+
+    for (const tier of pageResponse.tiers) {
+      const tierIdentifier = String(tier?.id || "");
+      if (!tierIdentifier || seenTierIdentifiers.has(tierIdentifier)) {
+        throw new Error("配额方案分页结果重复或缺少标识，无法加载完整列表。");
+      }
+      seenTierIdentifiers.add(tierIdentifier);
+      tiers.push(tier);
+    }
+
+    if (!pageResponse.has_more) {
+      return {
+        ...firstPageResponse,
+        tiers,
+        next_cursor: "",
+        has_more: false
+      };
+    }
+
+    const nextCursor = pageResponse.next_cursor;
+    if (typeof nextCursor !== "string" || nextCursor.length === 0) {
+      throw new Error("配额方案分页缺少后续游标，无法加载完整列表。");
+    }
+    currentCursor = nextCursor;
+  }
+}
+
 export function createTier(tierData) {
   return panelAPI.request("/panel/v1/admin/tiers", { method: "POST", body: tierData });
 }

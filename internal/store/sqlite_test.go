@@ -1130,6 +1130,58 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 	}
 }
 
+func TestListTiersPageContinuesBeyondFirstHundredWithoutGaps(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+
+	var finalCreatedTierID string
+	for tierNumber := 1; tierNumber <= 101; tierNumber++ {
+		tier, err := sqliteStore.CreateTier(
+			requestContext,
+			fmt.Sprintf("pagination-tier-%03d", tierNumber),
+			100+tierNumber,
+			tierNumber,
+			tierNumber*100,
+		)
+		if err != nil {
+			t.Fatalf("create pagination tier %d: %v", tierNumber, err)
+		}
+		finalCreatedTierID = tier.ID
+	}
+
+	firstPage, err := sqliteStore.ListTiersPage(requestContext, nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstPage.Tiers) != 100 || !firstPage.HasMore || firstPage.NextCursor == nil {
+		t.Fatalf("unexpected first tier page: count=%d has_more=%t next_cursor=%+v", len(firstPage.Tiers), firstPage.HasMore, firstPage.NextCursor)
+	}
+
+	secondPage, err := sqliteStore.ListTiersPage(requestContext, firstPage.NextCursor, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondPage.HasMore || secondPage.NextCursor != nil {
+		t.Fatalf("unexpected continuation after final tier page: has_more=%t next_cursor=%+v", secondPage.HasMore, secondPage.NextCursor)
+	}
+
+	seenTierIdentifiers := make(map[string]struct{}, int(firstPage.TotalCount))
+	for _, page := range []*TierPage{firstPage, secondPage} {
+		for _, tier := range page.Tiers {
+			if _, alreadySeen := seenTierIdentifiers[tier.ID]; alreadySeen {
+				t.Fatalf("tier %s appeared on more than one cursor page", tier.ID)
+			}
+			seenTierIdentifiers[tier.ID] = struct{}{}
+		}
+	}
+	if int64(len(seenTierIdentifiers)) != firstPage.TotalCount {
+		t.Fatalf("loaded %d unique tiers across pages, want total_count %d", len(seenTierIdentifiers), firstPage.TotalCount)
+	}
+	if _, found := seenTierIdentifiers[finalCreatedTierID]; !found {
+		t.Fatalf("final created tier %s was not reachable through cursor pagination", finalCreatedTierID)
+	}
+}
+
 func TestMigrateIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "m.db")

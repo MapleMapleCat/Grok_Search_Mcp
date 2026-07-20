@@ -1,5 +1,6 @@
 import {
   APIError,
+  fetchAllTiers,
   fetchAdminUsers,
   fetchCurrentUser,
   fetchInviteCodes,
@@ -235,7 +236,7 @@ async function loadPageData(page, signal) {
           cursor: state.pagination.users.cursor,
           limit: COLLECTION_PAGE_SIZE
         }),
-        fetchTiers({ signal, limit: 100 })
+        fetchAllTiers({ signal, limit: 100 })
       ]);
       return { userResponse, tierResponse };
     }
