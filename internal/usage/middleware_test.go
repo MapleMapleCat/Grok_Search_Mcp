@@ -31,7 +31,13 @@ func (f *fakeStore) RecordUsage(_ context.Context, record store.UsageRecord) err
 	return nil
 }
 
-func (f *fakeStore) ReleaseSuccessCall(context.Context, string) error { return nil }
+func (f *fakeStore) ReleaseSuccessCall(context.Context, store.SuccessQuotaReservation) error {
+	return nil
+}
+
+func testSuccessQuotaReservation(userID string) store.SuccessQuotaReservation {
+	return store.SuccessQuotaReservation{UserID: userID, Period: "2026-01"}
+}
 
 func (f *fakeStore) RecordedUsage() []store.UsageRecord {
 	f.mu.Lock()
@@ -307,30 +313,40 @@ func (f *flushRecorder) Flush() {
 // releaseCountingStore 记录 ReleaseSuccessCall 调用次数，用于断言 panic 时的回滚行为。
 type releaseCountingStore struct {
 	store.TestStore
-	releaseSuccessCalls int
+	releasedReservations []store.SuccessQuotaReservation
 }
 
-func (r *releaseCountingStore) ReleaseSuccessCall(context.Context, string) error {
-	r.releaseSuccessCalls++
+func (r *releaseCountingStore) ReleaseSuccessCall(_ context.Context, reservation store.SuccessQuotaReservation) error {
+	r.releasedReservations = append(r.releasedReservations, reservation)
 	return nil
 }
 
 type releaseContextRecordingStore struct {
 	store.TestStore
-	releaseSuccessCalls int
-	releaseContextErr   error
+	releasedReservations []store.SuccessQuotaReservation
+	releaseContextErr    error
 }
 
-func (r *releaseContextRecordingStore) ReleaseSuccessCall(ctx context.Context, _ string) error {
-	r.releaseSuccessCalls++
+type panickingQuotaReleaser struct {
+	store.TestStore
+	releaseAttempts int
+}
+
+func (releaser *panickingQuotaReleaser) ReleaseSuccessCall(context.Context, store.SuccessQuotaReservation) error {
+	releaser.releaseAttempts++
+	panic("quota release failed unexpectedly")
+}
+
+func (r *releaseContextRecordingStore) ReleaseSuccessCall(ctx context.Context, reservation store.SuccessQuotaReservation) error {
+	r.releasedReservations = append(r.releasedReservations, reservation)
 	r.releaseContextErr = ctx.Err()
 	return nil
 }
 
 type failureRecordingStore struct {
 	store.TestStore
-	releaseSuccessCalls int
-	recordedUsage       []store.UsageRecord
+	releasedReservations []store.SuccessQuotaReservation
+	recordedUsage        []store.UsageRecord
 }
 
 type debugCaptureRecordingStore struct {
@@ -472,6 +488,7 @@ func TestMCPMiddlewarePrefersAuthoritativeSemanticOutcome(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
+			expectedReservation := testSuccessQuotaReservation("u1")
 			usageStore := &failureRecordingStore{}
 			writer := store.NewAsyncUsageWriter(usageStore, 4)
 			handler := MCPMiddleware(usageStore, writer)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -483,6 +500,7 @@ func TestMCPMiddlewarePrefersAuthoritativeSemanticOutcome(t *testing.T) {
 			requestContext := auth.WithAPIKey(request.Context(), &store.APIKey{ID: "k1"})
 			requestContext = auth.WithUser(requestContext, &auth.AuthenticatedUser{User: store.User{ID: "u1"}})
 			requestContext = WithToolName(requestContext, "grok_web_search")
+			requestContext = WithSuccessQuotaReservation(requestContext, expectedReservation)
 			request = request.WithContext(requestContext)
 			handler.ServeHTTP(httptest.NewRecorder(), request)
 			writer.Close()
@@ -493,8 +511,11 @@ func TestMCPMiddlewarePrefersAuthoritativeSemanticOutcome(t *testing.T) {
 			if usageStore.recordedUsage[0].Success != testCase.expectedSuccess {
 				t.Fatalf("recorded success = %t, want %t", usageStore.recordedUsage[0].Success, testCase.expectedSuccess)
 			}
-			if usageStore.releaseSuccessCalls != testCase.expectedQuotaRelease {
-				t.Fatalf("quota releases = %d, want %d", usageStore.releaseSuccessCalls, testCase.expectedQuotaRelease)
+			if len(usageStore.releasedReservations) != testCase.expectedQuotaRelease {
+				t.Fatalf("quota releases = %d, want %d", len(usageStore.releasedReservations), testCase.expectedQuotaRelease)
+			}
+			if testCase.expectedQuotaRelease == 1 && usageStore.releasedReservations[0] != expectedReservation {
+				t.Fatalf("released reservation = %+v, want %+v", usageStore.releasedReservations[0], expectedReservation)
 			}
 		})
 	}
@@ -531,8 +552,8 @@ func TestMCPMiddlewareCleansDebugSpoolsOnPanic(t *testing.T) {
 	}
 }
 
-func (f *failureRecordingStore) ReleaseSuccessCall(_ context.Context, _ string) error {
-	f.releaseSuccessCalls++
+func (f *failureRecordingStore) ReleaseSuccessCall(_ context.Context, reservation store.SuccessQuotaReservation) error {
+	f.releasedReservations = append(f.releasedReservations, reservation)
 	return nil
 }
 
@@ -570,6 +591,7 @@ func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testin
 		t.Run(testCase.name, func(t *testing.T) {
 			key := &store.APIKey{ID: "k1"}
 			user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
+			expectedReservation := testSuccessQuotaReservation(user.ID)
 			st := &failureRecordingStore{}
 			writer := store.NewAsyncUsageWriter(st, 8)
 			h := MCPMiddleware(st, writer)(testCase.handler)
@@ -578,13 +600,14 @@ func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testin
 			ctx := auth.WithAPIKey(req.Context(), key)
 			ctx = auth.WithUser(ctx, user)
 			ctx = WithToolName(ctx, "grok_web_search")
+			ctx = WithSuccessQuotaReservation(ctx, expectedReservation)
 			req = req.WithContext(ctx)
 
 			h.ServeHTTP(httptest.NewRecorder(), req)
 			writer.Close()
 
-			if st.releaseSuccessCalls != 1 {
-				t.Fatalf("expected one quota release, got %d", st.releaseSuccessCalls)
+			if len(st.releasedReservations) != 1 || st.releasedReservations[0] != expectedReservation {
+				t.Fatalf("released reservations = %+v, want [%+v]", st.releasedReservations, expectedReservation)
 			}
 			if len(st.recordedUsage) != 1 {
 				t.Fatalf("expected one usage record, got %+v", st.recordedUsage)
@@ -594,6 +617,43 @@ func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testin
 			}
 			if st.recordedUsage[0].ToolName != "grok_web_search" {
 				t.Fatalf("unexpected tool name in usage record: %+v", st.recordedUsage[0])
+			}
+		})
+	}
+}
+
+func TestMCPMiddlewareSkipsReleaseWithoutUsableReservation(t *testing.T) {
+	testCases := []struct {
+		name        string
+		reservation store.SuccessQuotaReservation
+	}{
+		{name: "missing reservation"},
+		{name: "missing period", reservation: store.SuccessQuotaReservation{UserID: "u1"}},
+		{name: "missing user", reservation: store.SuccessQuotaReservation{Period: "2026-01"}},
+		{name: "malformed period", reservation: store.SuccessQuotaReservation{UserID: "u1", Period: "January"}},
+		{name: "different user", reservation: store.SuccessQuotaReservation{UserID: "other-user", Period: "2026-01"}},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			usageStore := &failureRecordingStore{}
+			handler := MCPMiddleware(usageStore, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "upstream unavailable", http.StatusBadGateway)
+			}))
+
+			request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+			requestContext := auth.WithAPIKey(request.Context(), &store.APIKey{ID: "k1"})
+			requestContext = auth.WithUser(requestContext, &auth.AuthenticatedUser{User: store.User{ID: "unrelated-user"}})
+			requestContext = WithToolName(requestContext, "grok_web_search")
+			if testCase.reservation != (store.SuccessQuotaReservation{}) {
+				requestContext = WithSuccessQuotaReservation(requestContext, testCase.reservation)
+			}
+			request = request.WithContext(requestContext)
+
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+
+			if len(usageStore.releasedReservations) != 0 {
+				t.Fatalf("missing or invalid token released quota: %+v", usageStore.releasedReservations)
 			}
 		})
 	}
@@ -613,12 +673,14 @@ func TestMCPMiddlewareReleasesWithLiveContextAfterRequestCancel(t *testing.T) {
 	ctx := auth.WithAPIKey(req.Context(), key)
 	ctx = auth.WithUser(ctx, user)
 	ctx = WithToolName(ctx, "grok_web_search")
+	expectedReservation := testSuccessQuotaReservation(user.ID)
+	ctx = WithSuccessQuotaReservation(ctx, expectedReservation)
 	req = req.WithContext(ctx)
 
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
-	if st.releaseSuccessCalls != 1 {
-		t.Fatalf("expected one quota release, got %d", st.releaseSuccessCalls)
+	if len(st.releasedReservations) != 1 || st.releasedReservations[0] != expectedReservation {
+		t.Fatalf("released reservations = %+v, want [%+v]", st.releasedReservations, expectedReservation)
 	}
 	if st.releaseContextErr != nil {
 		t.Fatalf("quota release must detach from canceled request context, got context err %v", st.releaseContextErr)
@@ -660,16 +722,43 @@ func TestMCPMiddlewareReleasesOnPanic(t *testing.T) {
 		strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"grok_web_search"}}`))
 	req = req.WithContext(auth.WithAPIKey(req.Context(), key))
 	req = req.WithContext(auth.WithUser(req.Context(), user))
+	expectedReservation := testSuccessQuotaReservation(user.ID)
+	req = req.WithContext(WithSuccessQuotaReservation(req.Context(), expectedReservation))
 
 	defer func() {
 		if recover() == nil {
 			t.Fatal("expected panic to propagate")
 		}
-		if st.releaseSuccessCalls != 1 {
-			t.Fatalf("expected release success on panic, got %d", st.releaseSuccessCalls)
+		if len(st.releasedReservations) != 1 || st.releasedReservations[0] != expectedReservation {
+			t.Fatalf("released reservations = %+v, want [%+v]", st.releasedReservations, expectedReservation)
 		}
 	}()
 	h.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestMCPMiddlewareDoesNotRetryPanickingQuotaRelease(t *testing.T) {
+	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
+	quotaReleaser := &panickingQuotaReleaser{}
+	handler := MCPMiddleware(quotaReleaser, nil)(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		http.Error(responseWriter, "upstream unavailable", http.StatusBadGateway)
+	}))
+
+	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{}`))
+	requestContext := auth.WithAPIKey(request.Context(), &store.APIKey{ID: "k1"})
+	requestContext = auth.WithUser(requestContext, user)
+	requestContext = WithToolName(requestContext, "grok_web_search")
+	requestContext = WithSuccessQuotaReservation(requestContext, testSuccessQuotaReservation(user.ID))
+	request = request.WithContext(requestContext)
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected quota release panic to propagate")
+		}
+		if quotaReleaser.releaseAttempts != 1 {
+			t.Fatalf("quota release attempts = %d, want 1", quotaReleaser.releaseAttempts)
+		}
+	}()
+	handler.ServeHTTP(httptest.NewRecorder(), request)
 }
 
 // TestExtractToolNameMiddlewareWritesContext 验证提取中间件把工具名写入 context，

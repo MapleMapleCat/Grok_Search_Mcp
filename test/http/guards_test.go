@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,10 +42,24 @@ func bootIntegrationEnv(t *testing.T, cpa *httptest.Server) *integrationEnv {
 }
 
 func bootIntegrationEnvWithSearchConcurrency(t *testing.T, cpa *httptest.Server, globalLimit, perUserLimit int) *integrationEnv {
+	return bootIntegrationEnvWithStoreDecorator(t, cpa, globalLimit, perUserLimit, nil)
+}
+
+func bootIntegrationEnvWithStoreDecorator(
+	t *testing.T,
+	cpa *httptest.Server,
+	globalLimit int,
+	perUserLimit int,
+	decorateStore func(*store.SQLiteStore) store.Store,
+) *integrationEnv {
 	t.Helper()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "guards.db"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	requestStore := store.Store(st)
+	if decorateStore != nil {
+		requestStore = decorateStore(st)
 	}
 	writer := store.NewAsyncUsageWriter(st, 64)
 	cfg := &config.Config{
@@ -77,7 +92,7 @@ func bootIntegrationEnvWithSearchConcurrency(t *testing.T, cpa *httptest.Server,
 		AuthProtector:         lowDifficultyAuthProtector(),
 	}
 	handler := app.BuildHTTPHandler(app.HTTPDependencies{
-		Store:                    st,
+		Store:                    requestStore,
 		MCPServer:                server,
 		UsageWriter:              writer,
 		UserLimiter:              userLimiter,
@@ -131,6 +146,179 @@ func bootIntegrationEnvWithSearchConcurrency(t *testing.T, cpa *httptest.Server,
 		t.Fatalf("create key %d", keyResp.StatusCode)
 	}
 	return &integrationEnv{ts: ts, st: st, writer: writer, userLim: userLimiter, created: created, login: login}
+}
+
+type crossMonthQuotaStore struct {
+	*store.SQLiteStore
+
+	mutex                sync.Mutex
+	reservationTimes     []time.Time
+	nextReservationIndex int
+	releaseTime          time.Time
+	reservedTokens       []store.SuccessQuotaReservation
+	releasedTokens       []store.SuccessQuotaReservation
+}
+
+func (quotaStore *crossMonthQuotaStore) ReserveSuccessCall(
+	requestContext context.Context,
+	userID string,
+	successLimit int,
+) (store.SuccessQuotaReservation, error) {
+	quotaStore.mutex.Lock()
+	if quotaStore.nextReservationIndex >= len(quotaStore.reservationTimes) {
+		quotaStore.mutex.Unlock()
+		return store.SuccessQuotaReservation{}, errors.New("unexpected extra quota reservation")
+	}
+	reservationTime := quotaStore.reservationTimes[quotaStore.nextReservationIndex]
+	quotaStore.nextReservationIndex++
+	quotaStore.mutex.Unlock()
+
+	reservationContext := store.WithSuccessQuotaNow(requestContext, reservationTime)
+	reservation, err := quotaStore.SQLiteStore.ReserveSuccessCall(reservationContext, userID, successLimit)
+	if err != nil {
+		return store.SuccessQuotaReservation{}, err
+	}
+
+	quotaStore.mutex.Lock()
+	quotaStore.reservedTokens = append(quotaStore.reservedTokens, reservation)
+	quotaStore.mutex.Unlock()
+	return reservation, nil
+}
+
+func (quotaStore *crossMonthQuotaStore) ReleaseSuccessCall(
+	requestContext context.Context,
+	reservation store.SuccessQuotaReservation,
+) error {
+	quotaStore.mutex.Lock()
+	quotaStore.releasedTokens = append(quotaStore.releasedTokens, reservation)
+	quotaStore.mutex.Unlock()
+
+	releaseContext := store.WithSuccessQuotaNow(requestContext, quotaStore.releaseTime)
+	return quotaStore.SQLiteStore.ReleaseSuccessCall(releaseContext, reservation)
+}
+
+func (quotaStore *crossMonthQuotaStore) quotaTokens() (
+	[]store.SuccessQuotaReservation,
+	[]store.SuccessQuotaReservation,
+) {
+	quotaStore.mutex.Lock()
+	defer quotaStore.mutex.Unlock()
+	reservedTokens := append([]store.SuccessQuotaReservation(nil), quotaStore.reservedTokens...)
+	releasedTokens := append([]store.SuccessQuotaReservation(nil), quotaStore.releasedTokens...)
+	return reservedTokens, releasedTokens
+}
+
+func TestHTTPCrossMonthFailurePreservesLaterReservation(t *testing.T) {
+	firstUpstreamStarted := make(chan struct{})
+	releaseFirstUpstream := make(chan struct{})
+	var releaseFirstUpstreamOnce sync.Once
+	releaseFirstRequest := func() {
+		releaseFirstUpstreamOnce.Do(func() { close(releaseFirstUpstream) })
+	}
+	defer releaseFirstRequest()
+	var upstreamCalls atomic.Int64
+	cpa := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		upstreamCallNumber := upstreamCalls.Add(1)
+		switch upstreamCallNumber {
+		case 1:
+			if err := validateCPAMockRequest(request, newWebSearchCPAExpectation("january failure")); err != nil {
+				t.Errorf("first CPA request was invalid: %v", err)
+				http.Error(responseWriter, "invalid first CPA request", http.StatusBadRequest)
+				return
+			}
+			close(firstUpstreamStarted)
+			<-releaseFirstUpstream
+			http.Error(responseWriter, "upstream unavailable", http.StatusBadGateway)
+		case 2:
+			if err := validateCPAMockRequest(request, newWebSearchCPAExpectation("february success")); err != nil {
+				t.Errorf("second CPA request was invalid: %v", err)
+				http.Error(responseWriter, "invalid second CPA request", http.StatusBadRequest)
+				return
+			}
+			writeCPAMockSSEResponse(responseWriter, "february answer")
+		default:
+			t.Errorf("unexpected CPA call number %d", upstreamCallNumber)
+			http.Error(responseWriter, "unexpected CPA request", http.StatusInternalServerError)
+		}
+	}))
+	defer cpa.Close()
+
+	januaryTime := time.Date(2026, time.January, 31, 23, 59, 0, 0, time.UTC)
+	februaryTime := time.Date(2026, time.February, 1, 0, 1, 0, 0, time.UTC)
+	var quotaStore *crossMonthQuotaStore
+	environment := bootIntegrationEnvWithStoreDecorator(t, cpa, 16, 4, func(sqliteStore *store.SQLiteStore) store.Store {
+		quotaStore = &crossMonthQuotaStore{
+			SQLiteStore:      sqliteStore,
+			reservationTimes: []time.Time{januaryTime, februaryTime},
+			releaseTime:      februaryTime,
+		}
+		return quotaStore
+	})
+
+	firstRequestResult := make(chan struct {
+		statusCode int
+		body       string
+		err        error
+	}, 1)
+	go func() {
+		requestBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"grok_web_search","arguments":{"query":"january failure"}}}`
+		request, _ := http.NewRequest(http.MethodPost, environment.ts.URL+"/mcp", bytes.NewBufferString(requestBody))
+		setMCPHeaders(request, environment.created.APIKey)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			firstRequestResult <- struct {
+				statusCode int
+				body       string
+				err        error
+			}{err: err}
+			return
+		}
+		responseBody, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		firstRequestResult <- struct {
+			statusCode int
+			body       string
+			err        error
+		}{statusCode: response.StatusCode, body: string(responseBody), err: readErr}
+	}()
+
+	select {
+	case <-firstUpstreamStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for January request to reach the upstream")
+	}
+
+	secondRequestBody := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"grok_web_search","arguments":{"query":"february success"}}}`
+	secondStatus, secondBody := callMCPTool(t, environment, secondRequestBody)
+	if secondStatus != http.StatusOK || !strings.Contains(secondBody, "february answer") {
+		t.Fatalf("February request status=%d body=%s", secondStatus, truncate(secondBody, 512))
+	}
+
+	releaseFirstRequest()
+	firstResult := <-firstRequestResult
+	if firstResult.err != nil {
+		t.Fatalf("January request failed at HTTP transport: %v", firstResult.err)
+	}
+	if firstResult.statusCode != http.StatusOK || !strings.Contains(firstResult.body, `"isError":true`) {
+		t.Fatalf("January failure status=%d body=%s", firstResult.statusCode, truncate(firstResult.body, 512))
+	}
+
+	reservedTokens, releasedTokens := quotaStore.quotaTokens()
+	if len(reservedTokens) != 2 || reservedTokens[0].Period != "2026-01" || reservedTokens[1].Period != "2026-02" {
+		t.Fatalf("reserved tokens = %+v, want January then February", reservedTokens)
+	}
+	if len(releasedTokens) != 1 || releasedTokens[0] != reservedTokens[0] {
+		t.Fatalf("released tokens = %+v, want original January token %+v", releasedTokens, reservedTokens[0])
+	}
+
+	februaryContext := store.WithSuccessQuotaNow(context.Background(), februaryTime)
+	user, err := environment.st.GetUserByID(februaryContext, environment.login.User.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.SuccessPeriod != "2026-02" || user.SuccessCalls != 1 {
+		t.Fatalf("February reservation was altered: calls=%d period=%q", user.SuccessCalls, user.SuccessPeriod)
+	}
 }
 
 func TestHTTPSearchConcurrencyRejectsBeforeUpstreamAndUsage(t *testing.T) {

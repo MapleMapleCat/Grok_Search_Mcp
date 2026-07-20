@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/settings"
@@ -100,6 +101,24 @@ type User struct {
 	TokenVersion int64
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+}
+
+// SuccessQuotaReservation identifies the exact monthly quota bucket incremented
+// for one admitted MCP tool call. Rollback must use this value instead of
+// deriving mutable accounting dimensions again.
+type SuccessQuotaReservation struct {
+	UserID string
+	Period string
+}
+
+// IsValid reports whether the token identifies one complete UTC monthly quota
+// bucket. It does not check whether that bucket is currently active.
+func (reservation SuccessQuotaReservation) IsValid() bool {
+	if strings.TrimSpace(reservation.UserID) == "" || strings.TrimSpace(reservation.Period) == "" {
+		return false
+	}
+	parsedPeriod, err := time.Parse(successQuotaPeriodLayout, reservation.Period)
+	return err == nil && parsedPeriod.Format(successQuotaPeriodLayout) == reservation.Period
 }
 
 // Tier 表示用户等级预设（预置 tier0~tier6，也可自定义），是用户限额（rpm/success_limit）的唯一来源。
@@ -349,8 +368,8 @@ type Store interface {
 	DeleteUser(ctx context.Context, id string) error
 	CountUsers(ctx context.Context) (int64, error)
 	CountEnabledAdmins(ctx context.Context) (int64, error)
-	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) error
-	ReleaseSuccessCall(ctx context.Context, userID string) error
+	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) (SuccessQuotaReservation, error)
+	ReleaseSuccessCall(ctx context.Context, reservation SuccessQuotaReservation) error
 
 	GetTierByID(ctx context.Context, id string) (*Tier, error)
 	GetTiersByIDs(ctx context.Context, ids []string) (map[string]*Tier, error)

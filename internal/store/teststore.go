@@ -35,10 +35,10 @@ func (TestStore) UpdateUser(context.Context, string, UserUpdates) (*User, error)
 }
 func (TestStore) CountUsers(context.Context) (int64, error)         { return 0, nil }
 func (TestStore) CountEnabledAdmins(context.Context) (int64, error) { return 0, nil }
-func (TestStore) ReserveSuccessCall(context.Context, string, int) error {
-	return nil
+func (TestStore) ReserveSuccessCall(context.Context, string, int) (SuccessQuotaReservation, error) {
+	return SuccessQuotaReservation{}, nil
 }
-func (TestStore) ReleaseSuccessCall(context.Context, string) error { return nil }
+func (TestStore) ReleaseSuccessCall(context.Context, SuccessQuotaReservation) error { return nil }
 
 func (TestStore) GetTierByID(context.Context, string) (*Tier, error) { return nil, ErrTierNotFound }
 func (TestStore) GetTiersByIDs(context.Context, []string) (map[string]*Tier, error) {

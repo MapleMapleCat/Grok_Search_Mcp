@@ -19,7 +19,7 @@ import (
 // SuccessQuotaReleaser rolls back a previously reserved success call.
 // Defined at the consumer side so usage does not require the full store.Store.
 type SuccessQuotaReleaser interface {
-	ReleaseSuccessCall(ctx context.Context, userID string) error
+	ReleaseSuccessCall(ctx context.Context, reservation store.SuccessQuotaReservation) error
 }
 
 // DebugState exposes the runtime debug switch without loading persisted settings.
@@ -34,6 +34,10 @@ type UsageStore interface {
 
 // toolNameCtxKey 为 context 中存放 tools/call 工具名的私有键类型。
 type toolNameCtxKey struct{}
+
+// successQuotaReservationCtxKey keeps the store-selected accounting bucket
+// private while allowing quota middleware to pass it to failure cleanup.
+type successQuotaReservationCtxKey struct{}
 
 // searchPermitReleaseCtxKey stores an idempotent callback supplied by the
 // search-concurrency middleware. Failed requests can release scarce search
@@ -73,6 +77,32 @@ func WithToolName(ctx context.Context, name string) context.Context {
 func ToolNameFromContext(ctx context.Context) (string, bool) {
 	v, ok := ctx.Value(toolNameCtxKey{}).(string)
 	return v, ok
+}
+
+// WithSuccessQuotaReservation attaches a successfully persisted quota
+// reservation for exact rollback by downstream usage middleware.
+func WithSuccessQuotaReservation(ctx context.Context, reservation store.SuccessQuotaReservation) context.Context {
+	if !isUsableSuccessQuotaReservation(reservation) {
+		return ctx
+	}
+	return context.WithValue(ctx, successQuotaReservationCtxKey{}, reservation)
+}
+
+// SuccessQuotaReservationFromContext returns the exact store reservation that
+// belongs to the current request. Invalid values are treated as absent.
+func SuccessQuotaReservationFromContext(ctx context.Context) (store.SuccessQuotaReservation, bool) {
+	if ctx == nil {
+		return store.SuccessQuotaReservation{}, false
+	}
+	reservation, ok := ctx.Value(successQuotaReservationCtxKey{}).(store.SuccessQuotaReservation)
+	if !ok || !isUsableSuccessQuotaReservation(reservation) {
+		return store.SuccessQuotaReservation{}, false
+	}
+	return reservation, true
+}
+
+func isUsableSuccessQuotaReservation(reservation store.SuccessQuotaReservation) bool {
+	return reservation.IsValid()
 }
 
 // ExtractToolNameMiddleware 在鉴权之后、额度与用量中间件之前解析一次 tools/call 工具名并写入 context。
@@ -177,6 +207,11 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 				next.ServeHTTP(w, r)
 				return
 			}
+			user, hasUser := auth.UserFromContext(r.Context())
+			reservation, hasReservation := SuccessQuotaReservationFromContext(r.Context())
+			if hasReservation && (!hasUser || reservation.UserID != user.ID) {
+				hasReservation = false
+			}
 
 			debugEnabled := serverDebugEnabled(debugState)
 			var debugCapture *debugCaptureSession
@@ -185,13 +220,20 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 			}
 			captureTransferred := false
 
-			user, hasUser := auth.UserFromContext(r.Context())
 			start := time.Now()
 			outcomeContext, outcomeMarker := WithToolOutcomeMarker(r.Context())
 			r = r.WithContext(outcomeContext)
 			rec := &responseRecorder{ResponseWriter: w, status: http.StatusOK}
 			if debugCapture != nil {
 				rec.responseSpool = debugCapture.responseSpool
+			}
+			quotaReleaseAttempted := false
+			releaseQuotaOnce := func() {
+				if !hasReservation || quotaReleaseAttempted {
+					return
+				}
+				quotaReleaseAttempted = true
+				releaseReservedSuccessCall(st, r.Context(), reservation)
 			}
 
 			// recover 捕获 handler panic：将状态视为失败并执行 release 逻辑，
@@ -205,9 +247,7 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 					}
 				}
 				if rcv := recover(); rcv != nil {
-					if hasUser {
-						releaseReservedSuccessCall(st, r.Context(), user.ID)
-					}
+					releaseQuotaOnce()
 					panic(rcv)
 				}
 			}()
@@ -228,10 +268,8 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 			}
 			success := mcpOK
 
-			if hasUser {
-				if !mcpOK {
-					releaseReservedSuccessCall(st, r.Context(), user.ID)
-				}
+			if !mcpOK {
+				releaseQuotaOnce()
 			}
 			if writer != nil {
 				debugJSON := ""
@@ -261,8 +299,8 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 
 const quotaReleaseTimeout = 2 * time.Second
 
-func releaseReservedSuccessCall(releaser SuccessQuotaReleaser, requestContext context.Context, userID string) {
-	if releaser == nil || strings.TrimSpace(userID) == "" {
+func releaseReservedSuccessCall(releaser SuccessQuotaReleaser, requestContext context.Context, reservation store.SuccessQuotaReservation) {
+	if releaser == nil || !isUsableSuccessQuotaReservation(reservation) {
 		return
 	}
 	// Search capacity is scarcer than the quota write path. Release it before
@@ -270,8 +308,8 @@ func releaseReservedSuccessCall(releaser SuccessQuotaReleaser, requestContext co
 	releaseSearchPermitBeforeQuotaRollback(requestContext)
 	releaseContext, cancel := context.WithTimeout(context.WithoutCancel(requestContext), quotaReleaseTimeout)
 	defer cancel()
-	if err := releaser.ReleaseSuccessCall(releaseContext, userID); err != nil {
-		log.Printf("release success quota failed user=%s: %v", userID, err)
+	if err := releaser.ReleaseSuccessCall(releaseContext, reservation); err != nil {
+		log.Printf("release success quota failed user=%s period=%s: %v", reservation.UserID, reservation.Period, err)
 	}
 }
 

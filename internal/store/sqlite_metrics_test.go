@@ -10,7 +10,7 @@ func TestSQLiteMetricsAreDisabledByDefault(t *testing.T) {
 	sqliteStore := openTestDB(t)
 	userID := testUserID(t, sqliteStore)
 
-	if err := sqliteStore.ReserveSuccessCall(context.Background(), userID, 1); err != nil {
+	if _, err := sqliteStore.ReserveSuccessCall(context.Background(), userID, 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -26,7 +26,8 @@ func TestSQLiteMetricsCollectOnlyWhileEnabled(t *testing.T) {
 	requestContext := context.Background()
 
 	sqliteStore.SetMetricsEnabled(true)
-	if err := sqliteStore.ReserveSuccessCall(requestContext, userID, 1); err != nil {
+	reservation, err := sqliteStore.ReserveSuccessCall(requestContext, userID, 1)
+	if err != nil {
 		t.Fatal(err)
 	}
 	enabledMetrics := sqliteStore.SQLiteMetrics()
@@ -38,7 +39,7 @@ func TestSQLiteMetricsCollectOnlyWhileEnabled(t *testing.T) {
 	}
 
 	sqliteStore.SetMetricsEnabled(false)
-	if err := sqliteStore.ReleaseSuccessCall(requestContext, userID); err != nil {
+	if err := sqliteStore.ReleaseSuccessCall(requestContext, reservation); err != nil {
 		t.Fatal(err)
 	}
 	if metrics := sqliteStore.SQLiteMetrics(); !reflect.DeepEqual(metrics, SQLiteMetricsSnapshot{}) {
@@ -49,5 +50,20 @@ func TestSQLiteMetricsCollectOnlyWhileEnabled(t *testing.T) {
 	reenabledMetrics := sqliteStore.SQLiteMetrics()
 	if reenabledMetrics.QuotaRelease.Attempts != 0 {
 		t.Fatalf("quota release was collected while disabled: %+v", reenabledMetrics.QuotaRelease)
+	}
+}
+
+func TestSQLiteMetricsCountRejectedQuotaReleaseAsError(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	sqliteStore.SetMetricsEnabled(true)
+
+	invalidReservation := SuccessQuotaReservation{UserID: "user-1", Period: "January"}
+	if err := sqliteStore.ReleaseSuccessCall(context.Background(), invalidReservation); err == nil {
+		t.Fatal("invalid reservation should be rejected")
+	}
+
+	metrics := sqliteStore.SQLiteMetrics()
+	if metrics.QuotaRelease.Attempts != 1 || metrics.QuotaRelease.Errors != 1 {
+		t.Fatalf("unexpected quota release metrics: %+v", metrics.QuotaRelease)
 	}
 }

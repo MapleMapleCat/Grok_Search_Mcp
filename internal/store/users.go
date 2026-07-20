@@ -424,7 +424,8 @@ func (s *SQLiteStore) CountEnabledAdmins(ctx context.Context) (int64, error) {
 
 // ReserveSuccessCall 在 tools/call 前原子递增当月 success_calls；success_limit 为 0 表示不限。
 // RowsAffected==0 时区分用户不存在（ErrUserNotFound）与额度耗尽（ErrQuotaSuccess）。
-func (s *SQLiteStore) ReserveSuccessCall(ctx context.Context, userID string, successLimit int) (returnErr error) {
+// 成功时返回本次实际递增的用户与月份，供失败路径精确回滚。
+func (s *SQLiteStore) ReserveSuccessCall(ctx context.Context, userID string, successLimit int) (_ SuccessQuotaReservation, returnErr error) {
 	operationStartedAt := time.Now()
 	defer func() {
 		s.metrics.observeQuotaReserve(time.Since(operationStartedAt), returnErr)
@@ -440,34 +441,36 @@ func (s *SQLiteStore) ReserveSuccessCall(ctx context.Context, userID string, suc
 		period, period, userID, successLimit, period, successLimit,
 	)
 	if err != nil {
-		return err
+		return SuccessQuotaReservation{}, err
 	}
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		var exists int
 		lookupErr := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, userID).Scan(&exists)
 		if lookupErr == sql.ErrNoRows {
-			return ErrUserNotFound
+			return SuccessQuotaReservation{}, ErrUserNotFound
 		}
 		if lookupErr != nil {
-			return lookupErr
+			return SuccessQuotaReservation{}, lookupErr
 		}
-		return ErrQuotaSuccess
+		return SuccessQuotaReservation{}, ErrQuotaSuccess
 	}
-	return nil
+	return SuccessQuotaReservation{UserID: userID, Period: period}, nil
 }
 
 // ReleaseSuccessCall 在 MCP 工具返回 IsError 或 HTTP 非 2xx 时回滚 ReserveSuccessCall。
-func (s *SQLiteStore) ReleaseSuccessCall(ctx context.Context, userID string) (returnErr error) {
+func (s *SQLiteStore) ReleaseSuccessCall(ctx context.Context, reservation SuccessQuotaReservation) (returnErr error) {
 	operationStartedAt := time.Now()
 	defer func() {
 		s.metrics.observeQuotaRelease(time.Since(operationStartedAt), returnErr)
 	}()
+	if !reservation.IsValid() {
+		return fmt.Errorf("invalid success quota reservation")
+	}
 
-	period := successQuotaPeriod(ctx)
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE users SET success_calls = success_calls - 1 WHERE id = ? AND success_period = ? AND success_calls > 0`,
-		userID, period,
+		reservation.UserID, reservation.Period,
 	)
 	return err
 }

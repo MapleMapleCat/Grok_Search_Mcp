@@ -14,7 +14,7 @@ import (
 // SuccessQuotaReserver is the minimal store surface needed by quota middleware.
 // Defined at the consumer side so quota does not require the full store.Store.
 type SuccessQuotaReserver interface {
-	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) error
+	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) (store.SuccessQuotaReservation, error)
 }
 
 // MCPMiddleware 仅对 tools/call 在 handler 前原子预留用户 success_calls。
@@ -33,7 +33,8 @@ func MCPMiddleware(reserver SuccessQuotaReserver) func(http.Handler) http.Handle
 				next.ServeHTTP(w, r)
 				return
 			}
-			if err := reserver.ReserveSuccessCall(r.Context(), user.ID, user.SuccessLimit); err != nil {
+			reservation, err := reserver.ReserveSuccessCall(r.Context(), user.ID, user.SuccessLimit)
+			if err != nil {
 				if errors.Is(err, store.ErrQuotaSuccess) {
 					http.Error(w, "success request limit exceeded", http.StatusTooManyRequests)
 					return
@@ -46,7 +47,12 @@ func MCPMiddleware(reserver SuccessQuotaReserver) func(http.Handler) http.Handle
 				http.Error(w, "quota check failed", http.StatusInternalServerError)
 				return
 			}
-			next.ServeHTTP(w, r)
+			if !reservation.IsValid() || reservation.UserID != user.ID {
+				http.Error(w, "quota check failed", http.StatusInternalServerError)
+				return
+			}
+			reservationContext := usage.WithSuccessQuotaReservation(r.Context(), reservation)
+			next.ServeHTTP(w, r.WithContext(reservationContext))
 		})
 	}
 }

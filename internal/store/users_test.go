@@ -63,10 +63,10 @@ func TestFirstUserAdminAndSuccessQuotaReserve(t *testing.T) {
 		t.Fatalf("role %s", u1.Role)
 	}
 
-	if err := s.ReserveSuccessCall(ctx, u1.ID, 1); err != nil {
+	if _, err := s.ReserveSuccessCall(ctx, u1.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReserveSuccessCall(ctx, u1.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+	if _, err := s.ReserveSuccessCall(ctx, u1.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("expected success quota, got %v", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestReserveSuccessCallDistinguishesMissingUserFromQuota(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
-	if err := s.ReserveSuccessCall(ctx, "missing-user", 1); !errors.Is(err, ErrUserNotFound) {
+	if _, err := s.ReserveSuccessCall(ctx, "missing-user", 1); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("expected missing user error, got %v", err)
 	}
 
@@ -83,10 +83,10 @@ func TestReserveSuccessCallDistinguishesMissingUserFromQuota(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReserveSuccessCall(ctx, user.ID, 1); err != nil {
+	if _, err := s.ReserveSuccessCall(ctx, user.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReserveSuccessCall(ctx, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+	if _, err := s.ReserveSuccessCall(ctx, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("expected quota error for existing exhausted user, got %v", err)
 	}
 }
@@ -97,13 +97,14 @@ func TestSuccessQuotaOperationsExposeLatencyAndOutcomeMetrics(t *testing.T) {
 	ctx := context.Background()
 	userID := testUserID(t, sqliteStore)
 
-	if err := sqliteStore.ReserveSuccessCall(ctx, userID, 1); err != nil {
+	reservation, err := sqliteStore.ReserveSuccessCall(ctx, userID, 1)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.ReserveSuccessCall(ctx, userID, 1); !errors.Is(err, ErrQuotaSuccess) {
+	if _, err := sqliteStore.ReserveSuccessCall(ctx, userID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("second reservation error = %v, want ErrQuotaSuccess", err)
 	}
-	if err := sqliteStore.ReleaseSuccessCall(ctx, userID); err != nil {
+	if err := sqliteStore.ReleaseSuccessCall(ctx, reservation); err != nil {
 		t.Fatal(err)
 	}
 
@@ -129,13 +130,14 @@ func TestReserveAndReleaseSuccessCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReserveSuccessCall(ctx, u.ID, 1); err != nil {
+	reservation, err := s.ReserveSuccessCall(ctx, u.ID, 1)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReserveSuccessCall(ctx, u.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+	if _, err := s.ReserveSuccessCall(ctx, u.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("expected success quota on reserve, got %v", err)
 	}
-	if err := s.ReleaseSuccessCall(ctx, u.ID); err != nil {
+	if err := s.ReleaseSuccessCall(ctx, reservation); err != nil {
 		t.Fatal(err)
 	}
 	uAfter, _ := s.GetUserByID(ctx, u.ID)
@@ -228,14 +230,14 @@ func TestSuccessQuotaResetsEachUTCMonth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReserveSuccessCall(januaryContext, user.ID, 1); err != nil {
+	if _, err := s.ReserveSuccessCall(januaryContext, user.ID, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReserveSuccessCall(januaryContext, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+	if _, err := s.ReserveSuccessCall(januaryContext, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("expected January quota exhaustion, got %v", err)
 	}
 
-	if err := s.ReserveSuccessCall(februaryContext, user.ID, 1); err != nil {
+	if _, err := s.ReserveSuccessCall(februaryContext, user.ID, 1); err != nil {
 		t.Fatalf("new month should reset quota before reserve: %v", err)
 	}
 	updatedUser, err := s.GetUserByID(februaryContext, user.ID)
@@ -244,6 +246,66 @@ func TestSuccessQuotaResetsEachUTCMonth(t *testing.T) {
 	}
 	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != "2026-02" {
 		t.Fatalf("monthly reset should leave one February call, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
+	}
+}
+
+func TestReleaseSuccessCallPreservesLaterMonthReservation(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	januaryContext := WithSuccessQuotaNow(context.Background(), time.Date(2026, time.January, 31, 23, 59, 0, 0, time.UTC))
+	februaryContext := WithSuccessQuotaNow(context.Background(), time.Date(2026, time.February, 1, 0, 1, 0, 0, time.UTC))
+
+	user, err := sqliteStore.CreateUser(januaryContext, "cross-month-release", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	januaryReservation, err := sqliteStore.ReserveSuccessCall(januaryContext, user.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if januaryReservation.UserID != user.ID || januaryReservation.Period != "2026-01" {
+		t.Fatalf("January reservation = %+v, want user=%q period=2026-01", januaryReservation, user.ID)
+	}
+	februaryReservation, err := sqliteStore.ReserveSuccessCall(februaryContext, user.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if februaryReservation.UserID != user.ID || februaryReservation.Period != "2026-02" {
+		t.Fatalf("February reservation = %+v, want user=%q period=2026-02", februaryReservation, user.ID)
+	}
+
+	if err := sqliteStore.ReleaseSuccessCall(februaryContext, januaryReservation); err != nil {
+		t.Fatal(err)
+	}
+	updatedUser, err := sqliteStore.GetUserByID(februaryContext, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != "2026-02" {
+		t.Fatalf("releasing January must preserve February reservation, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
+	}
+}
+
+func TestReleaseSuccessCallRejectsInvalidReservation(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+	user, err := sqliteStore.CreateUser(requestContext, "invalid-release-token", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqliteStore.ReserveSuccessCall(requestContext, user.ID, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidReservation := SuccessQuotaReservation{UserID: user.ID, Period: "January"}
+	if err := sqliteStore.ReleaseSuccessCall(requestContext, invalidReservation); err == nil {
+		t.Fatal("invalid reservation should be rejected")
+	}
+	updatedUser, err := sqliteStore.GetUserByID(requestContext, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedUser.SuccessCalls != 1 {
+		t.Fatalf("invalid reservation changed success_calls to %d, want 1", updatedUser.SuccessCalls)
 	}
 }
 

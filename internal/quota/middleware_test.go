@@ -26,16 +26,23 @@ type recordingStore struct {
 	reserveSuccessCalls int
 	lastUserID          string
 	lastSuccessLimit    int
+	reserveReservation  store.SuccessQuotaReservation
 
 	// 控制返回的错误
 	reserveSuccessErr error
 }
 
-func (r *recordingStore) ReserveSuccessCall(_ context.Context, userID string, successLimit int) error {
+func (r *recordingStore) ReserveSuccessCall(_ context.Context, userID string, successLimit int) (store.SuccessQuotaReservation, error) {
 	r.reserveSuccessCalls++
 	r.lastUserID = userID
 	r.lastSuccessLimit = successLimit
-	return r.reserveSuccessErr
+	if r.reserveSuccessErr != nil {
+		return store.SuccessQuotaReservation{}, r.reserveSuccessErr
+	}
+	if r.reserveReservation.UserID == "" {
+		r.reserveReservation = store.SuccessQuotaReservation{UserID: userID, Period: "2026-01"}
+	}
+	return r.reserveReservation, nil
 }
 
 // newToolCallRequest 构造一个 tools/call 请求并预先把工具名写入 context，
@@ -86,10 +93,14 @@ func TestNoUserSkipsReserve(t *testing.T) {
 }
 
 func TestReserveSuccessAndForward(t *testing.T) {
-	st := &recordingStore{}
+	expectedReservation := store.SuccessQuotaReservation{UserID: "u1", Period: "2026-01"}
+	st := &recordingStore{reserveReservation: expectedReservation}
 	called := false
+	var forwardedReservation store.SuccessQuotaReservation
+	var hasForwardedReservation bool
 	h := MCPMiddleware(st)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
+		forwardedReservation, hasForwardedReservation = usage.SuccessQuotaReservationFromContext(r.Context())
 	}))
 
 	req := newToolCallRequest("grok_web_search")
@@ -102,6 +113,50 @@ func TestReserveSuccessAndForward(t *testing.T) {
 	}
 	if st.reserveSuccessCalls != 1 {
 		t.Fatalf("want 1 reserveSuccessCall, got %d", st.reserveSuccessCalls)
+	}
+	if !hasForwardedReservation || forwardedReservation != expectedReservation {
+		t.Fatalf("forwarded reservation = %+v present=%t, want %+v", forwardedReservation, hasForwardedReservation, expectedReservation)
+	}
+}
+
+func TestInvalidOrForeignReservationFailsClosed(t *testing.T) {
+	testCases := []struct {
+		name        string
+		reservation store.SuccessQuotaReservation
+	}{
+		{
+			name:        "malformed period",
+			reservation: store.SuccessQuotaReservation{UserID: "u1", Period: "January"},
+		},
+		{
+			name:        "different user",
+			reservation: store.SuccessQuotaReservation{UserID: "other-user", Period: "2026-01"},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			quotaStore := &recordingStore{reserveReservation: testCase.reservation}
+			downstreamCalled := false
+			handler := MCPMiddleware(quotaStore)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				downstreamCalled = true
+			}))
+
+			request := newToolCallRequest("grok_web_search")
+			request = request.WithContext(auth.WithUser(request.Context(), &auth.AuthenticatedUser{User: store.User{ID: "u1"}}))
+			responseRecorder := httptest.NewRecorder()
+			handler.ServeHTTP(responseRecorder, request)
+
+			if downstreamCalled {
+				t.Fatal("invalid reservation must not reach downstream handler")
+			}
+			if responseRecorder.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d", responseRecorder.Code, http.StatusInternalServerError)
+			}
+			if quotaStore.reserveSuccessCalls != 1 {
+				t.Fatalf("reserve calls = %d, want 1", quotaStore.reserveSuccessCalls)
+			}
+		})
 	}
 }
 
