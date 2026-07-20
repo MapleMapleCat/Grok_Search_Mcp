@@ -197,10 +197,11 @@ func TestInviteRegistrationPersistsAuditHistoryAfterResourceDeletion(t *testing.
 		t.Fatal(err)
 	}
 
-	redemptions, err := sqliteStore.ListInviteCodeRedemptions(ctx, inviteCode.ID)
+	redemptionPage, err := sqliteStore.ListInviteCodeRedemptionsPage(ctx, inviteCode.ID, nil, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
+	redemptions := redemptionPage.Redemptions
 	if len(redemptions) != 1 {
 		t.Fatalf("invite redemption count = %d, want 1", len(redemptions))
 	}
@@ -225,10 +226,11 @@ func TestInviteRegistrationPersistsAuditHistoryAfterResourceDeletion(t *testing.
 		t.Fatal(err)
 	}
 
-	retainedRedemptions, err := sqliteStore.ListInviteCodeRedemptions(ctx, inviteCode.ID)
+	retainedRedemptionPage, err := sqliteStore.ListInviteCodeRedemptionsPage(ctx, inviteCode.ID, nil, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
+	retainedRedemptions := retainedRedemptionPage.Redemptions
 	if len(retainedRedemptions) != 1 {
 		t.Fatalf("retained invite redemption count = %d, want 1", len(retainedRedemptions))
 	}

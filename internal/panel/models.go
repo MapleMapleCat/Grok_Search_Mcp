@@ -385,11 +385,13 @@ func toInviteCodeResponse(inviteCode *store.InviteCode) InviteCodeResponse {
 	}
 }
 
-func toInviteCodeRedemptionsResponse(redemptions []*store.InviteCodeRedemption) InviteCodeRedemptionsResponse {
+func toInviteCodeRedemptionsResponse(page *store.InviteCodeRedemptionPage) InviteCodeRedemptionsResponse {
 	response := InviteCodeRedemptionsResponse{
-		Redemptions: make([]InviteCodeRedemptionResponse, 0, len(redemptions)),
+		Redemptions: make([]InviteCodeRedemptionResponse, 0, len(page.Redemptions)),
+		NextCursor:  encodeTimeIDCursor(cursorKindInviteRedemptions, page.NextCursor),
+		HasMore:     page.HasMore,
 	}
-	for _, redemption := range redemptions {
+	for _, redemption := range page.Redemptions {
 		response.Redemptions = append(response.Redemptions, InviteCodeRedemptionResponse{
 			ID:               redemption.ID,
 			InviteCodeID:     redemption.InviteCodeID,

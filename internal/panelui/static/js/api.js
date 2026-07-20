@@ -389,9 +389,13 @@ export function fetchInviteCodes(options = {}) {
 }
 
 export function fetchInviteCodeRedemptions(inviteIdentifier, options = {}) {
+	const { cursor = "", limit = 50, ...requestOptions } = options;
 	return panelAPI.request(
-		`/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}/redemptions`,
-		options
+		buildCollectionPath(
+			`/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}/redemptions`,
+			{ cursor, limit }
+		),
+		requestOptions
 	);
 }
 

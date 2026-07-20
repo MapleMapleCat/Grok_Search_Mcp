@@ -1,4 +1,5 @@
-import { escapeHTML, formatDateTime } from "../utils.js";
+import { COLLECTION_PAGE_SIZE_OPTIONS } from "../pagination-config.js";
+import { escapeHTML, formatDateTime, formatNumber } from "../utils.js";
 import { renderIcon } from "./icons.js";
 
 export function renderInviteRedemptionsModal(modal, renderModalFrame) {
@@ -28,7 +29,10 @@ export function renderInviteRedemptionsModal(modal, renderModalFrame) {
   }
 
   const redemptions = Array.isArray(modal.redemptions) ? modal.redemptions : [];
-  const body = redemptions.length === 0
+  const currentPage = (modal.previousCursors?.length || 0) + 1;
+  const previousPageAvailable = (modal.previousCursors?.length || 0) > 0;
+  const nextPageAvailable = Boolean(modal.hasMore && modal.nextCursor);
+  const redemptionList = redemptions.length === 0
     ? `<div class="inline-alert">${renderIcon("activity")}<span>该邀请码尚未创建任何用户。</span></div>`
     : `<div class="invite-redemptions-list">${redemptions.map((redemption) => `
         <article class="invite-redemption-row">
@@ -39,12 +43,27 @@ export function renderInviteRedemptionsModal(modal, renderModalFrame) {
           <time datetime="${escapeHTML(redemption.redeemed_at || "")}">${escapeHTML(formatDateTime(redemption.redeemed_at))}</time>
         </article>
       `).join("")}</div>`;
+  const body = modal.loadingRecords
+    ? '<div class="skeleton invite-redemptions-skeleton"></div>'
+    : redemptionList;
+  const footer = `
+    <button class="button button-secondary" type="button" data-action="close-modal">关闭</button>
+    <span class="muted modal-pagination-status">第 ${escapeHTML(formatNumber(currentPage))} 页 · 本页 ${escapeHTML(formatNumber(redemptions.length))} 条</span>
+    <label class="pagination-page-size">
+      <span>每页</span>
+      <select class="select-input" data-action="change-invite-redemptions-page-size" aria-label="每页显示条数" ${modal.loadingRecords ? "disabled" : ""}>
+        ${COLLECTION_PAGE_SIZE_OPTIONS.map((pageSize) => `<option value="${pageSize}" ${Number(modal.pageSize) === pageSize ? "selected" : ""}>${pageSize} 条</option>`).join("")}
+      </select>
+    </label>
+    <button class="button button-secondary" type="button" data-action="change-invite-redemptions-page" data-direction="previous" ${!modal.loadingRecords && previousPageAvailable ? "" : "disabled"}>上一页</button>
+    <button class="button button-primary" type="button" data-action="change-invite-redemptions-page" data-direction="next" ${!modal.loadingRecords && nextPageAvailable ? "" : "disabled"}>下一页</button>
+  `;
 
   return renderModalFrame({
     title: "邀请码注册记录",
-    description: `${inviteLabel} · 共 ${redemptions.length} 位用户`,
+    description: `${inviteLabel} · 按注册时间倒序显示`,
     body,
-    footer: `<button class="button button-secondary" type="button" data-action="close-modal">关闭</button>`,
+    footer,
     wide: true,
     modalClass: "invite-redemptions-modal"
   });

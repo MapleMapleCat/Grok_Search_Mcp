@@ -18,11 +18,12 @@ const (
 )
 
 const (
-	cursorKindKeys         = "keys"
-	cursorKindUsers        = "users"
-	cursorKindTiers        = "tiers"
-	cursorKindInvites      = "invites"
-	cursorKindUsageRecords = "usage_records"
+	cursorKindKeys              = "keys"
+	cursorKindUsers             = "users"
+	cursorKindTiers             = "tiers"
+	cursorKindInvites           = "invites"
+	cursorKindInviteRedemptions = "invite_redemptions"
+	cursorKindUsageRecords      = "usage_records"
 )
 
 type panelCursor struct {

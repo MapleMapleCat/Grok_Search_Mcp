@@ -73,6 +73,7 @@ export function createApplicationEvents({
     state,
     modalController,
     renderApplication,
+    renderModalRegion,
     handleSessionError,
     loadCurrentPage
   });
@@ -169,6 +170,9 @@ export function createApplicationEvents({
     "change-user-usage-page": (actionElement) => userUsageModalEvents.changeUserUsagePage(
       actionElement.dataset.direction
     ),
+    "change-invite-redemptions-page": (actionElement) => inviteEvents.changeRedemptionsPage(
+      actionElement.dataset.direction
+    ),
     "copy-debug-json": () => debugJSONModalEvents.copyDebugJSON(),
     "execute-confirm": () => confirmationModalEvents.executeConfirmedAction()
   };
@@ -246,11 +250,15 @@ export function createApplicationEvents({
   }
 
   async function handleModalChange(event) {
-    const actionElement = event.target.closest('[data-action="change-user-usage-page-size"]');
+    const actionElement = event.target.closest("[data-action]");
     if (!actionElement) {
       return;
     }
-    await userUsageModalEvents.changeUserUsagePageSize(actionElement.value);
+    if (actionElement.dataset.action === "change-user-usage-page-size") {
+      await userUsageModalEvents.changeUserUsagePageSize(actionElement.value);
+    } else if (actionElement.dataset.action === "change-invite-redemptions-page-size") {
+      await inviteEvents.changeRedemptionsPageSize(actionElement.value);
+    }
   }
 
   function handleApplicationInput(event) {

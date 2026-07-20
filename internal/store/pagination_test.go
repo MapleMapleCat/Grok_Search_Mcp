@@ -63,4 +63,7 @@ func TestTimeIDCursorPredicateUsesRequestedDirection(t *testing.T) {
 	if predicate := timeIDCursorPredicate(timeIDDescending); predicate != "(created_at < ? OR (created_at = ? AND id < ?))" {
 		t.Fatalf("descending predicate = %q", predicate)
 	}
+	if predicate := timeIDCursorPredicateForColumn("redeemed_at", timeIDDescending); predicate != "(redeemed_at < ? OR (redeemed_at = ? AND id < ?))" {
+		t.Fatalf("custom timestamp predicate = %q", predicate)
+	}
 }

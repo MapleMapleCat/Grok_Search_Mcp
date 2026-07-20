@@ -15,4 +15,6 @@ type InviteCodeRedemptionResponse struct {
 
 type InviteCodeRedemptionsResponse struct {
 	Redemptions []InviteCodeRedemptionResponse `json:"redemptions"`
+	NextCursor  string                         `json:"next_cursor,omitempty"`
+	HasMore     bool                           `json:"has_more"`
 }

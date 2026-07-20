@@ -79,20 +79,31 @@ func scanInviteCodeRedemption(row interface {
 	return &redemption, nil
 }
 
-func (s *SQLiteStore) ListInviteCodeRedemptions(ctx context.Context, inviteCodeID string) ([]*InviteCodeRedemption, error) {
-	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT `+inviteCodeRedemptionColumns+`
+func (s *SQLiteStore) ListInviteCodeRedemptionsPage(
+	ctx context.Context,
+	inviteCodeID string,
+	cursor *TimeIDCursor,
+	limit int,
+) (*InviteCodeRedemptionPage, error) {
+	pageLimit := normalizePanelPageLimit(limit)
+	query := `SELECT ` + inviteCodeRedemptionColumns + `
 		 FROM invite_code_redemptions
-		 WHERE invite_code_id = ?
-		 ORDER BY redeemed_at DESC, id DESC`,
-		strings.TrimSpace(inviteCodeID),
-	)
+		 WHERE invite_code_id = ?`
+	queryArguments := []any{strings.TrimSpace(inviteCodeID)}
+	if cursor != nil {
+		query += ` AND ` + timeIDCursorPredicateForColumn("redeemed_at", timeIDDescending)
+		queryArguments = appendTimeIDCursorArguments(queryArguments, cursor)
+	}
+	query += ` ORDER BY redeemed_at DESC, id DESC LIMIT ?`
+	queryArguments = append(queryArguments, keysetFetchLimit(pageLimit))
+
+	rows, err := s.readDB.QueryContext(ctx, query, queryArguments...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	redemptions := make([]*InviteCodeRedemption, 0)
+	redemptions := make([]*InviteCodeRedemption, 0, keysetFetchLimit(pageLimit))
 	for rows.Next() {
 		redemption, scanErr := scanInviteCodeRedemption(rows)
 		if scanErr != nil {
@@ -103,7 +114,15 @@ func (s *SQLiteStore) ListInviteCodeRedemptions(ctx context.Context, inviteCodeI
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return redemptions, nil
+
+	redemptions, hasMore, nextCursor := finalizeTimeIDPage(redemptions, pageLimit, func(redemption *InviteCodeRedemption) TimeIDCursor {
+		return TimeIDCursor{Timestamp: redemption.RedeemedAt, ID: redemption.ID}
+	})
+	return &InviteCodeRedemptionPage{
+		Redemptions: redemptions,
+		HasMore:     hasMore,
+		NextCursor:  nextCursor,
+	}, nil
 }
 
 func recordInviteCodeRedemptionInTransaction(

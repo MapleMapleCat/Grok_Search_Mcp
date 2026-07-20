@@ -284,6 +284,12 @@ type InviteCodePage struct {
 	NextCursor  *TimeIDCursor
 }
 
+type InviteCodeRedemptionPage struct {
+	Redemptions []*InviteCodeRedemption
+	HasMore     bool
+	NextCursor  *TimeIDCursor
+}
+
 type UsageRecordPage struct {
 	Records    []UsageRecord
 	HasMore    bool
@@ -397,7 +403,7 @@ type Store interface {
 	ListUsageRecordsPage(ctx context.Context, scope UsageRecordListScope, since time.Time, cursor *UsageRecordCursor, limit int) (*UsageRecordPage, error)
 	GetUsageRecordDetail(ctx context.Context, usageID int64, scope UsageRecordScope) (*UsageRecord, error)
 	ListInviteCodesPage(ctx context.Context, cursor *TimeIDCursor, limit int) (*InviteCodePage, error)
-	ListInviteCodeRedemptions(ctx context.Context, inviteCodeID string) ([]*InviteCodeRedemption, error)
+	ListInviteCodeRedemptionsPage(ctx context.Context, inviteCodeID string, cursor *TimeIDCursor, limit int) (*InviteCodeRedemptionPage, error)
 	CreateInviteCode(ctx context.Context, createdByUserID string, registrationLimit int) (*InviteCode, string, error)
 	UpdateInviteCode(ctx context.Context, id string, updates InviteCodeUpdates) (*InviteCode, error)
 	DeleteInviteCode(ctx context.Context, id string) error

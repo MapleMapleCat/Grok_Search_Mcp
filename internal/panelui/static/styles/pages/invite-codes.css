@@ -82,6 +82,10 @@
   gap: 10px;
 }
 
+.invite-redemptions-skeleton {
+  height: 320px;
+}
+
 .invite-redemption-row {
   display: flex;
   align-items: center;

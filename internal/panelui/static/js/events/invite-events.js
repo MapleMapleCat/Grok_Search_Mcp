@@ -5,7 +5,11 @@ import {
   updateInviteCode
 } from "../api.js";
 import { showToast } from "../components/toast.js";
-import { replaceItemByIdentifier, resetPagination } from "../state.js";
+import {
+  COLLECTION_PAGE_SIZE_OPTIONS,
+  replaceItemByIdentifier,
+  resetPagination
+} from "../state.js";
 import { createFormDataObject } from "../utils.js";
 import { getErrorMessage } from "./event-helpers.js";
 
@@ -13,6 +17,7 @@ export function createInviteEvents({
   state,
   modalController,
   renderApplication,
+  renderModalRegion,
   handleSessionError,
   loadCurrentPage
 }) {
@@ -94,34 +99,134 @@ export function createInviteEvents({
       inviteIdentifier,
       inviteCode,
       loading: true,
+      loadingRecords: false,
       error: "",
-      redemptions: []
+      redemptions: [],
+      pageSize: 50,
+      cursor: "",
+      nextCursor: "",
+      previousCursors: [],
+      hasMore: false
     });
+    await loadRedemptionsPage({ initialLoad: true });
+  }
+
+  async function loadRedemptionsPage(options = {}) {
+    const modal = state.modal;
+    if (modal?.type !== "inviteRedemptions") {
+      return false;
+    }
+
+    const inviteIdentifier = modal.inviteIdentifier;
+    const requestedCursor = modal.cursor;
+    const requestedPageSize = modal.pageSize;
     const requestContext = modalController.startModalRequest();
     try {
       const response = await fetchInviteCodeRedemptions(inviteIdentifier, {
-        signal: requestContext.requestController.signal
+        signal: requestContext.requestController.signal,
+        cursor: requestedCursor,
+        limit: requestedPageSize
       });
-      if (modalController.isCurrentModalRequest(requestContext)
-        && state.modal?.type === "inviteRedemptions"
-        && state.modal.inviteIdentifier === inviteIdentifier) {
+      if (isMatchingRedemptionsRequest(
+        requestContext,
+        inviteIdentifier,
+        requestedCursor,
+        requestedPageSize
+      )) {
         state.modal.loading = false;
+        state.modal.loadingRecords = false;
+        state.modal.error = "";
         state.modal.redemptions = Array.isArray(response?.redemptions)
           ? response.redemptions
           : [];
-        renderApplication();
+        state.modal.nextCursor = String(response?.next_cursor || "");
+        state.modal.hasMore = Boolean(response?.has_more && state.modal.nextCursor);
+        renderModalRegion();
+        return true;
       }
     } catch (error) {
       if (error?.name !== "AbortError"
         && modalController.isCurrentModalRequest(requestContext)
         && !handleSessionError(error)) {
-        state.modal.loading = false;
-        state.modal.error = getErrorMessage(error);
-        renderApplication();
+        if (options.initialLoad && state.modal?.type === "inviteRedemptions") {
+          state.modal.loading = false;
+          state.modal.error = getErrorMessage(error);
+          renderModalRegion();
+        } else {
+          showToast("无法加载注册记录", getErrorMessage(error), "error");
+        }
       }
     } finally {
       modalController.finishModalRequest(requestContext);
     }
+    return false;
+  }
+
+  async function changeRedemptionsPage(direction) {
+    if (state.modal?.type !== "inviteRedemptions" || state.modal.loadingRecords) {
+      return;
+    }
+
+    const inviteIdentifier = state.modal.inviteIdentifier;
+    const paginationSnapshot = createRedemptionsPaginationSnapshot(state.modal);
+    if (direction === "next") {
+      if (!state.modal.hasMore || !state.modal.nextCursor) {
+        return;
+      }
+      state.modal.previousCursors.push(state.modal.cursor);
+      state.modal.cursor = state.modal.nextCursor;
+    } else if (direction === "previous" && state.modal.previousCursors.length > 0) {
+      state.modal.cursor = state.modal.previousCursors.pop() || "";
+    } else {
+      return;
+    }
+
+    state.modal.loadingRecords = true;
+    renderModalRegion();
+    const loaded = await loadRedemptionsPage();
+    if (!loaded && isInviteRedemptionsModalFor(state.modal, inviteIdentifier)) {
+      restoreRedemptionsPaginationSnapshot(state.modal, paginationSnapshot);
+      renderModalRegion();
+    }
+  }
+
+  async function changeRedemptionsPageSize(requestedPageSize) {
+    if (state.modal?.type !== "inviteRedemptions" || state.modal.loadingRecords) {
+      return;
+    }
+
+    const pageSize = Number(requestedPageSize);
+    if (!COLLECTION_PAGE_SIZE_OPTIONS.includes(pageSize) || pageSize === state.modal.pageSize) {
+      return;
+    }
+
+    const inviteIdentifier = state.modal.inviteIdentifier;
+    const paginationSnapshot = createRedemptionsPaginationSnapshot(state.modal);
+    state.modal.pageSize = pageSize;
+    state.modal.cursor = "";
+    state.modal.nextCursor = "";
+    state.modal.previousCursors = [];
+    state.modal.hasMore = false;
+    state.modal.loadingRecords = true;
+    renderModalRegion();
+    const loaded = await loadRedemptionsPage();
+    if (!loaded && isInviteRedemptionsModalFor(state.modal, inviteIdentifier)) {
+      restoreRedemptionsPaginationSnapshot(state.modal, paginationSnapshot);
+      renderModalRegion();
+    }
+  }
+
+  function isMatchingRedemptionsRequest(
+    requestContext,
+    inviteIdentifier,
+    requestedCursor,
+    requestedPageSize
+  ) {
+    return modalController.isCurrentModalRequest(requestContext)
+      && state.modal?.type === "inviteRedemptions"
+      && state.modal.inviteIdentifier === inviteIdentifier
+      && state.modal.cursor === requestedCursor
+      && state.modal.pageSize === requestedPageSize;
   }
 
   function openDeleteConfirmation(inviteIdentifier) {
@@ -154,7 +259,35 @@ export function createInviteEvents({
     submitCreate,
     toggleEnabled,
     openRedemptions,
+    changeRedemptionsPage,
+    changeRedemptionsPageSize,
     openDeleteConfirmation,
     deleteConfirmed
   };
+}
+
+function createRedemptionsPaginationSnapshot(modal) {
+  return {
+    cursor: modal.cursor,
+    nextCursor: modal.nextCursor,
+    previousCursors: [...modal.previousCursors],
+    hasMore: modal.hasMore,
+    pageSize: modal.pageSize,
+    redemptions: modal.redemptions
+  };
+}
+
+function restoreRedemptionsPaginationSnapshot(modal, snapshot) {
+  modal.cursor = snapshot.cursor;
+  modal.nextCursor = snapshot.nextCursor;
+  modal.previousCursors = [...snapshot.previousCursors];
+  modal.hasMore = snapshot.hasMore;
+  modal.pageSize = snapshot.pageSize;
+  modal.redemptions = snapshot.redemptions;
+  modal.loadingRecords = false;
+}
+
+function isInviteRedemptionsModalFor(modal, inviteIdentifier) {
+  return modal?.type === "inviteRedemptions"
+    && modal.inviteIdentifier === inviteIdentifier;
 }

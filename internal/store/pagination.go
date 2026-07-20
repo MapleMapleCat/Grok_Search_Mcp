@@ -8,12 +8,16 @@ const (
 )
 
 func timeIDCursorPredicate(direction timeIDSortDirection) string {
+	return timeIDCursorPredicateForColumn("created_at", direction)
+}
+
+func timeIDCursorPredicateForColumn(timestampColumn string, direction timeIDSortDirection) string {
 	comparisonOperator := ">"
 	if direction == timeIDDescending {
 		comparisonOperator = "<"
 	}
 
-	return "(created_at " + comparisonOperator + " ? OR (created_at = ? AND id " + comparisonOperator + " ?))"
+	return "(" + timestampColumn + " " + comparisonOperator + " ? OR (" + timestampColumn + " = ? AND id " + comparisonOperator + " ?))"
 }
 
 func appendTimeIDCursorArguments(queryArguments []any, cursor *TimeIDCursor) []any {

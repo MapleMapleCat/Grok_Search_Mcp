@@ -46,14 +46,24 @@ func (h *Handler) adminListInviteCodeRedemptions(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "invite code id is required")
 		return
 	}
+	limit, err := parsePanelPageLimit(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cursor, err := parseTimeIDCursor(r, cursorKindInviteRedemptions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-	redemptions, err := h.Store.ListInviteCodeRedemptions(r.Context(), inviteCodeID)
+	page, err := h.Store.ListInviteCodeRedemptionsPage(r.Context(), inviteCodeID, cursor, limit)
 	if err != nil {
 		log.Printf("admin list invite code %q redemptions failed: %v", inviteCodeID, err)
 		writeError(w, http.StatusInternalServerError, "failed to list invite code registrations")
 		return
 	}
-	writeJSON(w, http.StatusOK, toInviteCodeRedemptionsResponse(redemptions))
+	writeJSON(w, http.StatusOK, toInviteCodeRedemptionsResponse(page))
 }
 
 func (h *Handler) adminCreateInviteCode(w http.ResponseWriter, r *http.Request) {
