@@ -40,6 +40,8 @@ func panelEnv(t *testing.T) {
 	unsetEnv(t, "GROK_USAGE_MAINTENANCE_INTERVAL")
 	unsetEnv(t, "GROK_SEARCH_MCP_DEBUG")
 	unsetEnv(t, "GROK_SEARCH_MCP_IP_RPM")
+	unsetEnv(t, "GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD")
+	unsetEnv(t, "GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD")
 	unsetEnv(t, "GROK_SEARCH_MCP_GLOBAL_SEARCH_CONCURRENCY")
 	unsetEnv(t, "GROK_SEARCH_MCP_USER_SEARCH_CONCURRENCY")
 	unsetEnv(t, "GROK_MCP_DEBUG")
@@ -243,6 +245,8 @@ func TestLoadHTTPDefaults(t *testing.T) {
 	if cfg.HTTPAddr != ":8080" ||
 		cfg.DBPath != "./grok-search-mcp.db" ||
 		cfg.MCPIPRPM != 300 ||
+		cfg.MCPIPMaxEntriesPerShard != 2048 ||
+		cfg.MCPIPFallbackBucketsPerShard != 16 ||
 		cfg.MCPGlobalSearchConcurrency != 16 ||
 		cfg.MCPUserSearchConcurrency != 4 {
 		t.Fatalf("unexpected http defaults: %+v", cfg)
@@ -332,6 +336,8 @@ func TestLoadRejectsInvalidUsageRetention(t *testing.T) {
 func TestLoadCustomSecuritySettings(t *testing.T) {
 	panelEnv(t)
 	setEnv(t, "GROK_SEARCH_MCP_IP_RPM", "123")
+	setEnv(t, "GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD", "321")
+	setEnv(t, "GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD", "7")
 	setEnv(t, "GROK_SEARCH_MCP_GLOBAL_SEARCH_CONCURRENCY", "12")
 	setEnv(t, "GROK_SEARCH_MCP_USER_SEARCH_CONCURRENCY", "3")
 
@@ -340,6 +346,8 @@ func TestLoadCustomSecuritySettings(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 	if cfg.MCPIPRPM != 123 ||
+		cfg.MCPIPMaxEntriesPerShard != 321 ||
+		cfg.MCPIPFallbackBucketsPerShard != 7 ||
 		cfg.MCPGlobalSearchConcurrency != 12 ||
 		cfg.MCPUserSearchConcurrency != 3 {
 		t.Fatalf("unexpected security settings: %+v", cfg)
@@ -398,6 +406,26 @@ func TestLoadRejectsInvalidSecuritySettings(t *testing.T) {
 			name:          "non-positive IP RPM",
 			environment:   map[string]string{"GROK_SEARCH_MCP_IP_RPM": "0"},
 			expectedError: "GROK_SEARCH_MCP_IP_RPM must be a positive integer",
+		},
+		{
+			name:          "non-positive IP entries per shard",
+			environment:   map[string]string{"GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD": "0"},
+			expectedError: "GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD must be a positive integer",
+		},
+		{
+			name:          "invalid IP fallback buckets per shard",
+			environment:   map[string]string{"GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD": "many"},
+			expectedError: "GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD must be a positive integer",
+		},
+		{
+			name:          "IP entries per shard exceeds safe maximum",
+			environment:   map[string]string{"GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD": "65537"},
+			expectedError: "GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD must not exceed 65536",
+		},
+		{
+			name:          "IP fallback buckets per shard exceeds safe maximum",
+			environment:   map[string]string{"GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD": "1025"},
+			expectedError: "GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD must not exceed 1024",
 		},
 		{
 			name:          "non-positive global search concurrency",

@@ -7,6 +7,7 @@ import (
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/grok"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/ratelimit"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
 )
 
@@ -21,6 +22,7 @@ type Handler struct {
 	AuthProtector         *AuthProtector             // 可选；未设置时使用内置面板登录/注册防护
 	SQLiteMetrics         SQLiteMetricsProvider      // 可选；管理员运行指标中的 SQLite 快照
 	UsageWriterMetrics    UsageWriterMetricsProvider // 可选；管理员运行指标中的异步队列快照
+	IPLimiterMetrics      IPLimiterMetricsProvider   // 可选；管理员运行指标中的 IP 限流注册表快照
 	passwordHashGenerator func(password []byte, cost int) ([]byte, error)
 	settingsUpdateMutex   sync.Mutex
 	overviewHealthState   overviewHealthState
@@ -66,4 +68,9 @@ type SQLiteMetricsProvider interface {
 // counters and queue state.
 type UsageWriterMetricsProvider interface {
 	Stats() store.AsyncUsageWriterStats
+}
+
+// IPLimiterMetricsProvider exposes bounded registry and saturation counters.
+type IPLimiterMetricsProvider interface {
+	Metrics() ratelimit.IPLimiterMetricsSnapshot
 }

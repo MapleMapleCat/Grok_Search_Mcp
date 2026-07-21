@@ -182,14 +182,17 @@ This admin-only endpoint reports connection-pool utilization and wait time for
 the primary, read, and debug databases; quota reserve/release latency and
 errors; SQLite busy/locked counts; usage batch, queue-depth, oldest-record,
 write/queue latency, failure, and drop metrics; and maintenance plus WAL
-checkpoint latency/frame counters. At minimum, alert on:
+checkpoint latency/frame counters. It also reports the bounded source-IP
+registry's current/capacity values and dedicated-admission, expiration,
+fallback-request, and fallback-rejection counters. At minimum, alert on:
 
 - sustained growth in `primary_write_pool.wait_count` or `wait_duration_ms`;
 - any continuously increasing `busy_or_locked_errors` value;
 - a usage queue that remains near capacity, increasing
   `oldest_queued_age_ms`, or dropped records;
 - sustained quota reserve/release average or maximum latency growth;
-- repeated checkpoint busy frames or increasing checkpoint duration.
+- repeated checkpoint busy frames or increasing checkpoint duration;
+- sustained source-IP registry saturation or increasing fallback rejections.
 
 If these signals remain elevated on local SSD storage after batching, the
 workload has exceeded the intended embedded SQLite write envelope. High-write-
@@ -324,6 +327,8 @@ Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs,
 | `GROK_USAGE_DAILY_RETENTION_DAYS` | `730` | Daily aggregate retention before deletion. |
 | `GROK_USAGE_MAINTENANCE_INTERVAL` | `1h` | Interval for rollup, cleanup, and WAL checkpoint maintenance. |
 | `GROK_SEARCH_MCP_IP_RPM` | `300` | Source-IP RPM applied before MCP API-key authentication only when `X-Real-IP` or `X-Forwarded-For` contains a valid IP. |
+| `GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD` | `2048` | Maximum dedicated source-IP token buckets retained in each of the 64 registry shards. The default process-wide bound is 131,072 entries; accepted values are 1-65,536. Requires restart to change. |
+| `GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD` | `16` | Fixed shared buckets used by new IPs when their shard remains full after expired-entry cleanup; accepted values are 1-1,024. Requires restart to change. |
 | `GROK_SEARCH_MCP_GLOBAL_SEARCH_CONCURRENCY` | `16` | Environment default for the process-wide in-flight streaming search limit. The persisted panel setting takes precedence after initialization. |
 | `GROK_SEARCH_MCP_USER_SEARCH_CONCURRENCY` | `4` | Environment default for the per-user limit; must not exceed the global limit. The persisted panel setting takes precedence after initialization. |
 | `GROK_SEARCH_MCP_DEBUG` | `false` | Accepts `1`, `true`, or `yes`. May capture debug request/response context in usage records. |
@@ -350,11 +355,23 @@ The request behavior is:
 
 | Request state | IP-protection behavior |
 |---|---|
-| Both headers are absent, empty, or contain no valid IP | Application-level IP rate limiting and login IP lockout are skipped. User-tier RPM and quota checks still apply after successful MCP authentication. |
-| A valid forwarded client-IP header is present | IP protection runs using `X-Real-IP` when valid; otherwise it uses the first valid IP in `X-Forwarded-For`. No trusted-proxy allowlist is required. |
+| Both headers are absent | Application-level IP rate limiting and login IP lockout are skipped. User-tier RPM and quota checks still apply after successful MCP authentication. |
+| Either header is present but empty, malformed, duplicated, oversized, contains an invalid forwarded hop, or conflicts with the other header | The request is rejected with HTTP `400`. |
+| Valid forwarded client-IP headers are present | IP protection runs using `X-Real-IP` when present; otherwise it uses the first `X-Forwarded-For` IP. When both are present, their canonical client addresses must agree. No trusted-proxy allowlist is required. |
+
+The `/mcp` source-IP registry is capacity bounded. Existing IPs keep their
+dedicated token bucket until the normal idle TTL expires; they are never
+evicted merely to admit a new identity. When a shard is full, the limiter first
+removes expired entries. If it remains full, new IPs are mapped with a
+process-randomized hash onto fixed shared fallback buckets and no per-IP map
+entry is allocated. Multiple fallback identities can therefore share rate
+state and may jointly receive `429` responses during saturation. The opt-in
+admin operational-metrics endpoint exposes registry capacity, current entries,
+fallback requests/rejections, admissions, and expirations without exposing IP
+addresses.
 
 > [!IMPORTANT]
-> The application directly trusts `X-Real-IP` and `X-Forwarded-For`. It must be reachable only through a trusted reverse proxy that always injects a valid client IP and removes client-supplied values first. If clients can reach `grok-search-mcp` directly, they can omit or invalidate the headers to skip IP protection, or forge them to select arbitrary rate-limit buckets. Keep proxy-layer rate limits enabled for `/mcp`, `/panel/v1/auth/login`, and `/panel/v1/auth/register`.
+> The application directly trusts `X-Real-IP` and `X-Forwarded-For`. It must be reachable only through a trusted reverse proxy that always injects a valid client IP and removes client-supplied values first. If clients can reach `grok-search-mcp` directly, they can omit both headers to skip IP protection, send malformed headers that are rejected with HTTP `400`, or forge valid headers to select arbitrary rate-limit buckets. Keep proxy-layer rate limits enabled for `/mcp`, `/panel/v1/auth/login`, and `/panel/v1/auth/register`.
 
 The proxy must overwrite `X-Real-IP` and rebuild `X-Forwarded-For` from the connection source. Because the application selects the first valid `X-Forwarded-For` entry, do not preserve an untrusted client-provided chain.
 
@@ -371,7 +388,7 @@ location / {
 
 ### Persistence and live updates
 
-On startup, environment variables provide the initial runtime defaults. If SQLite already contains server settings, the complete persisted runtime settings object takes precedence, including upstream, proxy, registration, debug, operations-metrics, and search-concurrency values. Listener address, database path, JWT secret, IP RPM, and retention/maintenance settings remain environment-only. Administrators can update the following values from **Server Settings** without restarting:
+On startup, environment variables provide the initial runtime defaults. If SQLite already contains server settings, the complete persisted runtime settings object takes precedence, including upstream, proxy, registration, debug, operations-metrics, and search-concurrency values. Listener address, database path, JWT secret, IP RPM/registry capacity, and retention/maintenance settings remain environment-only. Administrators can update the following values from **Server Settings** without restarting:
 
 - CPA base URL and API key
 - Upstream search protocol
@@ -384,7 +401,8 @@ On startup, environment variables provide the initial runtime defaults. If SQLit
 
 Settings updates are persisted before the running process applies them. The panel exposes separate persisted and confirmed-live settings versions. If persistence succeeds but live application fails, the saved values remain durable, the panel shows **saved but not applied** instead of a generic save failure, and the settings form reloads the persisted values. While the versions differ, upstream health is reported as unknown to avoid probing with mixed configuration state. A service restart loads the persisted revision and restores the versions to a synchronized state after startup succeeds.
 
-The listen address, database path, JWT secret, and source-IP RPM remain startup-only settings.
+The listen address, database path, JWT secret, source-IP RPM, registry capacity,
+and fallback-bucket count remain startup-only settings.
 
 > [!WARNING]
 > The CPA API key is persisted in SQLite. Protect and back up the database as sensitive data. The panel only returns a masked preview of this key.

@@ -27,9 +27,13 @@ const (
 	defaultUsageDailyRetention      = 730 * 24 * time.Hour
 	defaultUsageMaintenanceInterval = time.Hour
 	// defaultMCPIPRPM 在请求携带反向代理客户端 IP Header 时，于 API key 鉴权前限制 /mcp 请求。
-	defaultMCPIPRPM                   = 300
-	defaultMCPGlobalSearchConcurrency = 16
-	defaultMCPUserSearchConcurrency   = 4
+	defaultMCPIPRPM                     = 300
+	defaultMCPIPMaxEntriesPerShard      = 2048
+	defaultMCPIPFallbackBucketsPerShard = 16
+	maximumMCPIPMaxEntriesPerShard      = 65536
+	maximumMCPIPFallbackBucketsPerShard = 1024
+	defaultMCPGlobalSearchConcurrency   = 16
+	defaultMCPUserSearchConcurrency     = 4
 )
 
 // UpstreamProtocol identifies the CPA-compatible HTTP protocol used for
@@ -44,25 +48,27 @@ const (
 
 // Config 保存进程启动所需的全部配置项。
 type Config struct {
-	CPABaseURL                 string
-	CPAAPIKey                  string `json:"-"`
-	UpstreamProtocol           UpstreamProtocol
-	Model                      string
-	Timeout                    time.Duration
-	Debug                      bool
-	HTTPAddr                   string
-	DBPath                     string
-	JWTSecret                  string `json:"-"`
-	MCPIPRPM                   int
-	MCPGlobalSearchConcurrency int
-	MCPUserSearchConcurrency   int
-	UsageRawRetention          time.Duration
-	UsageHourlyRetention       time.Duration
-	UsageDailyRetention        time.Duration
-	UsageMaintenanceInterval   time.Duration
-	ProxyURL                   string
-	ProxyEnabled               bool
-	RegistrationMode           store.RegistrationMode
+	CPABaseURL                   string
+	CPAAPIKey                    string `json:"-"`
+	UpstreamProtocol             UpstreamProtocol
+	Model                        string
+	Timeout                      time.Duration
+	Debug                        bool
+	HTTPAddr                     string
+	DBPath                       string
+	JWTSecret                    string `json:"-"`
+	MCPIPRPM                     int
+	MCPIPMaxEntriesPerShard      int
+	MCPIPFallbackBucketsPerShard int
+	MCPGlobalSearchConcurrency   int
+	MCPUserSearchConcurrency     int
+	UsageRawRetention            time.Duration
+	UsageHourlyRetention         time.Duration
+	UsageDailyRetention          time.Duration
+	UsageMaintenanceInterval     time.Duration
+	ProxyURL                     string
+	ProxyEnabled                 bool
+	RegistrationMode             store.RegistrationMode
 }
 
 // ServerSettings contains runtime-tunable settings exposed in the admin panel.
@@ -74,25 +80,27 @@ type ServerSettings = settings.Runtime
 func Load() (*Config, error) {
 	proxyURL := strings.TrimSpace(os.Getenv("GROK_PROXY_URL"))
 	cfg := &Config{
-		CPABaseURL:                 strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
-		CPAAPIKey:                  strings.TrimSpace(os.Getenv("CPA_API_KEY")),
-		UpstreamProtocol:           UpstreamProtocol(envOrDefault("GROK_UPSTREAM_PROTOCOL", string(defaultUpstreamProtocol))),
-		Model:                      envOrDefault("GROK_MODEL", defaultModel),
-		Timeout:                    defaultTimeout,
-		Debug:                      parseAliasedBoolEnvironmentVariable("GROK_SEARCH_MCP_DEBUG", "GROK_MCP_DEBUG"),
-		HTTPAddr:                   envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
-		DBPath:                     envOrDefault("GROK_DB_PATH", defaultDBPath),
-		JWTSecret:                  strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
-		MCPIPRPM:                   defaultMCPIPRPM,
-		MCPGlobalSearchConcurrency: defaultMCPGlobalSearchConcurrency,
-		MCPUserSearchConcurrency:   defaultMCPUserSearchConcurrency,
-		UsageRawRetention:          defaultUsageRawRetention,
-		UsageHourlyRetention:       defaultUsageHourlyRetention,
-		UsageDailyRetention:        defaultUsageDailyRetention,
-		UsageMaintenanceInterval:   defaultUsageMaintenanceInterval,
-		ProxyURL:                   proxyURL,
-		ProxyEnabled:               parseBoolEnv("GROK_PROXY_ENABLED"),
-		RegistrationMode:           store.RegistrationModeFree,
+		CPABaseURL:                   strings.TrimRight(envOrDefault("CPA_BASE_URL", defaultBaseURL), "/"),
+		CPAAPIKey:                    strings.TrimSpace(os.Getenv("CPA_API_KEY")),
+		UpstreamProtocol:             UpstreamProtocol(envOrDefault("GROK_UPSTREAM_PROTOCOL", string(defaultUpstreamProtocol))),
+		Model:                        envOrDefault("GROK_MODEL", defaultModel),
+		Timeout:                      defaultTimeout,
+		Debug:                        parseAliasedBoolEnvironmentVariable("GROK_SEARCH_MCP_DEBUG", "GROK_MCP_DEBUG"),
+		HTTPAddr:                     envOrDefault("GROK_HTTP_ADDR", defaultHTTPAddr),
+		DBPath:                       envOrDefault("GROK_DB_PATH", defaultDBPath),
+		JWTSecret:                    strings.TrimSpace(os.Getenv("GROK_JWT_SECRET")),
+		MCPIPRPM:                     defaultMCPIPRPM,
+		MCPIPMaxEntriesPerShard:      defaultMCPIPMaxEntriesPerShard,
+		MCPIPFallbackBucketsPerShard: defaultMCPIPFallbackBucketsPerShard,
+		MCPGlobalSearchConcurrency:   defaultMCPGlobalSearchConcurrency,
+		MCPUserSearchConcurrency:     defaultMCPUserSearchConcurrency,
+		UsageRawRetention:            defaultUsageRawRetention,
+		UsageHourlyRetention:         defaultUsageHourlyRetention,
+		UsageDailyRetention:          defaultUsageDailyRetention,
+		UsageMaintenanceInterval:     defaultUsageMaintenanceInterval,
+		ProxyURL:                     proxyURL,
+		ProxyEnabled:                 parseBoolEnv("GROK_PROXY_ENABLED"),
+		RegistrationMode:             store.RegistrationModeFree,
 	}
 
 	timeoutSeconds, err := parsePositiveIntegerEnvironmentVariable(
@@ -113,6 +121,36 @@ func Load() (*Config, error) {
 	)
 	if err != nil {
 		return nil, err
+	}
+	cfg.MCPIPMaxEntriesPerShard, err = parsePositiveIntegerEnvironmentVariable(
+		"GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD",
+		defaultMCPIPMaxEntriesPerShard,
+		"",
+	)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.MCPIPMaxEntriesPerShard > maximumMCPIPMaxEntriesPerShard {
+		return nil, fmt.Errorf(
+			"GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD must not exceed %d, got %d",
+			maximumMCPIPMaxEntriesPerShard,
+			cfg.MCPIPMaxEntriesPerShard,
+		)
+	}
+	cfg.MCPIPFallbackBucketsPerShard, err = parsePositiveIntegerEnvironmentVariable(
+		"GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD",
+		defaultMCPIPFallbackBucketsPerShard,
+		"",
+	)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.MCPIPFallbackBucketsPerShard > maximumMCPIPFallbackBucketsPerShard {
+		return nil, fmt.Errorf(
+			"GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD must not exceed %d, got %d",
+			maximumMCPIPFallbackBucketsPerShard,
+			cfg.MCPIPFallbackBucketsPerShard,
+		)
 	}
 
 	cfg.MCPGlobalSearchConcurrency, err = parseAliasedPositiveIntegerEnvironmentVariable(

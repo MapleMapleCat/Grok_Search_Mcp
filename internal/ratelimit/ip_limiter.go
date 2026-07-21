@@ -1,9 +1,11 @@
 package ratelimit
 
 import (
+	"hash/maphash"
 	"net/http"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -14,6 +16,10 @@ const (
 	defaultIPLimiterEntryIdleTTL        = 5 * time.Minute
 	defaultIPLimiterCleanupInterval     = 10 * time.Second
 	defaultIPLimiterCleanupShardBatch   = 4
+	defaultIPLimiterEntriesPerShard     = 2048
+	defaultIPLimiterFallbacksPerShard   = 16
+	maximumIPLimiterEntriesPerShard     = 65536
+	maximumIPLimiterFallbacksPerShard   = 1024
 	minimumShardHighWatermarkForRebuild = 256
 	shardHighWatermarkRebuildDivisor    = 4
 )
@@ -24,20 +30,37 @@ type ipEntry struct {
 }
 
 type ipLimiterShard struct {
-	mu            sync.Mutex
-	entries       map[netip.Addr]*ipEntry
-	highWatermark int
+	mu               sync.Mutex
+	entries          map[netip.Addr]*ipEntry
+	fallbackLimiters []*rate.Limiter
+	maximumEntries   int
+	highWatermark    int
+	nextExpiryCheck  time.Time
 }
 
 // IPLimiterConfig controls the in-memory IP limiter. Zero values use bounded,
 // production-oriented defaults.
 type IPLimiterConfig struct {
-	RequestsPerMinute     int
-	ClientIPResolver      *ClientIPResolver
-	ShardCount            int
-	EntryIdleTTL          time.Duration
-	CleanupInterval       time.Duration
-	CleanupShardBatchSize int
+	RequestsPerMinute       int
+	ClientIPResolver        *ClientIPResolver
+	ShardCount              int
+	EntryIdleTTL            time.Duration
+	CleanupInterval         time.Duration
+	CleanupShardBatchSize   int
+	MaximumEntriesPerShard  int
+	FallbackBucketsPerShard int
+}
+
+// IPLimiterMetricsSnapshot reports bounded registry state without exposing IP
+// addresses or individual token-bucket contents.
+type IPLimiterMetricsSnapshot struct {
+	CurrentEntries        int64  `json:"current_entries"`
+	MaximumEntries        int64  `json:"maximum_entries"`
+	FallbackBucketCount   int64  `json:"fallback_bucket_count"`
+	DedicatedAdmissions   uint64 `json:"dedicated_admissions"`
+	ExpiredEntriesRemoved uint64 `json:"expired_entries_removed"`
+	FallbackRequests      uint64 `json:"fallback_requests"`
+	FallbackRejections    uint64 `json:"fallback_rejections"`
 }
 
 // IPLimiter 对能够解析出有效反向代理客户端 IP 的请求按来源 IP 共享令牌桶。
@@ -51,6 +74,12 @@ type IPLimiter struct {
 	cleanupInterval       time.Duration
 	cleanupShardBatchSize int
 	cleanupCursor         int
+	fallbackHashSeed      maphash.Seed
+	currentEntries        atomic.Int64
+	dedicatedAdmissions   atomic.Uint64
+	expiredEntriesRemoved atomic.Uint64
+	fallbackRequests      atomic.Uint64
+	fallbackRejections    atomic.Uint64
 	closeOnce             sync.Once
 	stop                  chan struct{}
 	workerDone            chan struct{}
@@ -84,6 +113,18 @@ func NewIPLimiterWithConfig(config IPLimiterConfig) *IPLimiter {
 	if config.CleanupShardBatchSize > config.ShardCount {
 		config.CleanupShardBatchSize = config.ShardCount
 	}
+	if config.MaximumEntriesPerShard <= 0 {
+		config.MaximumEntriesPerShard = defaultIPLimiterEntriesPerShard
+	}
+	if config.MaximumEntriesPerShard > maximumIPLimiterEntriesPerShard {
+		config.MaximumEntriesPerShard = maximumIPLimiterEntriesPerShard
+	}
+	if config.FallbackBucketsPerShard <= 0 {
+		config.FallbackBucketsPerShard = defaultIPLimiterFallbacksPerShard
+	}
+	if config.FallbackBucketsPerShard > maximumIPLimiterFallbacksPerShard {
+		config.FallbackBucketsPerShard = maximumIPLimiterFallbacksPerShard
+	}
 
 	limiter := &IPLimiter{
 		requestsPerMinute:     config.RequestsPerMinute,
@@ -92,11 +133,18 @@ func NewIPLimiterWithConfig(config IPLimiterConfig) *IPLimiter {
 		entryIdleTTL:          config.EntryIdleTTL,
 		cleanupInterval:       config.CleanupInterval,
 		cleanupShardBatchSize: config.CleanupShardBatchSize,
+		fallbackHashSeed:      maphash.MakeSeed(),
 		stop:                  make(chan struct{}),
 		workerDone:            make(chan struct{}),
 	}
 	for shardIndex := range limiter.shards {
-		limiter.shards[shardIndex].entries = make(map[netip.Addr]*ipEntry)
+		shard := &limiter.shards[shardIndex]
+		shard.entries = make(map[netip.Addr]*ipEntry)
+		shard.maximumEntries = config.MaximumEntriesPerShard
+		shard.fallbackLimiters = make([]*rate.Limiter, config.FallbackBucketsPerShard)
+		for fallbackIndex := range shard.fallbackLimiters {
+			shard.fallbackLimiters[fallbackIndex] = limiter.newTokenBucket()
+		}
 	}
 	go limiter.cleanupLoop()
 	return limiter
@@ -109,18 +157,46 @@ func (limiter *IPLimiter) allow(clientAddress netip.Addr) bool {
 func (limiter *IPLimiter) allowAt(clientAddress netip.Addr, now time.Time) bool {
 	shard := limiter.shardFor(clientAddress)
 	shard.mu.Lock()
-	entry, ok := shard.entries[clientAddress]
-	if !ok {
-		entry = &ipEntry{limiter: limiter.newTokenBucket()}
+	entry, exists := shard.entries[clientAddress]
+	if exists {
+		entry.lastSeen = now
+		limiter.recordPotentialExpiryLocked(shard, now)
+		tokenBucket := entry.limiter
+		shard.mu.Unlock()
+		return tokenBucket.AllowN(now, 1)
+	}
+
+	shouldCheckForExpiredEntries := shard.nextExpiryCheck.IsZero() || now.After(shard.nextExpiryCheck)
+	if len(shard.entries) >= shard.maximumEntries && shouldCheckForExpiredEntries {
+		limiter.cleanupShardLocked(shard, now)
+	}
+	if len(shard.entries) < shard.maximumEntries {
+		entry = &ipEntry{
+			limiter:  limiter.newTokenBucket(),
+			lastSeen: now,
+		}
 		shard.entries[clientAddress] = entry
+		limiter.recordPotentialExpiryLocked(shard, now)
 		if len(shard.entries) > shard.highWatermark {
 			shard.highWatermark = len(shard.entries)
 		}
+		limiter.currentEntries.Add(1)
+		limiter.dedicatedAdmissions.Add(1)
+		tokenBucket := entry.limiter
+		shard.mu.Unlock()
+		return tokenBucket.AllowN(now, 1)
 	}
-	entry.lastSeen = now
+
+	fallbackIndex := limiter.fallbackBucketIndexFor(clientAddress, len(shard.fallbackLimiters))
+	tokenBucket := shard.fallbackLimiters[fallbackIndex]
+	limiter.fallbackRequests.Add(1)
 	shard.mu.Unlock()
 
-	return entry.limiter.AllowN(now, 1)
+	allowed := tokenBucket.AllowN(now, 1)
+	if !allowed {
+		limiter.fallbackRejections.Add(1)
+	}
+	return allowed
 }
 
 func (limiter *IPLimiter) newTokenBucket() *rate.Limiter {
@@ -156,14 +232,30 @@ func (limiter *IPLimiter) cleanupExpiredEntries(now time.Time) {
 
 func (limiter *IPLimiter) cleanupShard(shardIndex int, now time.Time) {
 	shard := &limiter.shards[shardIndex]
-	cutoff := now.Add(-limiter.entryIdleTTL)
-
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+	limiter.cleanupShardLocked(shard, now)
+}
+
+func (limiter *IPLimiter) cleanupShardLocked(shard *ipLimiterShard, now time.Time) {
+	cutoff := now.Add(-limiter.entryIdleTTL)
+	removedEntryCount := 0
+	nextExpiryCheck := time.Time{}
 	for clientAddress, entry := range shard.entries {
 		if entry.lastSeen.Before(cutoff) {
 			delete(shard.entries, clientAddress)
+			removedEntryCount++
+			continue
 		}
+		entryExpiry := entry.lastSeen.Add(limiter.entryIdleTTL)
+		if nextExpiryCheck.IsZero() || entryExpiry.Before(nextExpiryCheck) {
+			nextExpiryCheck = entryExpiry
+		}
+	}
+	shard.nextExpiryCheck = nextExpiryCheck
+	if removedEntryCount > 0 {
+		limiter.currentEntries.Add(-int64(removedEntryCount))
+		limiter.expiredEntriesRemoved.Add(uint64(removedEntryCount))
 	}
 
 	shouldRebuild := shard.highWatermark >= minimumShardHighWatermarkForRebuild &&
@@ -177,6 +269,19 @@ func (limiter *IPLimiter) cleanupShard(shardIndex int, now time.Time) {
 	}
 	shard.entries = rebuiltEntries
 	shard.highWatermark = len(rebuiltEntries)
+}
+
+func (limiter *IPLimiter) recordPotentialExpiryLocked(shard *ipLimiterShard, lastSeen time.Time) {
+	entryExpiry := lastSeen.Add(limiter.entryIdleTTL)
+	if shard.nextExpiryCheck.IsZero() || entryExpiry.Before(shard.nextExpiryCheck) {
+		shard.nextExpiryCheck = entryExpiry
+	}
+}
+
+func (limiter *IPLimiter) fallbackBucketIndexFor(clientAddress netip.Addr, fallbackBucketCount int) int {
+	addressBytes := clientAddress.As16()
+	addressHash := maphash.Bytes(limiter.fallbackHashSeed, addressBytes[:])
+	return int(addressHash % uint64(fallbackBucketCount))
 }
 
 func (limiter *IPLimiter) shardFor(clientAddress netip.Addr) *ipLimiterShard {
@@ -195,6 +300,29 @@ func (limiter *IPLimiter) shardIndexFor(clientAddress netip.Addr) int {
 		hash *= fnvPrime
 	}
 	return int(hash % uint64(len(limiter.shards)))
+}
+
+// Metrics returns a lock-free snapshot of registry capacity and saturation.
+func (limiter *IPLimiter) Metrics() IPLimiterMetricsSnapshot {
+	if limiter == nil {
+		return IPLimiterMetricsSnapshot{}
+	}
+	shardCount := int64(len(limiter.shards))
+	maximumEntriesPerShard := int64(0)
+	fallbackBucketsPerShard := int64(0)
+	if len(limiter.shards) > 0 {
+		maximumEntriesPerShard = int64(limiter.shards[0].maximumEntries)
+		fallbackBucketsPerShard = int64(len(limiter.shards[0].fallbackLimiters))
+	}
+	return IPLimiterMetricsSnapshot{
+		CurrentEntries:        limiter.currentEntries.Load(),
+		MaximumEntries:        shardCount * maximumEntriesPerShard,
+		FallbackBucketCount:   shardCount * fallbackBucketsPerShard,
+		DedicatedAdmissions:   limiter.dedicatedAdmissions.Load(),
+		ExpiredEntriesRemoved: limiter.expiredEntriesRemoved.Load(),
+		FallbackRequests:      limiter.fallbackRequests.Load(),
+		FallbackRejections:    limiter.fallbackRejections.Load(),
+	}
 }
 
 // Close 停止后台清理。

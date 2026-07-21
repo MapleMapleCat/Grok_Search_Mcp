@@ -3,12 +3,14 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/ratelimit"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
 )
 
@@ -30,6 +32,16 @@ func (provider *recordingUsageWriterMetricsProvider) Stats() store.AsyncUsageWri
 	return store.AsyncUsageWriterStats{}
 }
 
+type recordingIPLimiterMetricsProvider struct {
+	callCount int
+	snapshot  ratelimit.IPLimiterMetricsSnapshot
+}
+
+func (provider *recordingIPLimiterMetricsProvider) Metrics() ratelimit.IPLimiterMetricsSnapshot {
+	provider.callCount++
+	return provider.snapshot
+}
+
 func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 	sqliteStore, err := store.OpenSQLite(filepath.Join(t.TempDir(), "operations.db"))
 	if err != nil {
@@ -44,6 +56,16 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 	usageWriter.SetMetricsEnabled(true)
 	defer usageWriter.Close()
 	sqliteStore.SetMetricsEnabled(true)
+	expectedIPLimiterMetrics := ratelimit.IPLimiterMetricsSnapshot{
+		CurrentEntries:        12,
+		MaximumEntries:        131072,
+		FallbackBucketCount:   1024,
+		DedicatedAdmissions:   15,
+		ExpiredEntriesRemoved: 3,
+		FallbackRequests:      7,
+		FallbackRejections:    2,
+	}
+	ipLimiterMetrics := &recordingIPLimiterMetricsProvider{snapshot: expectedIPLimiterMetrics}
 	_, err = sqliteStore.UpsertServerSettings(context.Background(), store.ServerSettings{Runtime: config.ServerSettings{
 		CPABaseURL:                 "https://cpa.example.test",
 		CPAAPIKey:                  "operations-api-key",
@@ -64,6 +86,7 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 		JWTSecret:          jwtSecret,
 		SQLiteMetrics:      sqliteStore,
 		UsageWriterMetrics: usageWriter,
+		IPLimiterMetrics:   ipLimiterMetrics,
 	}))
 	defer server.Close()
 
@@ -80,15 +103,58 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 		t.Fatalf("metrics status = %d, want 200", response.StatusCode)
 	}
 
-	var payload operationalMetricsResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
 		t.Fatal(err)
 	}
+
+	var payload operationalMetricsResponse
+	if err := json.Unmarshal(responseBody, &payload); err != nil {
+		t.Fatal(err)
+	}
+	assertIPLimiterMetricsJSONFields(t, responseBody)
 	if payload.SQLite.PrimaryWritePool.MaximumOpenConnections != 1 {
 		t.Fatalf("primary write pool metrics = %+v", payload.SQLite.PrimaryWritePool)
 	}
 	if payload.UsageWriter.QueueCapacity != 17 {
 		t.Fatalf("usage writer queue capacity = %d, want 17", payload.UsageWriter.QueueCapacity)
+	}
+	if payload.IPLimiter != expectedIPLimiterMetrics {
+		t.Fatalf("IP limiter metrics = %+v, want %+v", payload.IPLimiter, expectedIPLimiterMetrics)
+	}
+	if ipLimiterMetrics.callCount != 1 {
+		t.Fatalf("IP limiter metrics call count = %d, want 1", ipLimiterMetrics.callCount)
+	}
+}
+
+func assertIPLimiterMetricsJSONFields(t *testing.T, responseBody []byte) {
+	t.Helper()
+
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(responseBody, &rawPayload); err != nil {
+		t.Fatal(err)
+	}
+	var rawIPLimiterMetrics map[string]json.RawMessage
+	if err := json.Unmarshal(rawPayload["ip_limiter"], &rawIPLimiterMetrics); err != nil {
+		t.Fatalf("decode raw ip_limiter metrics: %v", err)
+	}
+	expectedFieldNames := []string{
+		"current_entries",
+		"maximum_entries",
+		"fallback_bucket_count",
+		"dedicated_admissions",
+		"expired_entries_removed",
+		"fallback_requests",
+		"fallback_rejections",
+	}
+	for _, expectedFieldName := range expectedFieldNames {
+		if _, exists := rawIPLimiterMetrics[expectedFieldName]; !exists {
+			t.Fatalf("ip_limiter metric %q is missing from raw JSON: %s", expectedFieldName, string(responseBody))
+		}
+		delete(rawIPLimiterMetrics, expectedFieldName)
+	}
+	if len(rawIPLimiterMetrics) != 0 {
+		t.Fatalf("unexpected ip_limiter metric fields in raw JSON: %+v", rawIPLimiterMetrics)
 	}
 }
 
@@ -101,19 +167,26 @@ func TestAdminOperationalMetricsAreDisabledByDefault(t *testing.T) {
 
 	sqliteProvider := &recordingSQLiteMetricsProvider{}
 	usageWriterProvider := &recordingUsageWriterMetricsProvider{}
+	ipLimiterProvider := &recordingIPLimiterMetricsProvider{}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/panel/v1/admin/operations/metrics", nil)
 	(&Handler{
 		Store:              sqliteStore,
 		SQLiteMetrics:      sqliteProvider,
 		UsageWriterMetrics: usageWriterProvider,
+		IPLimiterMetrics:   ipLimiterProvider,
 	}).adminOperationalMetrics(recorder, request)
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("metrics status = %d, want 404", recorder.Code)
 	}
-	if sqliteProvider.callCount != 0 || usageWriterProvider.callCount != 0 {
-		t.Fatalf("disabled endpoint read metric snapshots: sqlite=%d writer=%d", sqliteProvider.callCount, usageWriterProvider.callCount)
+	if sqliteProvider.callCount != 0 || usageWriterProvider.callCount != 0 || ipLimiterProvider.callCount != 0 {
+		t.Fatalf(
+			"disabled endpoint read metric snapshots: sqlite=%d writer=%d ip_limiter=%d",
+			sqliteProvider.callCount,
+			usageWriterProvider.callCount,
+			ipLimiterProvider.callCount,
+		)
 	}
 }
 

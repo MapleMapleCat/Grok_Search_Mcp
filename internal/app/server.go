@@ -169,7 +169,11 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		serverSettings.MCPUserSearchConcurrency,
 	)
 	defer searchConcurrencyLimiter.Close()
-	mcpIPLimiter := ratelimit.NewIPLimiter(cfg.MCPIPRPM)
+	mcpIPLimiter := ratelimit.NewIPLimiterWithConfig(ratelimit.IPLimiterConfig{
+		RequestsPerMinute:       cfg.MCPIPRPM,
+		MaximumEntriesPerShard:  cfg.MCPIPMaxEntriesPerShard,
+		FallbackBucketsPerShard: cfg.MCPIPFallbackBucketsPerShard,
+	})
 	defer mcpIPLimiter.Close()
 
 	authResolver := auth.NewCachedAPIKeyResolver(st, 30*time.Second)
@@ -190,6 +194,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		AuthCache:             authResolver,
 		SQLiteMetrics:         st,
 		UsageWriterMetrics:    usageWriter,
+		IPLimiterMetrics:      mcpIPLimiter,
 	}
 	httpHandler := BuildHTTPHandler(HTTPDependencies{
 		Store:                    st,

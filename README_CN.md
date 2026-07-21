@@ -173,13 +173,15 @@ curl -sS "http://127.0.0.1:8080/panel/v1/admin/operations/metrics" \
 该接口仅允许管理员访问，包含：主写库、读库和 debug 库的连接池状态与等待时间；
 quota reserve/release 延迟和错误；SQLite busy/locked 次数；usage 批次、队列深度、
 最老排队记录年龄、写入/排队延迟和丢弃量；维护及主库/debug 库 WAL checkpoint
-延迟与 frame 计数。建议至少为以下情况配置告警：
+延迟与 frame 计数；以及有界来源 IP 注册表的当前/最大条目数、独立条目接纳、
+过期清理、降级请求和降级拒绝计数。建议至少为以下情况配置告警：
 
 - `primary_write_pool.wait_count` 或 `wait_duration_ms` 持续快速增长；
 - `busy_or_locked_errors` 非零并持续增长；
 - usage 队列长期接近容量、`oldest_queued_age_ms` 增长或出现丢弃；
 - quota reserve/release 最大或平均延迟持续升高；
-- checkpoint 持续出现 busy frame 或耗时升高。
+- checkpoint 持续出现 busy frame 或耗时升高；
+- 来源 IP 注册表持续饱和或降级拒绝数持续增长。
 
 如果在本地 SSD 和批量写入下仍长期出现上述压力，说明工作负载已超过内嵌
 SQLite 单写者模型的目标范围。高写入 QPS 部署应迁移到 PostgreSQL/MySQL，或将
@@ -311,6 +313,8 @@ claude mcp add --transport http grok-search-mcp http://127.0.0.1:8080/mcp \
 | `GROK_USAGE_DAILY_RETENTION_DAYS` | `730` | 日级聚合超过此期限后删除。 |
 | `GROK_USAGE_MAINTENANCE_INTERVAL` | `1h` | 聚合、清理和 WAL checkpoint 的执行间隔。 |
 | `GROK_SEARCH_MCP_IP_RPM` | `300` | 仅当 `X-Real-IP` 或 `X-Forwarded-For` 包含有效 IP 时，在 MCP API Key 鉴权前应用的来源 IP RPM。 |
+| `GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD` | `2048` | 64 个注册表分片各自最多保留的独立来源 IP 令牌桶数；默认进程总上限为 131,072 个条目，可配置范围为 1-65,536，修改后需要重启。 |
+| `GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD` | `16` | 分片满载且清理过期条目后仍无容量时，新 IP 使用的固定共享降级桶数；可配置范围为 1-1,024，修改后需要重启。 |
 | `GROK_SEARCH_MCP_GLOBAL_SEARCH_CONCURRENCY` | `16` | 进程级流式搜索同时在途上限的环境默认值；初始化后以面板持久化设置为准。 |
 | `GROK_SEARCH_MCP_USER_SEARCH_CONCURRENCY` | `4` | 单用户上限的环境默认值，不得超过全局上限；初始化后以面板持久化设置为准。 |
 | `GROK_SEARCH_MCP_DEBUG` | `false` | `1`、`true` 或 `yes` 启用；可能在用量记录中捕获调试上下文。 |
@@ -336,11 +340,19 @@ claude mcp add --transport http grok-search-mcp http://127.0.0.1:8080/mcp \
 
 | 请求状态 | IP 防护行为 |
 |---|---|
-| 两个 Header 都缺失、为空或不包含有效 IP | 跳过应用层 IP 限流和登录 IP 锁定。MCP 鉴权成功后，用户 tier RPM 与配额检查仍然生效。 |
-| 存在有效的转发客户端 IP Header | 启用 IP 防护；有效的 `X-Real-IP` 优先，否则使用 `X-Forwarded-For` 中第一个有效 IP，不再需要可信代理白名单。 |
+| 两个 Header 都缺失 | 跳过应用层 IP 限流和登录 IP 锁定。MCP 鉴权成功后，用户 tier RPM 与配额检查仍然生效。 |
+| 任一 Header 存在但为空、格式错误、重复、超长、包含无效转发跳点，或与另一个 Header 冲突 | 返回 HTTP `400` 拒绝请求。 |
+| 存在有效的转发客户端 IP Header | 启用 IP 防护；存在 `X-Real-IP` 时使用它，否则使用 `X-Forwarded-For` 中第一个 IP；两个 Header 同时存在时，规范化后的客户端地址必须一致。不需要可信代理白名单。 |
+
+`/mcp` 来源 IP 注册表具有硬容量上限。现有 IP 会持续使用自己的独立令牌桶，
+直到正常空闲 TTL 到期；系统不会为了接纳新身份而淘汰活跃条目。分片已满时，
+限流器会先同步删除过期条目；如果仍然满载，则通过进程随机哈希把新 IP 映射到
+固定的共享降级桶，不再创建对应的 map 条目。因此多个降级身份可能共享限流状态，
+并在饱和期间共同收到 `429`。启用运维指标后，管理员指标接口会暴露注册表容量、
+当前条目数、独立条目接纳/过期数和降级请求/拒绝数，但不会暴露 IP 地址。
 
 > [!IMPORTANT]
-> 应用会直接信任 `X-Real-IP` 和 `X-Forwarded-For`。必须保证应用只能由可信反向代理访问，并由代理为每个请求注入有效客户端 IP，同时先清理客户端提供的同名 Header。如果客户端能够直连 `grok-search-mcp`，就可以省略或破坏 Header 跳过 IP 防护，或伪造 Header 任意选择限流桶。请继续在代理层对 `/mcp`、`/panel/v1/auth/login` 和 `/panel/v1/auth/register` 配置限流。
+> 应用会直接信任 `X-Real-IP` 和 `X-Forwarded-For`。必须保证应用只能由可信反向代理访问，并由代理为每个请求注入有效客户端 IP，同时先清理客户端提供的同名 Header。如果客户端能够直连 `grok-search-mcp`，就可以省略两个 Header 来跳过 IP 防护、发送格式错误的 Header 触发 HTTP `400` 拒绝，或伪造有效 Header 任意选择限流桶。请继续在代理层对 `/mcp`、`/panel/v1/auth/login` 和 `/panel/v1/auth/register` 配置限流。
 
 反向代理必须覆盖 `X-Real-IP`，并根据连接来源重新生成 `X-Forwarded-For`。由于应用会选择 `X-Forwarded-For` 中第一个有效 IP，不应保留不可信客户端提供的原始转发链。
 
@@ -357,7 +369,7 @@ location / {
 
 ### 持久化与热更新
 
-服务启动时，环境变量提供初始运行时默认值；如果 SQLite 已保存服务设置，则完整的持久化运行时设置优先，包括上游、代理、注册、debug、运维指标和搜索并发配置。监听地址、数据库路径、JWT 密钥、IP RPM、保留期限和维护周期仍只由环境变量控制。管理员可以在 **Server Settings** 中热更新：
+服务启动时，环境变量提供初始运行时默认值；如果 SQLite 已保存服务设置，则完整的持久化运行时设置优先，包括上游、代理、注册、debug、运维指标和搜索并发配置。监听地址、数据库路径、JWT 密钥、IP RPM/注册表容量、保留期限和维护周期仍只由环境变量控制。管理员可以在 **Server Settings** 中热更新：
 
 - CPA 地址和 API Key
 - 上游搜索协议
@@ -370,7 +382,7 @@ location / {
 
 设置更新会先写入持久化存储，再应用到当前运行进程。面板分别显示已保存设置版本和已确认运行版本。如果持久化成功但运行时应用失败，保存值仍然有效，面板会明确提示“已保存，尚未应用”而不是笼统的保存失败，并重新加载持久化值。版本不一致期间，上游健康状态返回未知，避免使用混合配置进行探测。服务重启成功后会加载持久化版本，并恢复两个版本一致。
 
-监听地址、数据库路径、JWT 密钥和来源 IP RPM 仍然是仅启动时生效的配置。
+监听地址、数据库路径、JWT 密钥、来源 IP RPM、注册表容量和降级桶数量仍然是仅启动时生效的配置。
 
 > [!WARNING]
 > CPA API Key 会持久化到 SQLite。请将数据库视为敏感数据进行权限控制和备份；面板响应只返回掩码预览。
