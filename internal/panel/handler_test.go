@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -152,6 +153,24 @@ type registrationModeSwitchStore struct {
 
 type registrationInternalFailureStore struct {
 	store.TestStore
+}
+
+type loginLookupCountingStore struct {
+	store.TestStore
+	lookupCount atomic.Int64
+}
+
+type panicLoginLookupStore struct {
+	store.TestStore
+}
+
+func (testStore *loginLookupCountingStore) GetUserByUsername(context.Context, string) (*store.User, error) {
+	testStore.lookupCount.Add(1)
+	return nil, store.ErrUserNotFound
+}
+
+func (*panicLoginLookupStore) GetUserByUsername(context.Context, string) (*store.User, error) {
+	panic("login lookup panic")
 }
 
 func (testStore *inviteRegistrationPrecheckStore) InviteCodeExists(context.Context, string) (bool, error) {
@@ -956,6 +975,80 @@ func TestLoginFailureLocksUsernameIPPair(t *testing.T) {
 	}
 	if goodLoginResponse.Header.Get("Retry-After") == "" {
 		t.Fatalf("expected Retry-After header on lockout response")
+	}
+}
+
+func TestLoginFailureCapacityRejectsBeforeUserLookup(t *testing.T) {
+	authProtector := NewAuthProtector(AuthProtectorConfig{
+		LoginFailureMaximumEntries: 1,
+		LoginFailureThreshold:      1,
+		LoginBaseLockout:           time.Minute,
+		LoginMaxLockout:            time.Minute,
+	})
+	existingAttempt, _ := authProtector.beginLoginAttempt("existing-user", "198.51.100.40")
+	if existingAttempt == nil {
+		t.Fatal("existing login failure identity should be admitted")
+	}
+	existingAttempt.recordFailure()
+
+	countingStore := &loginLookupCountingStore{}
+	handler := &Handler{
+		Store:         countingStore,
+		AuthProtector: authProtector,
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/panel/v1/auth/login",
+		bytes.NewBufferString(`{"username":"new-user","password":"password123"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-For", "198.51.100.41")
+	responseRecorder := httptest.NewRecorder()
+
+	handler.login(responseRecorder, request)
+
+	if responseRecorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("saturated failure registry status = %d, want %d", responseRecorder.Code, http.StatusTooManyRequests)
+	}
+	if responseRecorder.Header().Get("Retry-After") == "" {
+		t.Fatal("saturated failure registry response is missing Retry-After")
+	}
+	if lookupCount := countingStore.lookupCount.Load(); lookupCount != 0 {
+		t.Fatalf("user lookup count = %d, want 0 before capacity rejection", lookupCount)
+	}
+	if !strings.Contains(responseRecorder.Body.String(), "too many failed login attempts") {
+		t.Fatalf("capacity response should use the generic lockout message: %s", responseRecorder.Body.String())
+	}
+}
+
+func TestLoginAttemptAbandonsReservedEntryDuringPanic(t *testing.T) {
+	authProtector := NewAuthProtector(AuthProtectorConfig{
+		LoginFailureMaximumEntries: 1,
+	})
+	handler := &Handler{
+		Store:         &panicLoginLookupStore{},
+		AuthProtector: authProtector,
+	}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/panel/v1/auth/login",
+		bytes.NewBufferString(`{"username":"panic-user","password":"password123"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-For", "198.51.100.42")
+	responseRecorder := httptest.NewRecorder()
+
+	func() {
+		defer func() {
+			if recoveredValue := recover(); recoveredValue == nil {
+				t.Fatal("login handler should propagate the store panic")
+			}
+		}()
+		handler.login(responseRecorder, request)
+	}()
+
+	if currentEntries := authProtector.Metrics().LoginFailures.CurrentEntries; currentEntries != 0 {
+		t.Fatalf("failure entries after panic = %d, want 0", currentEntries)
 	}
 }
 

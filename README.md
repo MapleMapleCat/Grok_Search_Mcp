@@ -184,7 +184,11 @@ errors; SQLite busy/locked counts; usage batch, queue-depth, oldest-record,
 write/queue latency, failure, and drop metrics; and maintenance plus WAL
 checkpoint latency/frame counters. It also reports the bounded source-IP
 registry's current/capacity values and dedicated-admission, expiration,
-fallback-request, and fallback-rejection counters. At minimum, alert on:
+fallback-request, and fallback-rejection counters. The same response reports
+panel-auth protector capacity, admission, expiry,
+fallback, fallback-rejection, and login-failure capacity-rejection counters,
+grouped by public auth endpoint without exposing IP addresses or usernames. At
+minimum, alert on:
 
 - sustained growth in `primary_write_pool.wait_count` or `wait_duration_ms`;
 - any continuously increasing `busy_or_locked_errors` value;
@@ -192,7 +196,9 @@ fallback-request, and fallback-rejection counters. At minimum, alert on:
   `oldest_queued_age_ms`, or dropped records;
 - sustained quota reserve/release average or maximum latency growth;
 - repeated checkpoint busy frames or increasing checkpoint duration;
-- sustained source-IP registry saturation or increasing fallback rejections.
+- sustained source-IP registry saturation or increasing fallback rejections;
+- sustained panel-auth endpoint fallback traffic, fallback rejections, or
+  login-failure capacity rejections.
 
 If these signals remain elevated on local SSD storage after batching, the
 workload has exceeded the intended embedded SQLite write envelope. High-write-
@@ -369,6 +375,24 @@ state and may jointly receive `429` responses during saturation. The opt-in
 admin operational-metrics endpoint exposes registry capacity, current entries,
 fallback requests/rejections, admissions, and expirations without exposing IP
 addresses.
+
+The public panel authentication protector is also capacity bounded with fixed,
+process-local budgets: 4,096 dedicated login IP buckets, 2,048 registration IP
+buckets, 2,048 registration-challenge IP buckets, and 8,192 normalized
+username/IP login-failure entries. Each endpoint has its own capacity domain
+and 16 fixed fallback buckets. When an endpoint is full, expired entries are
+reclaimed first; if it remains full, new IPs share fallback rate state without
+creating map entries. Live dedicated buckets are never evicted merely to admit
+new identities.
+
+Login-failure state has no shared fallback because collisions could lock out
+unrelated users. When its table remains full after expired-entry cleanup, a new
+username/IP pair receives a generic `429` before user lookup or bcrypt. Existing
+failure counts, active lockouts, and in-flight attempts are retained. These
+budgets are fixed security limits rather than environment or panel settings.
+The admin operational-metrics endpoint reports only aggregate capacity and
+saturation counters. All panel-auth protector state and cumulative counters are
+process-local and reset when the service restarts.
 
 > [!IMPORTANT]
 > The application directly trusts `X-Real-IP` and `X-Forwarded-For`. It must be reachable only through a trusted reverse proxy that always injects a valid client IP and removes client-supplied values first. If clients can reach `grok-search-mcp` directly, they can omit both headers to skip IP protection, send malformed headers that are rejected with HTTP `400`, or forge valid headers to select arbitrary rate-limit buckets. Keep proxy-layer rate limits enabled for `/mcp`, `/panel/v1/auth/login`, and `/panel/v1/auth/register`.

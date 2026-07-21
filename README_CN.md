@@ -174,14 +174,17 @@ curl -sS "http://127.0.0.1:8080/panel/v1/admin/operations/metrics" \
 quota reserve/release 延迟和错误；SQLite busy/locked 次数；usage 批次、队列深度、
 最老排队记录年龄、写入/排队延迟和丢弃量；维护及主库/debug 库 WAL checkpoint
 延迟与 frame 计数；以及有界来源 IP 注册表的当前/最大条目数、独立条目接纳、
-过期清理、降级请求和降级拒绝计数。建议至少为以下情况配置告警：
+过期清理、降级请求和降级拒绝计数。同一接口还会按公开认证 endpoint 汇总面板
+认证保护器的容量、接纳、过期清理、降级请求/拒绝和登录失败容量拒绝计数，
+不会暴露 IP 地址或用户名。建议至少为以下情况配置告警：
 
 - `primary_write_pool.wait_count` 或 `wait_duration_ms` 持续快速增长；
 - `busy_or_locked_errors` 非零并持续增长；
 - usage 队列长期接近容量、`oldest_queued_age_ms` 增长或出现丢弃；
 - quota reserve/release 最大或平均延迟持续升高；
 - checkpoint 持续出现 busy frame 或耗时升高；
-- 来源 IP 注册表持续饱和或降级拒绝数持续增长。
+- 来源 IP 注册表持续饱和或降级拒绝数持续增长；
+- 面板认证 endpoint 持续出现降级流量、降级拒绝或登录失败容量拒绝。
 
 如果在本地 SSD 和批量写入下仍长期出现上述压力，说明工作负载已超过内嵌
 SQLite 单写者模型的目标范围。高写入 QPS 部署应迁移到 PostgreSQL/MySQL，或将
@@ -350,6 +353,19 @@ claude mcp add --transport http grok-search-mcp http://127.0.0.1:8080/mcp \
 固定的共享降级桶，不再创建对应的 map 条目。因此多个降级身份可能共享限流状态，
 并在饱和期间共同收到 `429`。启用运维指标后，管理员指标接口会暴露注册表容量、
 当前条目数、独立条目接纳/过期数和降级请求/拒绝数，但不会暴露 IP 地址。
+
+公开面板认证保护器同样具有固定的进程内硬容量：登录 endpoint 最多保留 4,096
+个独立 IP 桶，注册 endpoint 为 2,048 个，注册 challenge endpoint 为 2,048 个，
+规范化“用户名 + IP”登录失败状态为 8,192 个。三个 endpoint 拥有相互独立的容量
+域和各自 16 个固定共享降级桶。endpoint 满载时会先同步回收过期条目；若仍满载，
+新 IP 共享降级限流状态且不会新增 map 条目。系统不会为了接纳新身份而淘汰仍然
+有效的独立令牌桶。
+
+登录失败状态不使用共享降级桶，避免哈希碰撞导致无关用户被共同锁定。清理过期
+条目后仍满载时，新的“用户名 + IP”会在用户查询和 bcrypt 前收到通用 `429`；
+已有失败计数、活跃锁定和在途尝试会继续保留。这些预算是固定安全上限，不属于
+环境变量或面板设置。管理员运行指标只暴露聚合容量和饱和计数。所有面板认证
+保护状态及累计计数均为进程内状态，服务重启后会重置。
 
 > [!IMPORTANT]
 > 应用会直接信任 `X-Real-IP` 和 `X-Forwarded-For`。必须保证应用只能由可信反向代理访问，并由代理为每个请求注入有效客户端 IP，同时先清理客户端提供的同名 Header。如果客户端能够直连 `grok-search-mcp`，就可以省略两个 Header 来跳过 IP 防护、发送格式错误的 Header 触发 HTTP `400` 拒绝，或伪造有效 Header 任意选择限流桶。请继续在代理层对 `/mcp`、`/panel/v1/auth/login` 和 `/panel/v1/auth/register` 配置限流。

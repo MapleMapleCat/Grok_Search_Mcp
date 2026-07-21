@@ -10,10 +10,11 @@ import (
 )
 
 type operationalMetricsResponse struct {
-	CapturedAt  time.Time                          `json:"captured_at"`
-	SQLite      store.SQLiteMetricsSnapshot        `json:"sqlite"`
-	UsageWriter store.AsyncUsageWriterStats        `json:"usage_writer"`
-	IPLimiter   ratelimit.IPLimiterMetricsSnapshot `json:"ip_limiter"`
+	CapturedAt    time.Time                          `json:"captured_at"`
+	SQLite        store.SQLiteMetricsSnapshot        `json:"sqlite"`
+	UsageWriter   store.AsyncUsageWriterStats        `json:"usage_writer"`
+	IPLimiter     ratelimit.IPLimiterMetricsSnapshot `json:"ip_limiter"`
+	AuthProtector AuthProtectorMetricsSnapshot       `json:"auth_protector"`
 }
 
 func (handler *Handler) adminOperationalMetrics(writer http.ResponseWriter, request *http.Request) {
@@ -38,9 +39,10 @@ func (handler *Handler) adminOperationalMetrics(writer http.ResponseWriter, requ
 	}
 
 	writeJSON(writer, http.StatusOK, operationalMetricsResponse{
-		CapturedAt:  time.Now().UTC(),
-		SQLite:      handler.SQLiteMetrics.SQLiteMetrics(),
-		UsageWriter: handler.UsageWriterMetrics.Stats(),
-		IPLimiter:   handler.IPLimiterMetrics.Metrics(),
+		CapturedAt:    time.Now().UTC(),
+		SQLite:        handler.SQLiteMetrics.SQLiteMetrics(),
+		UsageWriter:   handler.UsageWriterMetrics.Stats(),
+		IPLimiter:     handler.IPLimiterMetrics.Metrics(),
+		AuthProtector: handler.authProtector().Metrics(),
 	})
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/auth"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/ratelimit"
@@ -65,12 +66,16 @@ func (handler *Handler) login(writer http.ResponseWriter, request *http.Request)
 		writeError(writer, http.StatusBadRequest, ratelimit.ErrInvalidForwardedClientIPHeaders.Error())
 		return
 	}
+	var loginAttempt *loginAttempt
 	if shouldApplyIPProtection {
-		if locked, retryAfter := authProtector.LoginLocked(username, clientIP); locked {
+		var retryAfter time.Duration
+		loginAttempt, retryAfter = authProtector.beginLoginAttempt(username, clientIP)
+		if loginAttempt == nil {
 			writeRetryAfter(writer, retryAfter)
 			writeError(writer, http.StatusTooManyRequests, "too many failed login attempts")
 			return
 		}
+		defer loginAttempt.abandon()
 	}
 	user, err := handler.Store.GetUserByUsername(request.Context(), username)
 
@@ -81,22 +86,16 @@ func (handler *Handler) login(writer http.ResponseWriter, request *http.Request)
 	}
 	compareErr := bcrypt.CompareHashAndPassword(hashToCheck, []byte(loginRequest.Password))
 	if err != nil || user == nil || compareErr != nil {
-		if shouldApplyIPProtection {
-			authProtector.RecordLoginFailure(username, clientIP)
-		}
+		loginAttempt.recordFailure()
 		writeError(writer, http.StatusUnauthorized, "invalid credentials")
 		return
 	}
 	if !user.Enabled {
-		if shouldApplyIPProtection {
-			authProtector.RecordLoginFailure(username, clientIP)
-		}
+		loginAttempt.recordFailure()
 		writeError(writer, http.StatusForbidden, "user disabled")
 		return
 	}
-	if shouldApplyIPProtection {
-		authProtector.RecordLoginSuccess(username, clientIP)
-	}
+	loginAttempt.recordSuccess()
 	token, expiresAt, err := auth.IssuePanelToken(handler.JWTSecret, user, 0)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "token issue failed")

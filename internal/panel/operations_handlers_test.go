@@ -66,6 +66,21 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 		FallbackRejections:    2,
 	}
 	ipLimiterMetrics := &recordingIPLimiterMetricsProvider{snapshot: expectedIPLimiterMetrics}
+	authProtector := NewAuthProtector(AuthProtectorConfig{
+		LoginIPMaximumEntries:                 1,
+		RegisterIPMaximumEntries:              2,
+		RegistrationChallengeIPMaximumEntries: 3,
+		LoginFailureMaximumEntries:            4,
+		AuthEndpointFallbackBuckets:           1,
+	})
+	authProtector.allowAuthRequest(authEndpointLogin, "198.51.100.50")
+	authProtector.allowAuthRequest(authEndpointLogin, "198.51.100.51")
+	loginAttempt, _ := authProtector.beginLoginAttempt("metrics-user", "198.51.100.50")
+	if loginAttempt == nil {
+		t.Fatal("metrics login attempt should be admitted")
+	}
+	loginAttempt.recordFailure()
+	expectedAuthProtectorMetrics := authProtector.Metrics()
 	_, err = sqliteStore.UpsertServerSettings(context.Background(), store.ServerSettings{Runtime: config.ServerSettings{
 		CPABaseURL:                 "https://cpa.example.test",
 		CPAAPIKey:                  "operations-api-key",
@@ -87,6 +102,7 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 		SQLiteMetrics:      sqliteStore,
 		UsageWriterMetrics: usageWriter,
 		IPLimiterMetrics:   ipLimiterMetrics,
+		AuthProtector:      authProtector,
 	}))
 	defer server.Close()
 
@@ -113,6 +129,7 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertIPLimiterMetricsJSONFields(t, responseBody)
+	assertAuthProtectorMetricsJSONFields(t, responseBody)
 	if payload.SQLite.PrimaryWritePool.MaximumOpenConnections != 1 {
 		t.Fatalf("primary write pool metrics = %+v", payload.SQLite.PrimaryWritePool)
 	}
@@ -122,8 +139,86 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 	if payload.IPLimiter != expectedIPLimiterMetrics {
 		t.Fatalf("IP limiter metrics = %+v, want %+v", payload.IPLimiter, expectedIPLimiterMetrics)
 	}
+	if payload.AuthProtector != expectedAuthProtectorMetrics {
+		t.Fatalf("auth protector metrics = %+v, want %+v", payload.AuthProtector, expectedAuthProtectorMetrics)
+	}
 	if ipLimiterMetrics.callCount != 1 {
 		t.Fatalf("IP limiter metrics call count = %d, want 1", ipLimiterMetrics.callCount)
+	}
+}
+
+func assertAuthProtectorMetricsJSONFields(t *testing.T, responseBody []byte) {
+	t.Helper()
+
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(responseBody, &rawPayload); err != nil {
+		t.Fatal(err)
+	}
+	var rawAuthProtectorMetrics map[string]json.RawMessage
+	if err := json.Unmarshal(rawPayload["auth_protector"], &rawAuthProtectorMetrics); err != nil {
+		t.Fatalf("decode raw auth_protector metrics: %v", err)
+	}
+	expectedGroupNames := []string{"login", "register", "registration_challenge", "login_failures"}
+	for _, expectedGroupName := range expectedGroupNames {
+		if _, exists := rawAuthProtectorMetrics[expectedGroupName]; !exists {
+			t.Fatalf("auth_protector group %q is missing from raw JSON: %s", expectedGroupName, string(responseBody))
+		}
+	}
+	if len(rawAuthProtectorMetrics) != len(expectedGroupNames) {
+		t.Fatalf("unexpected auth_protector metric groups in raw JSON: %+v", rawAuthProtectorMetrics)
+	}
+
+	assertRawMetricFields(t, rawAuthProtectorMetrics["login"], []string{
+		"current_entries",
+		"maximum_entries",
+		"fallback_bucket_count",
+		"dedicated_admissions",
+		"expired_entries_removed",
+		"fallback_requests",
+		"fallback_rejections",
+	})
+	assertRawMetricFields(t, rawAuthProtectorMetrics["register"], []string{
+		"current_entries",
+		"maximum_entries",
+		"fallback_bucket_count",
+		"dedicated_admissions",
+		"expired_entries_removed",
+		"fallback_requests",
+		"fallback_rejections",
+	})
+	assertRawMetricFields(t, rawAuthProtectorMetrics["registration_challenge"], []string{
+		"current_entries",
+		"maximum_entries",
+		"fallback_bucket_count",
+		"dedicated_admissions",
+		"expired_entries_removed",
+		"fallback_requests",
+		"fallback_rejections",
+	})
+	assertRawMetricFields(t, rawAuthProtectorMetrics["login_failures"], []string{
+		"current_entries",
+		"maximum_entries",
+		"admissions",
+		"expired_entries_removed",
+		"capacity_rejections",
+	})
+}
+
+func assertRawMetricFields(t *testing.T, rawMetrics json.RawMessage, expectedFieldNames []string) {
+	t.Helper()
+
+	var metricFields map[string]json.RawMessage
+	if err := json.Unmarshal(rawMetrics, &metricFields); err != nil {
+		t.Fatal(err)
+	}
+	for _, expectedFieldName := range expectedFieldNames {
+		if _, exists := metricFields[expectedFieldName]; !exists {
+			t.Fatalf("metric field %q is missing from raw JSON: %s", expectedFieldName, string(rawMetrics))
+		}
+		delete(metricFields, expectedFieldName)
+	}
+	if len(metricFields) != 0 {
+		t.Fatalf("unexpected metric fields in raw JSON: %+v", metricFields)
 	}
 }
 
