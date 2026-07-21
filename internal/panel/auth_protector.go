@@ -49,16 +49,17 @@ type loginFailureEntry struct {
 // AuthProtectorConfig controls the in-memory protections for unauthenticated
 // panel auth endpoints. Zero values are replaced with conservative defaults.
 type AuthProtectorConfig struct {
-	LoginIPRequestsPerMinute        int
-	LoginIPBurst                    int
-	RegisterIPRequestsPerMinute     int
-	RegisterIPBurst                 int
-	RegistrationProofDifficultyBits int
-	RegistrationProofValidity       time.Duration
-	LoginFailureThreshold           int
-	LoginFailureWindow              time.Duration
-	LoginBaseLockout                time.Duration
-	LoginMaxLockout                 time.Duration
+	LoginIPRequestsPerMinute           int
+	LoginIPBurst                       int
+	RegisterIPRequestsPerMinute        int
+	RegisterIPBurst                    int
+	RegistrationProofDifficultyBits    int
+	RegistrationProofValidity          time.Duration
+	RegistrationProofMaxUsedChallenges int
+	LoginFailureThreshold              int
+	LoginFailureWindow                 time.Duration
+	LoginBaseLockout                   time.Duration
+	LoginMaxLockout                    time.Duration
 }
 
 // AuthProtector adds request throttling, registration proof-of-work state, and
@@ -139,6 +140,7 @@ func NewAuthProtector(config AuthProtectorConfig) *AuthProtector {
 		registrationProof: newRegistrationProofState(
 			config.RegistrationProofDifficultyBits,
 			config.RegistrationProofValidity,
+			config.RegistrationProofMaxUsedChallenges,
 			now(),
 		),
 		lastCleanup: now(),

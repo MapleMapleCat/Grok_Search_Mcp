@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,12 +17,13 @@ import (
 )
 
 const (
-	defaultRegistrationProofDifficultyBits = 20
-	defaultRegistrationProofValidity       = 5 * time.Minute
-	registrationProofVersion               = "v1"
-	registrationProofNonceBytes            = 24
-	maxRegistrationProofNonceDigits        = 20
-	registrationProofPrefix                = "grok-registration-pow-v1\x00"
+	defaultRegistrationProofDifficultyBits    = 20
+	defaultRegistrationProofValidity          = 5 * time.Minute
+	defaultRegistrationProofMaxUsedChallenges = 4096
+	registrationProofVersion                  = "v1"
+	registrationProofNonceBytes               = 24
+	maxRegistrationProofNonceDigits           = 20
+	registrationProofPrefix                   = "grok-registration-pow-v1\x00"
 )
 
 var (
@@ -29,6 +31,7 @@ var (
 	errRegistrationProofInvalid  = errors.New("registration proof is invalid")
 	errRegistrationProofExpired  = errors.New("registration proof expired")
 	errRegistrationProofReplayed = errors.New("registration proof already used")
+	errRegistrationProofCapacity = errors.New("registration proof replay capacity exhausted")
 )
 
 // RegistrationProof contains the server-issued challenge and the client-found
@@ -52,11 +55,13 @@ type registrationProofState struct {
 	secret             []byte
 	difficultyBits     int
 	validity           time.Duration
+	maxUsedChallenges  int
 	usedChallenges     map[[sha256.Size]byte]time.Time
 	lastProofCleanupAt time.Time
+	saturationLogged   bool
 }
 
-func newRegistrationProofState(difficultyBits int, validity time.Duration, now time.Time) *registrationProofState {
+func newRegistrationProofState(difficultyBits int, validity time.Duration, maxUsedChallenges int, now time.Time) *registrationProofState {
 	if difficultyBits <= 0 {
 		difficultyBits = defaultRegistrationProofDifficultyBits
 	}
@@ -66,6 +71,9 @@ func newRegistrationProofState(difficultyBits int, validity time.Duration, now t
 	if validity <= 0 {
 		validity = defaultRegistrationProofValidity
 	}
+	if maxUsedChallenges <= 0 {
+		maxUsedChallenges = defaultRegistrationProofMaxUsedChallenges
+	}
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		panic(fmt.Sprintf("generate registration proof secret: %v", err))
@@ -74,6 +82,7 @@ func newRegistrationProofState(difficultyBits int, validity time.Duration, now t
 		secret:             secret,
 		difficultyBits:     difficultyBits,
 		validity:           validity,
+		maxUsedChallenges:  maxUsedChallenges,
 		usedChallenges:     make(map[[sha256.Size]byte]time.Time),
 		lastProofCleanupAt: now,
 	}
@@ -129,6 +138,17 @@ func (p *registrationProofState) verifyAndConsume(now time.Time, proof Registrat
 	if _, alreadyUsed := p.usedChallenges[challengeKey]; alreadyUsed {
 		return errRegistrationProofReplayed
 	}
+	if len(p.usedChallenges) >= p.maxUsedChallenges {
+		if !p.saturationLogged {
+			log.Printf(
+				"registration proof replay table saturated used_challenges=%d max_used_challenges=%d",
+				len(p.usedChallenges),
+				p.maxUsedChallenges,
+			)
+			p.saturationLogged = true
+		}
+		return errRegistrationProofCapacity
+	}
 	p.usedChallenges[challengeKey] = challenge.ExpiresAt
 	return nil
 }
@@ -170,7 +190,9 @@ func (p *registrationProofState) sign(payload []byte) []byte {
 }
 
 func (p *registrationProofState) cleanupUsedChallengesLocked(now time.Time) {
-	if now.Sub(p.lastProofCleanupAt) < time.Minute {
+	cleanupIntervalElapsed := now.Sub(p.lastProofCleanupAt) >= time.Minute
+	capacityReached := len(p.usedChallenges) >= p.maxUsedChallenges
+	if !cleanupIntervalElapsed && !capacityReached {
 		return
 	}
 	p.lastProofCleanupAt = now
@@ -178,6 +200,9 @@ func (p *registrationProofState) cleanupUsedChallengesLocked(now time.Time) {
 		if !expiresAt.After(now) {
 			delete(p.usedChallenges, challengeKey)
 		}
+	}
+	if len(p.usedChallenges) < p.maxUsedChallenges {
+		p.saturationLogged = false
 	}
 }
 

@@ -61,6 +61,10 @@ func (handler *Handler) register(writer http.ResponseWriter, request *http.Reque
 		username,
 		registerRequest.InviteCode,
 	); err != nil {
+		if errors.Is(err, errRegistrationProofCapacity) {
+			writeError(writer, http.StatusServiceUnavailable, "registration temporarily unavailable")
+			return
+		}
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
