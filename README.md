@@ -100,30 +100,63 @@ go build \
 
 ### 2. Configure
 
-The commands below assume a source checkout. The current Linux release archives contain the binary and READMEs but not `.env.example` or Compose assets; archive users must create `.env` from the configuration table below or obtain those companion files from the repository.
+Startup configuration is split into two layers:
+
+- `.env` is the user-owned basic configuration and contains only credentials
+  that must be supplied for a first deployment;
+- `advanced.env` contains the remaining settings with safe defaults and
+  normally needs no changes for the first deployment.
+
+Linux release archives include `.env.example` and `advanced.env`, so the same
+flow works with a prebuilt binary. The Compose file remains available only in a
+source checkout.
 
 ```bash
 cp .env.example .env
-mkdir -p data
 ${EDITOR:-vi} .env
 ```
 
-At minimum, a new installation requires:
+The basic `.env` requires only these two values:
 
 ```dotenv
 CPA_API_KEY=replace-with-your-cpa-api-key
 GROK_JWT_SECRET=replace-with-a-strong-random-secret-of-at-least-32-bytes
 ```
 
-Load the environment and start the server:
+Generate the JWT secret with `openssl rand -hex 32`. Do not put the generated
+value in `advanced.env` or commit it to source control.
+
+For a local binary, load the advanced defaults first and then the user-owned
+`.env`, so an explicit user value always takes precedence:
 
 ```bash
+mkdir -p data
 set -a
+source advanced.env
 source .env
 set +a
 
 ./grok-search-mcp
 ```
+
+With the source checkout's Docker Compose deployment, Compose automatically
+loads `advanced.env` and `.env` in the same order:
+
+```bash
+docker compose up -d --build
+```
+
+Compose uses the container-specific `http://host.docker.internal:8317` default
+for a CPA running on the host. To change the Compose CPA endpoint, explicitly
+add `CPA_BASE_URL` to `.env` so it is available during Compose interpolation.
+
+Most deployments do not need to edit `advanced.env`. Change it only when
+customizing the upstream protocol, listener or storage, retention,
+authentication protection, trusted proxies, capacity limits, debug mode, or an
+upstream proxy. A local binary can also define a non-default CPA endpoint
+there. Existing full `.env` files remain compatible: because `.env` is loaded
+last, its values override `advanced.env`. The service still reads ordinary
+environment variables and does not introduce another configuration format.
 
 Default endpoints:
 
@@ -211,10 +244,34 @@ When no enabled administrator exists, the server bootstraps an `admin` account
 and writes a bounded JSON credential file with exact `0600` permissions. By
 default it is `<GROK_DB_PATH>.bootstrap-admin`; startup logs report only that
 path and never the password. Read it as the same operating-system user that
-runs the service, then rotate the password promptly:
+runs the service, then rotate the password promptly.
+
+For a local binary deployment, read it from the local data directory:
 
 ```bash
 bootstrap_password="$(jq -r '.password' ./data/grok-search-mcp.db.bootstrap-admin)"
+```
+
+For Docker Compose, read it from the container data volume while keeping JSON
+parsing in the host's `jq` process:
+
+```bash
+bootstrap_password="$(docker compose exec -T grok-search-mcp \
+  sh -c 'cat /app/data/grok-search-mcp.db.bootstrap-admin' | jq -r '.password')"
+```
+
+For the published-image `docker run` deployment below, read it through the
+container name:
+
+```bash
+bootstrap_password="$(docker exec -i grok-search-mcp \
+  sh -c 'cat /app/data/grok-search-mcp.db.bootstrap-admin' | jq -r '.password')"
+```
+
+After obtaining the bootstrap password, sign in, rotate it, and create the
+first MCP key:
+
+```bash
 login_token="$(curl -sS -X POST "http://127.0.0.1:8080/panel/v1/auth/login" \
   -H "Content-Type: application/json" \
   -d "$(jq -n --arg password "${bootstrap_password}" '{username:"admin",password:$password}')" | jq -r '.token')"
@@ -599,13 +656,17 @@ docker pull maplemaplecat/grok-search-mcp:v0.2.2
 docker run -d \
   --name grok-search-mcp \
   --restart unless-stopped \
+  --env-file advanced.env \
   --env-file .env \
+  -e CPA_BASE_URL=http://host.docker.internal:8317 \
+  --add-host host.docker.internal:host-gateway \
   -p 127.0.0.1:8080:8080 \
   -v grok-search-mcp-data:/app/data \
   maplemaplecat/grok-search-mcp:v0.2.2
 ```
 
-If CPA runs directly on the Docker host, use:
+The command above connects to a CPA running on the Docker host by default. If
+CPA is available at another address, change `-e CPA_BASE_URL=...`; for example:
 
 ```dotenv
 CPA_BASE_URL=http://host.docker.internal:8317
@@ -620,7 +681,9 @@ The supplied container:
 - Uses the `grok-search-mcp-data` named volume in Compose
 - Health-checks `/panel/`
 
-The Compose file does not forward every optional outbound proxy variable. Extend `environment` if the container needs `GROK_PROXY_URL`, `GROK_PROXY_ENABLED`, or the standard proxy variables.
+Compose passes enabled explicit-proxy and standard-proxy variables from
+`advanced.env` into the container. If a proxy value contains real credentials,
+put it in the untracked `.env` or an external secret manager instead.
 
 ## Production and security notes
 

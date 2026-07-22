@@ -11,33 +11,19 @@ services:
     container_name: grok-search-mcp
     restart: unless-stopped
     ports:
-      # 发布到宿主机所有 IPv4 接口；公网部署应配置防火墙或置于 HTTPS 反向代理之后。
-      - "0.0.0.0:8080:8080"
+      # 默认仅发布到宿主机回环地址；公网部署应通过可信 HTTPS 反向代理接入。
+      - "127.0.0.1:8080:8080"
+    env_file:
+      # advanced.env 提供安全默认值，用户自己的 .env 最后加载并拥有更高优先级。
+      - ./advanced.env
+      - ./.env
     environment:
+      # 以下值需要 Compose 插值校验或容器专用路径，因此显式覆盖 env_file。
       CPA_BASE_URL: "${CPA_BASE_URL:-http://host.docker.internal:8317}"
       CPA_API_KEY: "${CPA_API_KEY:-}"
-      GROK_UPSTREAM_PROTOCOL: "${GROK_UPSTREAM_PROTOCOL:-responses}"
       GROK_JWT_SECRET: "${GROK_JWT_SECRET:?GROK_JWT_SECRET is required}"
       GROK_HTTP_ADDR: ":8080"
       GROK_DB_PATH: "/app/data/grok-search-mcp.db"
-      GROK_BOOTSTRAP_CREDENTIALS_PATH: "${GROK_BOOTSTRAP_CREDENTIALS_PATH:-/app/data/grok-search-mcp.db.bootstrap-admin}"
-      GROK_CLIENT_IP_MODE: "${GROK_CLIENT_IP_MODE:-direct}"
-      GROK_TRUSTED_PROXY_CIDRS: "${GROK_TRUSTED_PROXY_CIDRS:-}"
-      GROK_INITIAL_REGISTRATION_MODE: "${GROK_INITIAL_REGISTRATION_MODE:-disabled}"
-      GROK_MAX_API_KEYS_PER_USER: "${GROK_MAX_API_KEYS_PER_USER:-20}"
-      GROK_AUTH_PASSWORD_MAX_CONCURRENT: "${GROK_AUTH_PASSWORD_MAX_CONCURRENT:-4}"
-      GROK_USAGE_RAW_RETENTION_DAYS: "${GROK_USAGE_RAW_RETENTION_DAYS:-7}"
-      GROK_USAGE_HOURLY_RETENTION_DAYS: "${GROK_USAGE_HOURLY_RETENTION_DAYS:-90}"
-      GROK_USAGE_DAILY_RETENTION_DAYS: "${GROK_USAGE_DAILY_RETENTION_DAYS:-730}"
-      GROK_USAGE_MAINTENANCE_INTERVAL: "${GROK_USAGE_MAINTENANCE_INTERVAL:-1h}"
-      GROK_SEARCH_MCP_IP_RPM: "${GROK_SEARCH_MCP_IP_RPM:-300}"
-      GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD: "${GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD:-2048}"
-      GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD: "${GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD:-16}"
-      GROK_SEARCH_MCP_GLOBAL_SEARCH_CONCURRENCY: "${GROK_SEARCH_MCP_GLOBAL_SEARCH_CONCURRENCY:-16}"
-      GROK_SEARCH_MCP_USER_SEARCH_CONCURRENCY: "${GROK_SEARCH_MCP_USER_SEARCH_CONCURRENCY:-4}"
-      GROK_MODEL: "${GROK_MODEL:-grok-4.3}"
-      GROK_HTTP_TIMEOUT: "${GROK_HTTP_TIMEOUT:-120}"
-      GROK_SEARCH_MCP_DEBUG: "${GROK_SEARCH_MCP_DEBUG:-}"
     volumes:
       - grok-search-mcp-data:/app/data
     extra_hosts:

@@ -79,7 +79,7 @@ jobs:
               -o "${package_directory}/grok-search-mcp" \
               ./cmd/grok-search-mcp
 
-            cp LICENSE README.md README_CN.md "${package_directory}/"
+            cp LICENSE README.md README_CN.md .env.example advanced.env "${package_directory}/"
             tar -C dist -czf "dist/${archive_base_name}.tar.gz" "${archive_base_name}"
             rm -rf "${package_directory}"
           done
