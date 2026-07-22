@@ -228,6 +228,17 @@ func TestParseChatCompletionsResponseDoesNotMisclassifyJSONTextAsSSE(t *testing.
 	}
 }
 
+func TestParseAnthropicMessagesResponseDoesNotMisclassifyJSONTextAsSSE(t *testing.T) {
+	responseBody := `{"type":"message","content":[{"type":"text","text":"A literal data: prefix is ordinary text."}]}`
+	result, err := parseAnthropicMessagesResponse(strings.NewReader(responseBody))
+	if err != nil {
+		t.Fatalf("parse non-streaming Anthropic response: %v", err)
+	}
+	if result.Answer != "A literal data: prefix is ordinary text." {
+		t.Fatalf("unexpected answer: %q", result.Answer)
+	}
+}
+
 func TestParseChatCompletionsResponsePreservesRawSSEBody(t *testing.T) {
 	stream := "data: {\"choices\":[{\"delta\":{\"content\":\"first answer\"}}]}\n\ndata: [DONE]\n\n"
 	result, err := parseChatCompletionsResponse(strings.NewReader(stream), nil, nil)

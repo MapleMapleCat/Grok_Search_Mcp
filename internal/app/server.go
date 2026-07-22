@@ -72,12 +72,6 @@ type runtimeServerSettingsApplier struct {
 }
 
 func (applier *runtimeServerSettingsApplier) ApplyServerSettings(settings config.ServerSettings, persistedVersion int64) error {
-	if applier.sqliteStore != nil {
-		applier.sqliteStore.SetMetricsEnabled(settings.OperationsMetricsEnabled)
-	}
-	if applier.usageWriter != nil {
-		applier.usageWriter.SetMetricsEnabled(settings.OperationsMetricsEnabled)
-	}
 	if applier.upstreamApplier != nil {
 		if err := applier.upstreamApplier.ApplyServerSettings(settings); err != nil {
 			return err
@@ -90,6 +84,12 @@ func (applier *runtimeServerSettingsApplier) ApplyServerSettings(settings config
 		); err != nil {
 			return err
 		}
+	}
+	if applier.sqliteStore != nil {
+		applier.sqliteStore.SetMetricsEnabled(settings.OperationsMetricsEnabled)
+	}
+	if applier.usageWriter != nil {
+		applier.usageWriter.SetMetricsEnabled(settings.OperationsMetricsEnabled)
 	}
 	applier.liveVersion.Store(persistedVersion)
 	return nil

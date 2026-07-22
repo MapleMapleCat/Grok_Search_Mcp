@@ -64,7 +64,26 @@ func openDebugSQLite(mainDatabasePath string) (*sql.DB, error) {
 		_ = debugDB.Close()
 		return nil, fmt.Errorf("initialize debug sqlite: %w", err)
 	}
+	if debugPath != ":memory:" {
+		if err := secureDebugSQLiteSidecars(debugPath); err != nil {
+			_ = debugDB.Close()
+			return nil, err
+		}
+	}
 	return debugDB, nil
+}
+
+func secureDebugSQLiteSidecars(debugPath string) error {
+	for _, sidecarSuffix := range []string{"-wal", "-shm"} {
+		sidecarPath := debugPath + sidecarSuffix
+		if err := os.Chmod(sidecarPath, 0o600); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("secure debug sqlite sidecar %s: %w", sidecarSuffix, err)
+		}
+	}
+	return nil
 }
 
 // deleteUsageDebugByKeyIDsBestEffort keeps auxiliary debug cleanup from

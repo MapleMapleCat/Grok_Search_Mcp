@@ -41,17 +41,35 @@ func (applier *recordingRuntimeSettingsApplier) ApplyServerSettings(settings con
 }
 
 func TestRuntimeServerSettingsApplierKeepsConfirmedVersionAfterFailure(t *testing.T) {
+	sqliteStore, err := store.OpenSQLite(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqliteStore.Close()
+	usageWriter := store.NewAsyncUsageWriter(store.TestStore{}, 1)
+	defer usageWriter.Close()
+
 	upstreamApplier := &recordingRuntimeSettingsApplier{applyError: errors.New("upstream apply failed")}
-	applier := &runtimeServerSettingsApplier{upstreamApplier: upstreamApplier}
+	applier := &runtimeServerSettingsApplier{
+		upstreamApplier: upstreamApplier,
+		sqliteStore:     sqliteStore,
+		usageWriter:     usageWriter,
+	}
 	applier.liveVersion.Store(5)
 
-	err := applier.ApplyServerSettings(config.ServerSettings{}, 6)
+	err = applier.ApplyServerSettings(config.ServerSettings{OperationsMetricsEnabled: true}, 6)
 
 	if err == nil {
 		t.Fatal("ApplyServerSettings succeeded, want upstream failure")
 	}
 	if liveVersion := applier.LiveServerSettingsVersion(); liveVersion != 5 {
 		t.Fatalf("live settings version = %d, want prior confirmed version 5", liveVersion)
+	}
+	if metrics := sqliteStore.SQLiteMetrics(); !reflect.DeepEqual(metrics, store.SQLiteMetricsSnapshot{}) {
+		t.Fatalf("SQLite metrics enabled before complete settings apply: %+v", metrics)
+	}
+	if metrics := usageWriter.Stats(); !reflect.DeepEqual(metrics, store.AsyncUsageWriterStats{}) {
+		t.Fatalf("usage writer metrics enabled before complete settings apply: %+v", metrics)
 	}
 }
 

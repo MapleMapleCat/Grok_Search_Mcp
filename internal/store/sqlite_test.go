@@ -158,6 +158,29 @@ func TestSQLiteCreatesSeparateRestrictedDebugDatabase(t *testing.T) {
 	if permissions := debugInfo.Mode().Perm(); permissions != 0o600 {
 		t.Fatalf("debug database permissions = %#o, want 0600", permissions)
 	}
+	if _, err := sqliteStore.debugDB.Exec(`
+		INSERT INTO usage_debug (usage_id, key_id, usage_timestamp, created_at)
+		VALUES (1, 'permission-test-key', '2026-07-22T00:00:00Z', '2026-07-22T00:00:00Z')`); err != nil {
+		t.Fatalf("write debug database to create WAL sidecars: %v", err)
+	}
+	for _, sidecarSuffix := range []string{"-wal", "-shm"} {
+		if err := os.Chmod(debugPath+sidecarSuffix, 0o644); err != nil {
+			t.Fatalf("make debug database sidecar %s permissive for hardening test: %v", sidecarSuffix, err)
+		}
+	}
+	if err := secureDebugSQLiteSidecars(debugPath); err != nil {
+		t.Fatalf("secure debug database sidecars: %v", err)
+	}
+	for _, sidecarSuffix := range []string{"-wal", "-shm"} {
+		sidecarPath := debugPath + sidecarSuffix
+		sidecarInfo, statErr := os.Stat(sidecarPath)
+		if statErr != nil {
+			t.Fatalf("stat debug database sidecar %s: %v", sidecarSuffix, statErr)
+		}
+		if permissions := sidecarInfo.Mode().Perm(); permissions&0o077 != 0 {
+			t.Fatalf("debug database sidecar %s permissions = %#o, want no group/other access", sidecarSuffix, permissions)
+		}
+	}
 
 	var debugTableCount int
 	if err := sqliteStore.debugDB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'usage_debug'`).Scan(&debugTableCount); err != nil {

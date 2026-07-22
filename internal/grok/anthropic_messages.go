@@ -187,7 +187,7 @@ func parseAnthropicMessagesResponse(body io.Reader) (*SearchResult, error) {
 		return collector.err
 	}
 
-	isSSE := bytes.Contains(rawBody, []byte("data:"))
+	isSSE := isAnthropicSSEResponse(rawBody)
 	if isSSE {
 		sawMessageStop := false
 		err = forEachSSEEvent(bytes.NewReader(rawBody), func(payload []byte) error {
@@ -233,6 +233,22 @@ func parseAnthropicMessagesResponse(body io.Reader) (*SearchResult, error) {
 		Usage:       normalizedUsage,
 		RawResponse: json.RawMessage(rawBody),
 	}, nil
+}
+
+func isAnthropicSSEResponse(body []byte) bool {
+	for _, responseLine := range bytes.Split(body, []byte{'\n'}) {
+		trimmedLine := bytes.TrimSpace(responseLine)
+		if len(trimmedLine) == 0 || bytes.HasPrefix(trimmedLine, []byte(":")) {
+			continue
+		}
+		if bytes.HasPrefix(trimmedLine, []byte("{")) || bytes.HasPrefix(trimmedLine, []byte("[")) {
+			return false
+		}
+		if bytes.HasPrefix(trimmedLine, []byte("data:")) || bytes.HasPrefix(trimmedLine, []byte("event:")) {
+			return true
+		}
+	}
+	return false
 }
 
 func collectAnthropicContent(answer *strings.Builder, collector *citationCollector, blocks []anthropicContentBlock) error {

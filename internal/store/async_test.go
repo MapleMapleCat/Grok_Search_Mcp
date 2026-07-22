@@ -29,6 +29,39 @@ func (s *blockingUsageStore) RecordUsage(context.Context, UsageRecord) error {
 	return nil
 }
 
+func TestAsyncUsageWriterStatsAllowUntrackedRecordsAfterMetricsEnable(t *testing.T) {
+	blockingStore := &blockingUsageStore{
+		started: make(chan struct{}, 1),
+		unblock: make(chan struct{}),
+	}
+	writer := NewAsyncUsageWriter(blockingStore, 2)
+	var releaseStoreOnce sync.Once
+	t.Cleanup(func() {
+		releaseStoreOnce.Do(func() { close(blockingStore.unblock) })
+		writer.Close()
+	})
+
+	writer.Enqueue(UsageRecord{KeyID: "in-flight", ToolName: "grok_web_search"})
+	select {
+	case <-blockingStore.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async writer to start blocked write")
+	}
+
+	// This record has no metrics timestamp because it enters while collection is disabled.
+	writer.Enqueue(UsageRecord{KeyID: "untracked-queued", ToolName: "grok_web_search"})
+	writer.SetMetricsEnabled(true)
+	writer.Enqueue(UsageRecord{KeyID: "tracked-behind-untracked", ToolName: "grok_web_search"})
+
+	stats := writer.Stats()
+	if stats.QueueLength != 2 {
+		t.Fatalf("queue length = %d, want 2", stats.QueueLength)
+	}
+	if stats.OldestQueuedAgeMs != 0 {
+		t.Fatalf("oldest queued age = %f ms, want 0 while the queue head is untracked", stats.OldestQueuedAgeMs)
+	}
+}
+
 func TestAsyncUsageWriterStatsTrackDroppedRecords(t *testing.T) {
 	blockingStore := &blockingUsageStore{
 		started: make(chan struct{}, 1),

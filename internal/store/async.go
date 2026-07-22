@@ -22,9 +22,8 @@ type usageBatchRecorder interface {
 }
 
 type queuedUsageRecord struct {
-	record         UsageRecord
-	enqueuedAt     time.Time
-	metricsTracked bool
+	record     UsageRecord
+	enqueuedAt time.Time
 }
 
 // AsyncUsageWriter 将用量写入从请求路径解耦：主线程只入队，后台 goroutine 调用 Store。
@@ -162,7 +161,7 @@ func (w *AsyncUsageWriter) run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			w.markRecordDequeued(queuedRecord)
+			w.markRecordDequeued()
 			if ctx.Err() != nil {
 				w.discardRecord(queuedRecord.record, "shutdown deadline reached")
 				w.discardQueuedRecords("shutdown deadline reached")
@@ -201,7 +200,7 @@ func (w *AsyncUsageWriter) collectBatch(ctx context.Context, batch *[]queuedUsag
 			if !ok {
 				return true, false
 			}
-			w.markRecordDequeued(queuedRecord)
+			w.markRecordDequeued()
 			*batch = append(*batch, queuedRecord)
 		}
 	}
@@ -312,25 +311,18 @@ func (w *AsyncUsageWriter) Enqueue(rec UsageRecord) {
 	metricsEnabled := w.metricsEnabled.Load()
 	if metricsEnabled {
 		queuedRecord.enqueuedAt = time.Now()
-		queuedRecord.metricsTracked = true
 	}
 	admitted := false
-	if queuedRecord.metricsTracked {
-		w.queueStatsMu.Lock()
-		select {
-		case w.ch <- queuedRecord:
-			admitted = true
-			w.queuedAt = append(w.queuedAt, queuedRecord.enqueuedAt)
-		default:
-		}
-		w.queueStatsMu.Unlock()
-	} else {
-		select {
-		case w.ch <- queuedRecord:
-			admitted = true
-		default:
-		}
+	w.queueStatsMu.Lock()
+	select {
+	case w.ch <- queuedRecord:
+		admitted = true
+		// Keep one queue-order marker per admitted record. A zero timestamp
+		// means the record entered while metrics collection was disabled.
+		w.queuedAt = append(w.queuedAt, queuedRecord.enqueuedAt)
+	default:
 	}
+	w.queueStatsMu.Unlock()
 	w.admissionMu.Unlock()
 	if !admitted {
 		w.discardRecord(rec, "buffer full")
@@ -348,7 +340,7 @@ func (w *AsyncUsageWriter) discardQueuedRecords(reason string) {
 			if !ok {
 				return
 			}
-			w.markRecordDequeued(queuedRecord)
+			w.markRecordDequeued()
 			w.discardRecord(queuedRecord.record, reason)
 		default:
 			return
@@ -362,10 +354,7 @@ func (w *AsyncUsageWriter) discardBatch(batch []queuedUsageRecord, reason string
 	}
 }
 
-func (w *AsyncUsageWriter) markRecordDequeued(queuedRecord queuedUsageRecord) {
-	if !queuedRecord.metricsTracked {
-		return
-	}
+func (w *AsyncUsageWriter) markRecordDequeued() {
 	w.queueStatsMu.Lock()
 	if len(w.queuedAt) > 0 {
 		w.queuedAt[0] = time.Time{}
@@ -452,7 +441,7 @@ func (w *AsyncUsageWriter) Stats() AsyncUsageWriterStats {
 	w.queueStatsMu.Lock()
 	queueLength := len(w.ch)
 	oldestQueuedAge := time.Duration(0)
-	if queueLength > 0 {
+	if queueLength > 0 && len(w.queuedAt) > 0 && !w.queuedAt[0].IsZero() {
 		oldestQueuedAge = time.Since(w.queuedAt[0])
 	}
 	w.queueStatsMu.Unlock()
