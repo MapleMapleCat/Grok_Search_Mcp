@@ -137,6 +137,20 @@ func TestLoadTrustedProxyNetworkConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoadDirectModeIgnoresTrustedProxyCIDRs(t *testing.T) {
+	panelEnv(t)
+	setEnv(t, "GROK_CLIENT_IP_MODE", "direct")
+	setEnv(t, "GROK_TRUSTED_PROXY_CIDRS", "not-a-prefix")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load should ignore trusted proxy CIDRs in direct mode: %v", err)
+	}
+	if len(cfg.TrustedProxyCIDRs) != 0 {
+		t.Fatalf("trusted proxy prefixes = %v, want none in direct mode", cfg.TrustedProxyCIDRs)
+	}
+}
+
 func TestLoadRejectsInvalidNetworkTrustConfiguration(t *testing.T) {
 	testCases := []struct {
 		name          string
@@ -146,7 +160,7 @@ func TestLoadRejectsInvalidNetworkTrustConfiguration(t *testing.T) {
 	}{
 		{name: "unknown mode", mode: "forwarded", expectedError: "GROK_CLIENT_IP_MODE must be"},
 		{name: "trusted mode requires prefixes", mode: "trusted_proxy", expectedError: "GROK_TRUSTED_PROXY_CIDRS is required"},
-		{name: "malformed prefix in direct mode", mode: "direct", trustedCIDRs: "not-a-prefix", expectedError: "invalid prefix"},
+		{name: "malformed prefix", mode: "trusted_proxy", trustedCIDRs: "not-a-prefix", expectedError: "invalid prefix"},
 		{name: "empty list element", mode: "trusted_proxy", trustedCIDRs: "192.0.2.0/24,,2001:db8::/32", expectedError: "empty list elements"},
 		{name: "zoned address", mode: "trusted_proxy", trustedCIDRs: "fe80::1%eth0/64", expectedError: "invalid prefix"},
 	}

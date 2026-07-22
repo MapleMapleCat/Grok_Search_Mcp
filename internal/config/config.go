@@ -105,12 +105,15 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	trustedProxyCIDRs, err := parseTrustedProxyCIDRs(os.Getenv("GROK_TRUSTED_PROXY_CIDRS"))
-	if err != nil {
-		return nil, err
-	}
-	if clientIPMode == ratelimit.ClientIPModeTrustedProxy && len(trustedProxyCIDRs) == 0 {
-		return nil, fmt.Errorf("GROK_TRUSTED_PROXY_CIDRS is required in trusted_proxy mode")
+	var trustedProxyCIDRs []netip.Prefix
+	if clientIPMode == ratelimit.ClientIPModeTrustedProxy {
+		trustedProxyCIDRs, err = parseTrustedProxyCIDRs(os.Getenv("GROK_TRUSTED_PROXY_CIDRS"))
+		if err != nil {
+			return nil, err
+		}
+		if len(trustedProxyCIDRs) == 0 {
+			return nil, fmt.Errorf("GROK_TRUSTED_PROXY_CIDRS is required in trusted_proxy mode")
+		}
 	}
 	initialRegistrationMode, err := parseInitialRegistrationMode(os.Getenv("GROK_INITIAL_REGISTRATION_MODE"))
 	if err != nil {
