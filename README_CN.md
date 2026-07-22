@@ -102,7 +102,8 @@ go build \
 
 启动配置分成两层：
 
-- `.env` 是用户自己的基础配置，只保存首次部署必须填写的凭证；
+- `.env` 是用户自己的基础配置，保存 CPA 上游地址/端口和首次部署必须填写的
+  凭证；
 - `advanced.env` 提供其余具有安全默认值的高级配置，首次部署无需修改。
 
 Linux 发布压缩包包含 `.env.example` 和 `advanced.env`，因此使用预编译二进制时
@@ -113,12 +114,18 @@ cp .env.example .env
 ${EDITOR:-vi} .env
 ```
 
-基础 `.env` 只需要填写以下两个值：
+基础 `.env` 包含 CPA 上游地址和两个必填凭证：
 
 ```dotenv
+CPA_BASE_URL=
 CPA_API_KEY=replace-with-your-cpa-api-key
 GROK_JWT_SECRET=replace-with-a-strong-random-secret-of-at-least-32-bytes
 ```
+
+本地二进制运行且 CPA 位于本机时，`CPA_BASE_URL` 可以留空，默认使用
+`http://127.0.0.1:8317`。Docker Compose 中留空则默认连接
+`http://host.docker.internal:8317`。CPA 位于其他主机或端口时，直接在基础
+`.env` 中填写完整地址。
 
 可以使用 `openssl rand -hex 32` 生成 JWT secret。不要把生成结果写入
 `advanced.env` 或提交到版本库。
@@ -144,14 +151,14 @@ docker compose up -d --build
 ```
 
 Compose 会为宿主机上的 CPA 使用容器专用默认地址
-`http://host.docker.internal:8317`。如需修改 Compose 的 CPA 地址，请把
-`CPA_BASE_URL` 显式加入 `.env`，使其在 Compose 插值阶段生效。
+`http://host.docker.internal:8317`。如需修改 Compose 的 CPA 地址，请直接编辑
+基础 `.env` 中的 `CPA_BASE_URL`，使其在 Compose 插值阶段生效。
 
 大多数部署不需要编辑 `advanced.env`。只有需要修改上游协议、监听与存储、数据
-保留、认证保护、可信代理、容量限制、debug 或上游代理时才调整它。本地二进制的
-非默认 CPA 地址也可以在这里配置。现有包含全部变量的 `.env` 仍然兼容；因为
-`.env` 最后加载，其中的值会覆盖 `advanced.env`。服务仍然只读取普通环境变量，
-不存在额外配置格式。
+保留、认证保护、可信代理、容量限制、debug 或上游代理时才调整它。CPA 地址和
+端口统一在基础 `.env` 中配置。现有包含全部变量的 `.env` 仍然兼容；因为 `.env`
+最后加载，其中的值会覆盖 `advanced.env`。服务仍然只读取普通环境变量，不存在
+额外配置格式。
 
 默认端点：
 
@@ -614,15 +621,14 @@ docker run -d \
   --restart unless-stopped \
   --env-file advanced.env \
   --env-file .env \
-  -e CPA_BASE_URL=http://host.docker.internal:8317 \
   --add-host host.docker.internal:host-gateway \
   -p 127.0.0.1:8080:8080 \
   -v grok-search-mcp-data:/app/data \
   maplemaplecat/grok-search-mcp:v0.2.2
 ```
 
-上面的命令默认连接 Docker 宿主机上的 CPA。如果 CPA 位于其他地址，请修改
-`-e CPA_BASE_URL=...`；例如：
+直接运行发布镜像时，请在基础 `.env` 中填写容器可访问的 CPA 地址。CPA 运行在
+Docker 宿主机上时使用：
 
 ```dotenv
 CPA_BASE_URL=http://host.docker.internal:8317

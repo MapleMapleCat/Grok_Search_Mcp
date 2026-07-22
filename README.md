@@ -102,8 +102,8 @@ go build \
 
 Startup configuration is split into two layers:
 
-- `.env` is the user-owned basic configuration and contains only credentials
-  that must be supplied for a first deployment;
+- `.env` is the user-owned basic configuration and contains the CPA upstream
+  address/port plus credentials required for a first deployment;
 - `advanced.env` contains the remaining settings with safe defaults and
   normally needs no changes for the first deployment.
 
@@ -116,12 +116,19 @@ cp .env.example .env
 ${EDITOR:-vi} .env
 ```
 
-The basic `.env` requires only these two values:
+The basic `.env` contains the CPA upstream address and two required
+credentials:
 
 ```dotenv
+CPA_BASE_URL=
 CPA_API_KEY=replace-with-your-cpa-api-key
 GROK_JWT_SECRET=replace-with-a-strong-random-secret-of-at-least-32-bytes
 ```
+
+When a local binary connects to a CPA on the same host, `CPA_BASE_URL` may stay
+empty and defaults to `http://127.0.0.1:8317`. Under Docker Compose, an empty
+value defaults to `http://host.docker.internal:8317`. If CPA uses another host
+or port, enter the complete URL directly in the basic `.env`.
 
 Generate the JWT secret with `openssl rand -hex 32`. Do not put the generated
 value in `advanced.env` or commit it to source control.
@@ -147,15 +154,16 @@ docker compose up -d --build
 ```
 
 Compose uses the container-specific `http://host.docker.internal:8317` default
-for a CPA running on the host. To change the Compose CPA endpoint, explicitly
-add `CPA_BASE_URL` to `.env` so it is available during Compose interpolation.
+for a CPA running on the host. To change the Compose CPA endpoint, edit
+`CPA_BASE_URL` in the basic `.env` so it is available during Compose
+interpolation.
 
 Most deployments do not need to edit `advanced.env`. Change it only when
 customizing the upstream protocol, listener or storage, retention,
 authentication protection, trusted proxies, capacity limits, debug mode, or an
-upstream proxy. A local binary can also define a non-default CPA endpoint
-there. Existing full `.env` files remain compatible: because `.env` is loaded
-last, its values override `advanced.env`. The service still reads ordinary
+upstream proxy. Configure the CPA address and port only in the basic `.env`.
+Existing full `.env` files remain compatible: because `.env` is loaded last,
+its values override `advanced.env`. The service still reads ordinary
 environment variables and does not introduce another configuration format.
 
 Default endpoints:
@@ -658,15 +666,14 @@ docker run -d \
   --restart unless-stopped \
   --env-file advanced.env \
   --env-file .env \
-  -e CPA_BASE_URL=http://host.docker.internal:8317 \
   --add-host host.docker.internal:host-gateway \
   -p 127.0.0.1:8080:8080 \
   -v grok-search-mcp-data:/app/data \
   maplemaplecat/grok-search-mcp:v0.2.2
 ```
 
-The command above connects to a CPA running on the Docker host by default. If
-CPA is available at another address, change `-e CPA_BASE_URL=...`; for example:
+For a direct published-image deployment, set the container-reachable CPA URL in
+the basic `.env`. If CPA runs on the Docker host, use:
 
 ```dotenv
 CPA_BASE_URL=http://host.docker.internal:8317
