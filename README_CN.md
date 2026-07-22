@@ -379,7 +379,7 @@ claude mcp add --transport http grok-search-mcp http://127.0.0.1:8080/mcp \
 | `CPA_API_KEY` | 无 | 新数据库必填；后续启动可以由 SQLite 中的服务设置提供。 |
 | `CPA_BASE_URL` | `http://127.0.0.1:8317` | CPA 根地址。 |
 | `GROK_UPSTREAM_PROTOCOL` | `responses` | 搜索协议：`responses`、`chat_completions` 或 `anthropic_messages`。 |
-| `GROK_MODEL` | `grok-4.3` | 默认 Grok 模型。 |
+| `GROK_MODEL` | `grok-4.5` | 默认 Grok 模型。 |
 | `GROK_HTTP_TIMEOUT` | `120` | 上游连接、TLS 握手和响应头各阶段的超时秒数，不限制已建立 SSE 响应体的持续时间；总搜索生命周期由调用方取消控制。 |
 | `GROK_HTTP_ADDR` | `:8080` | HTTP 监听地址，修改后需要重启。 |
 | `GROK_DB_PATH` | `./grok-search-mcp.db` | SQLite 路径，修改后需要重启。 |
@@ -478,8 +478,9 @@ GROK_CLIENT_IP_MODE=trusted_proxy
 GROK_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
 ```
 
-Compose 默认发布为 `127.0.0.1:8080:8080`，不会在宿主机所有接口暴露明文
-后端。只有在明确设计好代理和网络边界后才应修改该宿主机绑定。
+Compose 发布为 `0.0.0.0:8080:8080`，虚拟机、局域网客户端和容器网络客户端
+均可通过宿主机访问服务。公网部署时，应使用防火墙和可信 HTTPS 反向代理限制
+外部访问。
 
 ### 持久化与热更新
 

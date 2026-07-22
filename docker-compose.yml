@@ -11,8 +11,8 @@ services:
     container_name: grok-search-mcp
     restart: unless-stopped
     ports:
-      # 默认仅发布到宿主机回环地址；公网部署应通过可信 HTTPS 反向代理接入。
-      - "127.0.0.1:8080:8080"
+      # 项目部署契约要求发布到所有 IPv4 接口，以支持虚拟机、局域网和容器网络访问。
+      - "0.0.0.0:8080:8080"
     env_file:
       # advanced.env 提供安全默认值，用户自己的 .env 最后加载并拥有更高优先级。
       - ./advanced.env

@@ -92,7 +92,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.UpstreamProtocol != UpstreamProtocolResponses {
 		t.Fatalf("unexpected upstream protocol: %s", cfg.UpstreamProtocol)
 	}
-	if cfg.Model != "grok-4.3" {
+	if cfg.Model != "grok-4.5" {
 		t.Fatalf("unexpected model: %s", cfg.Model)
 	}
 	if cfg.Timeout != 120*time.Second {

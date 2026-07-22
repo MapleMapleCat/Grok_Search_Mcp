@@ -408,7 +408,7 @@ Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs,
 | `CPA_API_KEY` | None | Required for a new database. Existing persisted server settings may provide it on later starts. |
 | `CPA_BASE_URL` | `http://127.0.0.1:8317` | CPA root URL. |
 | `GROK_UPSTREAM_PROTOCOL` | `responses` | Search protocol: `responses`, `chat_completions`, or `anthropic_messages`. |
-| `GROK_MODEL` | `grok-4.3` | Default Grok model. |
+| `GROK_MODEL` | `grok-4.5` | Default Grok model. |
 | `GROK_HTTP_TIMEOUT` | `120` | Per-phase timeout in seconds for upstream connection establishment, TLS handshake, and response headers. It does not limit an active SSE response body; caller cancellation defines the total search lifetime. |
 | `GROK_HTTP_ADDR` | `:8080` | HTTP listen address. Requires restart to change. |
 | `GROK_DB_PATH` | `./grok-search-mcp.db` | SQLite database path. Requires restart to change. |
@@ -518,9 +518,10 @@ GROK_CLIENT_IP_MODE=trusted_proxy
 GROK_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
 ```
 
-The default Compose publication is `127.0.0.1:8080:8080`, so it does not expose
-the plaintext backend on all host interfaces. Change that host binding only as
-part of a deliberate proxy/network design.
+Compose publishes `0.0.0.0:8080:8080`, so virtual machines, LAN clients, and
+container-network clients can reach the service through the host. For an
+internet-facing deployment, restrict external access with a firewall and a
+trusted HTTPS reverse proxy.
 
 ### Persistence and live updates
 

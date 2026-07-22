@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultBaseURL          = "http://127.0.0.1:8317"
-	defaultModel            = "grok-4.3"
+	defaultModel            = "grok-4.5"
 	defaultUpstreamProtocol = UpstreamProtocolResponses
 	// defaultTimeout limits each upstream connection, TLS handshake, and
 	// response-header phase. Active SSE bodies remain governed by caller context.

@@ -53,7 +53,7 @@ export function renderSettingsPage(state) {
           <div class="settings-section-copy"><h3>模型与超时</h3><p>设置连接、TLS 握手和响应头各阶段超时；已建立的 SSE 流不受该值限制。</p></div>
           <div class="form-grid form-grid-align-fields">
             <label class="field-group"><span class="field-label"><span>默认模型</span><button class="button button-ghost button-sm" type="button" data-action="load-models">拉取模型</button></span>
-              ${modelChoices.length > 0 ? `<select class="select-input" name="model" required>${modelChoices.map((model) => `<option value="${escapeHTML(model.id)}" ${model.id === settings.model ? "selected" : ""}>${escapeHTML(model.id)}</option>`).join("")}</select>` : `<input class="text-input" name="model" type="text" value="${escapeHTML(settings.model || "")}" placeholder="grok-4.3" required>`}
+              ${modelChoices.length > 0 ? `<select class="select-input" name="model" required>${modelChoices.map((model) => `<option value="${escapeHTML(model.id)}" ${model.id === settings.model ? "selected" : ""}>${escapeHTML(model.id)}</option>`).join("")}</select>` : `<input class="text-input" name="model" type="text" value="${escapeHTML(settings.model || "")}" placeholder="grok-4.5" required>`}
             </label>
             <label class="field-group"><span class="field-label">连接/TLS/响应头超时（秒）</span><input class="text-input" name="timeout_seconds" type="number" min="1" step="1" value="${escapeHTML(settings.timeout_seconds || 120)}" required></label>
           </div>
