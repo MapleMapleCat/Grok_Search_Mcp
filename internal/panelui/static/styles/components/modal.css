@@ -1,5 +1,8 @@
 .logout-button .app-icon,
-.modal-close .app-icon {
+.modal-close .app-icon,
+.toast-icon .app-icon,
+.tier-assignment-icon .app-icon,
+.debug-json-section-icon .app-icon {
   width: 15px;
   height: 15px;
   flex-basis: 15px;

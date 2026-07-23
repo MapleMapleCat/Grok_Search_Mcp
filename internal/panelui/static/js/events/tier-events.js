@@ -3,6 +3,7 @@ import { showToast } from "../components/toast.js";
 import {
   COLLECTION_PAGE_SIZE,
   compareTiers,
+  findItemByIdentifier,
   removeItemByIdentifier,
   replaceItemByIdentifier
 } from "../state.js";
@@ -20,7 +21,7 @@ export function createTierEvents({
   }
 
   function openEditModal(tierIdentifier) {
-    const tier = findTier(tierIdentifier);
+    const tier = findItemByIdentifier(state.data.tiers, tierIdentifier);
     if (!tier) {
       showToast("等级不存在", "请刷新页面后重试。", "error");
       return;
@@ -69,7 +70,7 @@ export function createTierEvents({
   }
 
   function openDeleteConfirmation(tierIdentifier) {
-    const tier = findTier(tierIdentifier);
+    const tier = findItemByIdentifier(state.data.tiers, tierIdentifier);
     modalController.openModal({
       type: "confirm",
       confirmAction: "deleteTier",
@@ -85,10 +86,6 @@ export function createTierEvents({
   async function deleteConfirmed(tierIdentifier) {
     await deleteTier(tierIdentifier);
     state.data.tiers = removeItemByIdentifier(state.data.tiers, tierIdentifier);
-  }
-
-  function findTier(tierIdentifier) {
-    return (state.data.tiers || []).find((candidateTier) => candidateTier.id === tierIdentifier);
   }
 
   return {

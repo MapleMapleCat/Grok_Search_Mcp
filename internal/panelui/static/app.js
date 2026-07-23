@@ -18,6 +18,7 @@ import { renderAuthView } from "./js/components/forms.js";
 import { renderModal } from "./js/components/modal.js";
 import { configureToastRegion, showToast } from "./js/components/toast.js";
 import { createApplicationEvents } from "./js/events.js";
+import { getErrorMessage } from "./js/events/event-helpers.js";
 import { adminPages, availablePages, isStaticPage, pageMetadata, renderShell } from "./js/router.js";
 import { renderSafeHTML } from "./js/safe-html.js";
 import {
@@ -309,13 +310,6 @@ function handleSessionError(error) {
   state.authError = "会话已失效，请重新登录。";
   renderApplication();
   return true;
-}
-
-function getErrorMessage(error) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-  return "发生未知错误，请稍后重试。";
 }
 
 initializeApplication();

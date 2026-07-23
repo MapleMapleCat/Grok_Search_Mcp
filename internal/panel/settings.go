@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
-	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/grok"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
 )
 
@@ -28,7 +27,7 @@ type savedNotAppliedErrorResponse struct {
 }
 
 func (h *Handler) adminGetServerSettings(w http.ResponseWriter, r *http.Request) {
-	effectiveSettings, err := h.loadEffectiveServerSettings(r)
+	effectiveSettings, err := h.loadEffectiveServerSettingsContext(r.Context())
 	if err != nil {
 		log.Printf("admin get server settings failed error_type=%T", err)
 		writeError(w, http.StatusInternalServerError, "failed to load server settings")
@@ -52,7 +51,7 @@ func (h *Handler) adminUpdateServerSettings(w http.ResponseWriter, r *http.Reque
 	h.settingsUpdateMutex.Lock()
 	defer h.settingsUpdateMutex.Unlock()
 
-	currentSettings, err := h.loadEffectiveServerSettings(r)
+	currentSettings, err := h.loadEffectiveServerSettingsContext(r.Context())
 	if err != nil {
 		log.Printf("admin load current server settings failed error_type=%T", err)
 		writeError(w, http.StatusInternalServerError, "failed to load server settings")
@@ -113,14 +112,7 @@ func (h *Handler) adminListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reapply the Grok-only filter at the HTTP boundary even though the upstream
-	// client already filters, so non-Grok models can never be exposed downstream.
-	filteredModels := grok.FilterGrokModels(models)
-	writeJSON(w, http.StatusOK, toModelsResponse(filteredModels))
-}
-
-func (h *Handler) loadEffectiveServerSettings(r *http.Request) (effectiveServerSettings, error) {
-	return h.loadEffectiveServerSettingsContext(r.Context())
+	writeJSON(w, http.StatusOK, toModelsResponse(models))
 }
 
 func (h *Handler) loadEffectiveServerSettingsContext(ctx context.Context) (effectiveServerSettings, error) {

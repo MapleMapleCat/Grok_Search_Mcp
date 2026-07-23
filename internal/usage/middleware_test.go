@@ -80,11 +80,12 @@ func TestMCPMiddlewareGatesUsageByToolCall(t *testing.T) {
 	}
 }
 
-func TestExtractToolNameParsesAndRestoresBody(t *testing.T) {
+func TestInspectJSONRPCRequestParsesToolNameAndRestoresBody(t *testing.T) {
 	payload := `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"grok_x_search"}}`
 	r := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(payload))
-	if name := extractToolName(r); name != "grok_x_search" {
-		t.Fatalf("expected grok_x_search, got %q", name)
+	inspection := inspectJSONRPCRequest(r)
+	if inspection.ToolName != "grok_x_search" {
+		t.Fatalf("expected grok_x_search, got %q", inspection.ToolName)
 	}
 	rest, _ := io.ReadAll(r.Body)
 	if string(rest) != payload {
@@ -179,24 +180,24 @@ func TestExtractToolNameMiddlewareRejectsAmbiguousToolRoutingFields(t *testing.T
 	}
 }
 
-func TestExtractToolNameIgnoresNonToolCall(t *testing.T) {
+func TestInspectJSONRPCRequestIgnoresNonToolCall(t *testing.T) {
 	for _, payload := range []string{
 		`{"jsonrpc":"2.0","method":"initialize","params":{}}`,
 		`{"jsonrpc":"2.0","method":"tools/list"}`,
 		`not json at all`,
 	} {
 		r := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(payload))
-		if name := extractToolName(r); name != "" {
-			t.Fatalf("expected empty tool name for %q, got %q", payload, name)
+		if inspection := inspectJSONRPCRequest(r); inspection.ToolName != "" {
+			t.Fatalf("expected empty tool name for %q, got %q", payload, inspection.ToolName)
 		}
 	}
 }
 
-func TestExtractToolNameOversizedBodyStillRestored(t *testing.T) {
+func TestInspectJSONRPCRequestRestoresOversizedBody(t *testing.T) {
 	big := strings.Repeat("x", maxParseBody+10)
 	r := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(big))
-	if name := extractToolName(r); name != "" {
-		t.Fatalf("expected empty for oversized body, got %q", name)
+	if inspection := inspectJSONRPCRequest(r); inspection.ToolName != "" {
+		t.Fatalf("expected empty for oversized body, got %q", inspection.ToolName)
 	}
 	rest, _ := io.ReadAll(r.Body)
 	if len(rest) != len(big) {
@@ -204,7 +205,7 @@ func TestExtractToolNameOversizedBodyStillRestored(t *testing.T) {
 	}
 }
 
-func TestMCPToolResultIsError(t *testing.T) {
+func TestResponseOutcomeInspectorDetectsToolErrors(t *testing.T) {
 	testCases := []struct {
 		name         string
 		responseBody string
@@ -251,9 +252,11 @@ func TestMCPToolResultIsError(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			actualError := mcpToolResultIsError([]byte(testCase.responseBody))
+			inspector := &responseOutcomeInspector{}
+			inspector.inspect([]byte(testCase.responseBody))
+			actualError := inspector.toolError()
 			if actualError != testCase.expectsError {
-				t.Fatalf("mcpToolResultIsError() = %t, want %t", actualError, testCase.expectsError)
+				t.Fatalf("toolError() = %t, want %t", actualError, testCase.expectsError)
 			}
 		})
 	}
@@ -408,8 +411,12 @@ func TestMCPMiddlewareBoundsDebugBodiesWithoutChangingForwardedContent(t *testin
 	writer := store.NewAsyncUsageWriter(debugStore, 4)
 
 	handler := MCPMiddleware(debugStore, writer, debugStore)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+		forwardedRequestBody, err := io.ReadAll(r.Body)
+		if err != nil {
 			t.Errorf("read request body: %v", err)
+		}
+		if !bytes.Equal(forwardedRequestBody, []byte(requestBody)) {
+			t.Errorf("forwarded request length = %d, want %d", len(forwardedRequestBody), len(requestBody))
 		}
 		MarkToolOutcome(r.Context(), true)
 		_, _ = io.WriteString(w, responseBody)
@@ -684,26 +691,6 @@ func TestMCPMiddlewareReleasesWithLiveContextAfterRequestCancel(t *testing.T) {
 	}
 	if st.releaseContextErr != nil {
 		t.Fatalf("quota release must detach from canceled request context, got context err %v", st.releaseContextErr)
-	}
-}
-
-func TestCaptureAndRestoreRequestBodyCapsDebugCapture(t *testing.T) {
-	requestBody := strings.Repeat("a", maxDebugRequestBody+37)
-	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(requestBody))
-
-	capturedBody, truncated := captureAndRestoreRequestBody(req)
-	if !truncated {
-		t.Fatal("expected debug request capture to be marked truncated")
-	}
-	if len(capturedBody) != maxDebugRequestBody {
-		t.Fatalf("captured debug body length = %d, want %d", len(capturedBody), maxDebugRequestBody)
-	}
-	restoredBody, err := io.ReadAll(req.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(restoredBody) != requestBody {
-		t.Fatalf("request body must be restored for downstream handler, got length %d want %d", len(restoredBody), len(requestBody))
 	}
 }
 

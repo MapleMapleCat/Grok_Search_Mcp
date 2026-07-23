@@ -213,7 +213,7 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 				hasReservation = false
 			}
 
-			debugEnabled := serverDebugEnabled(debugState)
+			debugEnabled := debugState != nil && debugState.Enabled()
 			var debugCapture *debugCaptureSession
 			if debugEnabled {
 				debugCapture = startDebugCapture(r)
@@ -313,29 +313,6 @@ func releaseReservedSuccessCall(releaser SuccessQuotaReleaser, requestContext co
 	}
 }
 
-func serverDebugEnabled(debugState DebugState) bool {
-	return debugState != nil && debugState.Enabled()
-}
-
-const maxDebugRequestBody = 1 << 20 // 1 MiB
-
-func captureAndRestoreRequestBody(r *http.Request) ([]byte, bool) {
-	if r.Body == nil {
-		return nil, false
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxDebugRequestBody+1))
-	// Restore every byte already read plus the unread tail, so downstream MCP handling
-	// still receives the original request body.
-	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
-	if err != nil {
-		return []byte("read request body failed: " + err.Error()), false
-	}
-	if len(body) > maxDebugRequestBody {
-		return body[:maxDebugRequestBody], true
-	}
-	return body, false
-}
-
 func buildDebugJSON(r *http.Request, key *store.APIKey, user *auth.AuthenticatedUser, hasUser bool, toolName string, startedAt time.Time, durationMs int64, success bool, rec *responseRecorder, capture *debugCaptureSession) string {
 	debugPayload := map[string]any{
 		"version":     2,
@@ -419,29 +396,6 @@ func isSensitiveHeader(name string) bool {
 		return false
 	}
 }
-
-// mcpToolResultIsError 解析 Streamable HTTP 响应中的 tools/call 是否失败。
-// JSON-RPC 顶层 error 与 result.isError 都表示调用失败；支持 application/json
-// 单条/批量响应，以及 text/event-stream 中 data: 行内的 JSON-RPC 消息。
-func mcpToolResultIsError(body []byte) bool {
-	if len(body) == 0 {
-		return false
-	}
-	trim := bytes.TrimSpace(body)
-	if len(trim) == 0 {
-		return false
-	}
-	if trim[0] == '{' || trim[0] == '[' {
-		return jsonRPCPayloadHasToolError(trim)
-	}
-	for _, payload := range sseDataPayloads(trim) {
-		if jsonRPCPayloadHasToolError(payload) {
-			return true
-		}
-	}
-	return false
-}
-
 func jsonRPCPayloadHasToolError(payload []byte) bool {
 	payload = bytes.TrimSpace(payload)
 	if len(payload) == 0 {
@@ -461,22 +415,6 @@ func jsonRPCPayloadHasToolError(payload []byte) bool {
 	}
 	return toolCallResultIsError(payload)
 }
-
-func sseDataPayloads(body []byte) [][]byte {
-	var out [][]byte
-	for line := range bytes.SplitSeq(body, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if len(data) > 0 {
-			out = append(out, data)
-		}
-	}
-	return out
-}
-
 func toolCallResultIsError(raw json.RawMessage) bool {
 	var envelope struct {
 		Error  json.RawMessage `json:"error"`
@@ -495,12 +433,6 @@ func toolCallResultIsError(raw json.RawMessage) bool {
 
 // maxParseBody 限制解析工具名时读入内存的字节数；超出则跳过解析（请求照常放行，Body 完整透传）。
 const maxParseBody = 1 << 20 // 1 MiB
-
-// extractToolName 从 MCP JSON-RPC 请求体解析 tools/call 的 params.name。
-// 读 Body 时有大小上限，但会用 MultiReader 完整恢复，以便下游 handler 仍能读取全部内容。
-func extractToolName(r *http.Request) string {
-	return inspectJSONRPCRequest(r).ToolName
-}
 
 func inspectJSONRPCRequest(r *http.Request) jsonRPCRequestInspection {
 	if r.Body == nil {

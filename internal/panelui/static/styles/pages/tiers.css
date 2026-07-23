@@ -446,12 +446,6 @@
   color: var(--blue);
 }
 
-.tier-assignment-icon .app-icon {
-  width: 15px;
-  height: 15px;
-  flex-basis: 15px;
-}
-
 .tier-assignment strong,
 .tier-assignment span {
   display: block;

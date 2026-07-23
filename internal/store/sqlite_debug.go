@@ -136,17 +136,6 @@ func readBoundedDebugBody(path string) ([]byte, int64, bool, error) {
 	return body, observedBytes, false, nil
 }
 
-func boolAsInteger(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
-}
-
-func (s *SQLiteStore) persistUsageDebugRecord(ctx context.Context, usageID int64, record UsageRecord) error {
-	return s.persistUsageDebugRecords(ctx, []persistedUsageRecord{{usageID: usageID, record: record}})
-}
-
 type preparedUsageDebugRecord struct {
 	usageID               int64
 	record                UsageRecord

@@ -159,18 +159,6 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 		return nil, fmt.Errorf("encrypt server settings CPA API key: %w", err)
 	}
 
-	proxyEnabled := 0
-	if settings.ProxyEnabled {
-		proxyEnabled = 1
-	}
-	debug := 0
-	if settings.Debug {
-		debug = 1
-	}
-	operationsMetricsEnabled := 0
-	if settings.OperationsMetricsEnabled {
-		operationsMetricsEnabled = 1
-	}
 	now := formatTime(time.Now().UTC())
 	row := s.db.QueryRowContext(ctx, `
 		INSERT INTO server_settings (
@@ -207,10 +195,10 @@ func (s *SQLiteStore) UpsertServerSettings(ctx context.Context, settings ServerS
 		settings.MCPGlobalSearchConcurrency,
 		settings.MCPUserSearchConcurrency,
 		proxyURL,
-		proxyEnabled,
+		boolAsInteger(settings.ProxyEnabled),
 		string(registrationMode),
-		debug,
-		operationsMetricsEnabled,
+		boolAsInteger(settings.Debug),
+		boolAsInteger(settings.OperationsMetricsEnabled),
 		now,
 		now,
 	)

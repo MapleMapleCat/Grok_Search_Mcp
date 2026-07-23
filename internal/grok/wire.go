@@ -51,11 +51,6 @@ type annotation struct {
 	Title string `json:"title"`
 }
 
-type citationItem struct {
-	URL   string `json:"url"`
-	Title string `json:"title"`
-}
-
 // streamEvent 为 SSE data 行解析后的单条事件。
 type streamEvent struct {
 	Type     string            `json:"type"`

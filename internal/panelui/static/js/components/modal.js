@@ -1,3 +1,4 @@
+import { COLLECTION_PAGE_SIZE_OPTIONS } from "../pagination-config.js";
 import { escapeHTML, formatDateTime, formatNumber, formatPercent, getSuccessRate } from "../utils.js";
 import { renderIcon } from "./icons.js";
 import { renderInviteRedemptionsModal } from "./invite-redemptions-modal.js";
@@ -5,7 +6,6 @@ import { renderMetricCard } from "./metric-card.js";
 import { renderChart } from "./usage-chart.js";
 import { renderUsageRecords } from "./usage-records.js";
 import { isCurrentTierAvailable } from "./tier-selection.js";
-import { COLLECTION_PAGE_SIZE_OPTIONS } from "../pagination-config.js";
 
 export function renderModal(state) {
   const modal = state.modal;
@@ -346,9 +346,6 @@ function renderUserUsageModal(modal) {
 function renderUserUsageLogsModal(modal) {
   const usage = modal.usage;
   const usageRecords = usage?.records || [];
-  const currentPage = (modal.previousCursors?.length || 0) + 1;
-  const previousPageAvailable = (modal.previousCursors?.length || 0) > 0;
-  const nextPageAvailable = Boolean(modal.hasMore && modal.nextCursor);
   const failedCalls = Math.max(0, Number(usage?.total_calls || 0) - Number(usage?.success_calls || 0));
 
   const body = `
@@ -359,17 +356,21 @@ function renderUserUsageLogsModal(modal) {
     </section>
     ${modal.loadingRecords ? '<div class="skeleton" style="height:320px"></div>' : renderUsageRecords(usageRecords)}
   `;
+  const loadingRecords = Boolean(modal.loadingRecords);
+  const previousPageAvailable = (modal.previousCursors?.length || 0) > 0;
+  const nextPageAvailable = Boolean(modal.hasMore && modal.nextCursor);
+  const currentPage = (modal.previousCursors?.length || 0) + 1;
   const footer = `
-    <button class="button button-secondary" type="button" data-action="view-user-usage-summary" ${modal.loadingRecords ? "disabled" : ""}>返回用量摘要</button>
+    <button class="button button-secondary" type="button" data-action="view-user-usage-summary" ${loadingRecords ? "disabled" : ""}>返回用量摘要</button>
     <span class="muted modal-pagination-status">第 ${escapeHTML(formatNumber(currentPage))} 页 · 本页 ${escapeHTML(formatNumber(usageRecords.length))} 条</span>
     <label class="pagination-page-size">
       <span>每页</span>
-      <select class="select-input" data-action="change-user-usage-page-size" aria-label="每页显示条数" ${modal.loadingRecords ? "disabled" : ""}>
+      <select class="select-input" data-action="change-user-usage-page-size" aria-label="每页显示条数" ${loadingRecords ? "disabled" : ""}>
         ${COLLECTION_PAGE_SIZE_OPTIONS.map((pageSize) => `<option value="${pageSize}" ${Number(modal.pageSize) === pageSize ? "selected" : ""}>${pageSize} 条</option>`).join("")}
       </select>
     </label>
-    <button class="button button-secondary" type="button" data-action="change-user-usage-page" data-direction="previous" ${!modal.loadingRecords && previousPageAvailable ? "" : "disabled"}>上一页</button>
-    <button class="button button-primary" type="button" data-action="change-user-usage-page" data-direction="next" ${!modal.loadingRecords && nextPageAvailable ? "" : "disabled"}>下一页</button>
+    <button class="button button-secondary" type="button" data-action="change-user-usage-page" data-direction="previous" ${!loadingRecords && previousPageAvailable ? "" : "disabled"}>上一页</button>
+    <button class="button button-primary" type="button" data-action="change-user-usage-page" data-direction="next" ${!loadingRecords && nextPageAvailable ? "" : "disabled"}>下一页</button>
   `;
 
   return renderModalFrame({

@@ -29,9 +29,6 @@ export function renderInviteRedemptionsModal(modal, renderModalFrame) {
   }
 
   const redemptions = Array.isArray(modal.redemptions) ? modal.redemptions : [];
-  const currentPage = (modal.previousCursors?.length || 0) + 1;
-  const previousPageAvailable = (modal.previousCursors?.length || 0) > 0;
-  const nextPageAvailable = Boolean(modal.hasMore && modal.nextCursor);
   const redemptionList = redemptions.length === 0
     ? `<div class="inline-alert">${renderIcon("activity")}<span>该邀请码尚未创建任何用户。</span></div>`
     : `<div class="invite-redemptions-list">${redemptions.map((redemption) => `
@@ -46,17 +43,21 @@ export function renderInviteRedemptionsModal(modal, renderModalFrame) {
   const body = modal.loadingRecords
     ? '<div class="skeleton invite-redemptions-skeleton"></div>'
     : redemptionList;
+  const loadingRecords = Boolean(modal.loadingRecords);
+  const previousPageAvailable = (modal.previousCursors?.length || 0) > 0;
+  const nextPageAvailable = Boolean(modal.hasMore && modal.nextCursor);
+  const currentPage = (modal.previousCursors?.length || 0) + 1;
   const footer = `
-    <button class="button button-secondary" type="button" data-action="close-modal">关闭</button>
+    <button class="button button-secondary" type="button" data-action="close-modal" >关闭</button>
     <span class="muted modal-pagination-status">第 ${escapeHTML(formatNumber(currentPage))} 页 · 本页 ${escapeHTML(formatNumber(redemptions.length))} 条</span>
     <label class="pagination-page-size">
       <span>每页</span>
-      <select class="select-input" data-action="change-invite-redemptions-page-size" aria-label="每页显示条数" ${modal.loadingRecords ? "disabled" : ""}>
+      <select class="select-input" data-action="change-invite-redemptions-page-size" aria-label="每页显示条数" ${loadingRecords ? "disabled" : ""}>
         ${COLLECTION_PAGE_SIZE_OPTIONS.map((pageSize) => `<option value="${pageSize}" ${Number(modal.pageSize) === pageSize ? "selected" : ""}>${pageSize} 条</option>`).join("")}
       </select>
     </label>
-    <button class="button button-secondary" type="button" data-action="change-invite-redemptions-page" data-direction="previous" ${!modal.loadingRecords && previousPageAvailable ? "" : "disabled"}>上一页</button>
-    <button class="button button-primary" type="button" data-action="change-invite-redemptions-page" data-direction="next" ${!modal.loadingRecords && nextPageAvailable ? "" : "disabled"}>下一页</button>
+    <button class="button button-secondary" type="button" data-action="change-invite-redemptions-page" data-direction="previous" ${!loadingRecords && previousPageAvailable ? "" : "disabled"}>上一页</button>
+    <button class="button button-primary" type="button" data-action="change-invite-redemptions-page" data-direction="next" ${!loadingRecords && nextPageAvailable ? "" : "disabled"}>下一页</button>
   `;
 
   return renderModalFrame({

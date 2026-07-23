@@ -13,8 +13,30 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 )
 
-func TestBuildChatCompletionsRequestBodyMapsSearchSources(t *testing.T) {
-	_, body, err := buildChatCompletionsRequestBody(SearchRequest{
+func TestResolveSearchModelUsesDefaultAndTrimmedOverride(t *testing.T) {
+	testCases := []struct {
+		name         string
+		requestModel string
+		wantModel    string
+	}{
+		{name: "default", wantModel: "grok-4.3"},
+		{name: "trimmed override", requestModel: "  grok-4.5  ", wantModel: "grok-4.5"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			model, err := resolveSearchModel(testCase.requestModel, "grok-4.3")
+			if err != nil || model != testCase.wantModel {
+				t.Fatalf("resolveSearchModel() = %q, %v; want %q, nil", model, err, testCase.wantModel)
+			}
+		})
+	}
+	if _, err := resolveSearchModel("gpt-4", "grok-4.3"); err == nil {
+		t.Fatal("resolveSearchModel accepted a non-Grok model")
+	}
+}
+
+func TestBuildChatCompletionsRequestMapsSearchSources(t *testing.T) {
+	request, err := buildChatCompletionsRequest(SearchRequest{
 		Query:           "latest news",
 		ToolType:        ToolTypeWebSearch,
 		AllowedDomains:  []string{"example.com"},
@@ -23,10 +45,8 @@ func TestBuildChatCompletionsRequestBodyMapsSearchSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build chat completions request: %v", err)
 	}
-
-	var request chatCompletionsRequest
-	if err := json.Unmarshal(body, &request); err != nil {
-		t.Fatalf("decode chat completions request: %v", err)
+	if request.Model != "grok-4.3" {
+		t.Fatalf("model = %q, want default model", request.Model)
 	}
 	if len(request.Messages) != 1 || request.Messages[0].Content != "latest news" {
 		t.Fatalf("unexpected messages: %+v", request.Messages)
@@ -42,18 +62,15 @@ func TestBuildChatCompletionsRequestBodyMapsSearchSources(t *testing.T) {
 		t.Fatalf("unexpected web source: %+v", source)
 	}
 
-	_, xBody, err := buildChatCompletionsRequestBody(SearchRequest{
+	xRequest, err := buildChatCompletionsRequest(SearchRequest{
 		Query:    "recent posts",
 		ToolType: ToolTypeXSearch,
 	}, "grok-4.3")
 	if err != nil {
 		t.Fatalf("build X chat completions request: %v", err)
 	}
-	if err := json.Unmarshal(xBody, &request); err != nil {
-		t.Fatalf("decode X chat completions request: %v", err)
-	}
-	if request.SearchParameters.Sources[0].Type != "x" {
-		t.Fatalf("expected X search source, got %+v", request.SearchParameters.Sources[0])
+	if xRequest.SearchParameters.Sources[0].Type != "x" {
+		t.Fatalf("expected X search source, got %+v", xRequest.SearchParameters.Sources[0])
 	}
 }
 
@@ -463,7 +480,7 @@ func TestSearchChatCompletionsRejectsPersistentIntermediateAnswer(t *testing.T) 
 }
 
 func TestBuildAnthropicMessagesRequestBodyMapsProtocolTools(t *testing.T) {
-	_, body, err := buildAnthropicMessagesRequestBody(SearchRequest{
+	body, err := buildAnthropicMessagesRequestBody(SearchRequest{
 		Query:           "latest news",
 		ToolType:        ToolTypeWebSearch,
 		AllowedDomains:  []string{"example.com"},
@@ -480,6 +497,9 @@ func TestBuildAnthropicMessagesRequestBodyMapsProtocolTools(t *testing.T) {
 	if request.MaxTokens != anthropicDefaultMaxTokens || !request.Stream {
 		t.Fatalf("unexpected messages settings: %+v", request)
 	}
+	if request.Model != "grok-4.3" {
+		t.Fatalf("model = %q, want default model", request.Model)
+	}
 	if len(request.Tools) != 1 || request.Tools[0].Type != "web_search_20250305" {
 		t.Fatalf("unexpected web search tool: %+v", request.Tools)
 	}
@@ -487,7 +507,7 @@ func TestBuildAnthropicMessagesRequestBodyMapsProtocolTools(t *testing.T) {
 		t.Fatalf("unexpected blocked domains: %+v", request.Tools[0])
 	}
 
-	_, xBody, err := buildAnthropicMessagesRequestBody(SearchRequest{
+	xBody, err := buildAnthropicMessagesRequestBody(SearchRequest{
 		Query:    "recent posts",
 		ToolType: ToolTypeXSearch,
 	}, "grok-4.3")

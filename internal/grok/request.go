@@ -9,9 +9,15 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 )
 
-// validateModel 委托给 config.ValidateModel，确保请求时与面板保存时使用同一校验规则。
-func validateModel(model string) error {
-	return config.ValidateModel(model)
+func resolveSearchModel(requestModel, defaultModel string) (string, error) {
+	model := strings.TrimSpace(requestModel)
+	if model == "" {
+		model = defaultModel
+	}
+	if err := config.ValidateModel(model); err != nil {
+		return "", err
+	}
+	return model, nil
 }
 
 // validateSearchRequest 校验查询、工具类型，以及 web_search 域名过滤参数的互斥与数量上限。
@@ -123,13 +129,10 @@ func buildToolDef(req SearchRequest) toolDef {
 	return tool
 }
 
-func buildSearchRequestBody(req SearchRequest, defaultModel string) (string, []byte, error) {
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = defaultModel
-	}
-	if err := validateModel(model); err != nil {
-		return "", nil, err
+func buildSearchRequestBody(req SearchRequest, defaultModel string) ([]byte, error) {
+	model, err := resolveSearchModel(req.Model, defaultModel)
+	if err != nil {
+		return nil, err
 	}
 
 	upstreamReq := responsesRequest{
@@ -141,7 +144,7 @@ func buildSearchRequestBody(req SearchRequest, defaultModel string) (string, []b
 
 	body, err := json.Marshal(upstreamReq)
 	if err != nil {
-		return "", nil, fmt.Errorf("marshal request: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
-	return model, body, nil
+	return body, nil
 }

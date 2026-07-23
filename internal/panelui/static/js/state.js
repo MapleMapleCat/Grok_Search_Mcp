@@ -231,6 +231,12 @@ export function normalizeUsage(usage) {
   };
 }
 
+export function findItemByIdentifier(items, identifier) {
+  return Array.isArray(items)
+    ? items.find((item) => item.id === identifier)
+    : undefined;
+}
+
 export function replaceItemByIdentifier(items, updatedItem) {
   if (!Array.isArray(items) || !updatedItem?.id) {
     return Array.isArray(items) ? [...items] : [];

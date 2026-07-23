@@ -31,6 +31,13 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(timeLayout)
 }
 
+func boolAsInteger(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func normalizePanelPageLimit(limit int) int {
 	if limit <= 0 {
 		return 50

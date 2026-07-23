@@ -157,8 +157,8 @@ func TestJWTRejectsAdversarialClaimsBeforeStoreAccess(t *testing.T) {
 			if downstreamCallCount != 0 {
 				t.Fatalf("invalid token reached downstream %d time(s)", downstreamCallCount)
 			}
-			if _, err := ParsePanelToken(testSecret, token); err == nil {
-				t.Fatal("ParsePanelToken accepted token rejected by middleware contract")
+			if _, err := parsePanelClaims(testSecret, token); err == nil {
+				t.Fatal("strict parser accepted token rejected by middleware contract")
 			}
 		})
 	}
@@ -178,7 +178,7 @@ func TestJWTStrictParserPreservesZeroTokenVersion(t *testing.T) {
 		"aud":  jwtAudience,
 	})
 
-	claims, err := ParsePanelToken(testSecret, token)
+	claims, err := parsePanelClaims(testSecret, token)
 	if err != nil {
 		t.Fatal(err)
 	}

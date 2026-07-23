@@ -260,12 +260,8 @@ func (s *SQLiteStore) UpdateInviteCode(ctx context.Context, id string, updates I
 		args = append(args, registrationLimit)
 	}
 	if updates.Enabled != nil {
-		enabled := 0
-		if *updates.Enabled {
-			enabled = 1
-		}
 		sets = append(sets, "enabled = ?")
-		args = append(args, enabled)
+		args = append(args, boolAsInteger(*updates.Enabled))
 	}
 
 	if len(sets) == 0 {

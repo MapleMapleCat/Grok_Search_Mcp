@@ -24,7 +24,7 @@ func (handler *Handler) adminOperationalMetrics(writer http.ResponseWriter, requ
 		return
 	}
 
-	settings, err := handler.loadEffectiveServerSettings(request)
+	settings, err := handler.loadEffectiveServerSettingsContext(request.Context())
 	if err != nil {
 		log.Printf("load operational metrics setting failed error_type=%T", err)
 		writeError(writer, http.StatusInternalServerError, "failed to load operational metrics setting")

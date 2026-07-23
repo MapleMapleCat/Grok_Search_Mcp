@@ -221,12 +221,6 @@
   color: var(--accent);
 }
 
-.debug-json-section-icon .app-icon {
-  width: 15px;
-  height: 15px;
-  flex-basis: 15px;
-}
-
 .debug-json-section-copy,
 .debug-json-section-copy strong,
 .debug-json-section-copy small {

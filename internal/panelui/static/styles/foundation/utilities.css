@@ -19,10 +19,6 @@
   color: var(--danger);
 }
 
-.text-success {
-  color: var(--success);
-}
-
 .sr-only {
   position: absolute;
   width: 1px;

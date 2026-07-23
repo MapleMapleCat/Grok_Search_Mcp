@@ -86,7 +86,7 @@ type anthropicUsage struct {
 }
 
 func (s clientSnapshot) searchAnthropicMessages(ctx context.Context, req SearchRequest) (*SearchResult, error) {
-	_, body, err := buildAnthropicMessagesRequestBody(req, s.defaultModel)
+	body, err := buildAnthropicMessagesRequestBody(req, s.defaultModel)
 	if err != nil {
 		return nil, err
 	}
@@ -110,13 +110,10 @@ func (s clientSnapshot) searchAnthropicMessages(ctx context.Context, req SearchR
 	return parseAnthropicMessagesResponse(response.Body)
 }
 
-func buildAnthropicMessagesRequestBody(req SearchRequest, defaultModel string) (string, []byte, error) {
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = defaultModel
-	}
-	if err := validateModel(model); err != nil {
-		return "", nil, err
+func buildAnthropicMessagesRequestBody(req SearchRequest, defaultModel string) ([]byte, error) {
+	model, err := resolveSearchModel(req.Model, defaultModel)
+	if err != nil {
+		return nil, err
 	}
 
 	messageContent := req.Query
@@ -147,9 +144,9 @@ func buildAnthropicMessagesRequestBody(req SearchRequest, defaultModel string) (
 	}
 	body, err := json.Marshal(upstreamRequest)
 	if err != nil {
-		return "", nil, fmt.Errorf("marshal anthropic messages request: %w", err)
+		return nil, fmt.Errorf("marshal anthropic messages request: %w", err)
 	}
-	return model, body, nil
+	return body, nil
 }
 
 func parseAnthropicMessagesResponse(body io.Reader) (*SearchResult, error) {

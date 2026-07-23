@@ -1,6 +1,6 @@
 import { deleteAdminUser, updateAdminUser } from "../api.js";
 import { showToast } from "../components/toast.js";
-import { removeItemByIdentifier, replaceItemByIdentifier } from "../state.js";
+import { findItemByIdentifier, removeItemByIdentifier, replaceItemByIdentifier } from "../state.js";
 import { getErrorMessage } from "./event-helpers.js";
 
 export function createUserEvents({
@@ -10,7 +10,7 @@ export function createUserEvents({
   handleSessionError
 }) {
   function openEditModal(userIdentifier) {
-    const user = findUser(userIdentifier);
+    const user = findItemByIdentifier(state.data.users, userIdentifier);
     if (!user) {
       showToast("用户不存在", "请刷新页面后重试。", "error");
       return;
@@ -53,7 +53,7 @@ export function createUserEvents({
   }
 
   function openDeleteConfirmation(userIdentifier) {
-    const user = findUser(userIdentifier);
+    const user = findItemByIdentifier(state.data.users, userIdentifier);
     modalController.openModal({
       type: "confirm",
       confirmAction: "deleteUser",
@@ -69,10 +69,6 @@ export function createUserEvents({
   async function deleteConfirmed(userIdentifier) {
     await deleteAdminUser(userIdentifier);
     state.data.users = removeItemByIdentifier(state.data.users, userIdentifier);
-  }
-
-  function findUser(userIdentifier) {
-    return (state.data.users || []).find((candidateUser) => candidateUser.id === userIdentifier);
   }
 
   return {

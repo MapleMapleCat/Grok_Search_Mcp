@@ -199,12 +199,8 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 	updatedEnabled := existingUser.Enabled
 	if updates.Enabled != nil {
 		if *updates.Enabled != existingUser.Enabled {
-			en := 0
-			if *updates.Enabled {
-				en = 1
-			}
 			sets = append(sets, "enabled = ?")
-			args = append(args, en)
+			args = append(args, boolAsInteger(*updates.Enabled))
 			bumpTokenVersion = true
 			updatedEnabled = *updates.Enabled
 		}

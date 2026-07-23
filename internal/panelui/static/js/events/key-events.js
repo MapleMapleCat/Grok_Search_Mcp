@@ -8,6 +8,7 @@ import {
 import { showToast } from "../components/toast.js";
 import {
   COLLECTION_PAGE_SIZE,
+  findItemByIdentifier,
   normalizeUsage,
   removeItemByIdentifier,
   replaceItemByIdentifier
@@ -28,7 +29,7 @@ export function createKeyEvents({
   }
 
   function openEditModal(keyIdentifier) {
-    const apiKey = findKey(keyIdentifier);
+    const apiKey = findItemByIdentifier(state.data.keys, keyIdentifier);
     if (!apiKey) {
       showToast("密钥不存在", "请刷新页面后重试。", "error");
       return;
@@ -98,7 +99,7 @@ export function createKeyEvents({
   }
 
   async function openUsageModal(keyIdentifier) {
-    const apiKey = findKey(keyIdentifier);
+    const apiKey = findItemByIdentifier(state.data.keys, keyIdentifier);
     modalController.openModal({
       type: "keyUsage",
       keyIdentifier,
@@ -131,7 +132,7 @@ export function createKeyEvents({
   }
 
   function openDeleteConfirmation(keyIdentifier) {
-    const apiKey = findKey(keyIdentifier);
+    const apiKey = findItemByIdentifier(state.data.keys, keyIdentifier);
     modalController.openModal({
       type: "confirm",
       confirmAction: "deleteKey",
@@ -147,10 +148,6 @@ export function createKeyEvents({
   async function deleteConfirmed(keyIdentifier) {
     await deleteKey(keyIdentifier);
     state.data.keys = removeItemByIdentifier(state.data.keys, keyIdentifier);
-  }
-
-  function findKey(keyIdentifier) {
-    return (state.data.keys || []).find((candidateKey) => candidateKey.id === keyIdentifier);
   }
 
   return {

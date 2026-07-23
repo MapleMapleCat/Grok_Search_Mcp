@@ -14,7 +14,7 @@ import (
 
 const (
 	maxChatContinuationAttempts = 2
-	chatCompletionsProtocolName  = "chat_completions"
+	chatCompletionsProtocolName = "chat_completions"
 )
 
 const chatFinalAnswerInstruction = "Complete the requested research and return the final answer now. Do not only describe that you are searching, researching, checking, or preparing an answer."
@@ -82,7 +82,7 @@ type chatUsage struct {
 }
 
 func (s clientSnapshot) searchChatCompletions(ctx context.Context, req SearchRequest, onRound func(SearchRound)) (*SearchResult, error) {
-	_, upstreamRequest, err := buildChatCompletionsRequest(req, s.defaultModel)
+	upstreamRequest, err := buildChatCompletionsRequest(req, s.defaultModel)
 	if err != nil {
 		return nil, err
 	}
@@ -145,25 +145,10 @@ func (s clientSnapshot) searchChatCompletions(ctx context.Context, req SearchReq
 	return nil, fmt.Errorf("chat completions continuation exhausted unexpectedly")
 }
 
-func buildChatCompletionsRequestBody(req SearchRequest, defaultModel string) (string, []byte, error) {
-	model, upstreamRequest, err := buildChatCompletionsRequest(req, defaultModel)
+func buildChatCompletionsRequest(req SearchRequest, defaultModel string) (chatCompletionsRequest, error) {
+	model, err := resolveSearchModel(req.Model, defaultModel)
 	if err != nil {
-		return "", nil, err
-	}
-	body, err := json.Marshal(upstreamRequest)
-	if err != nil {
-		return "", nil, fmt.Errorf("marshal chat completions request: %w", err)
-	}
-	return model, body, nil
-}
-
-func buildChatCompletionsRequest(req SearchRequest, defaultModel string) (string, chatCompletionsRequest, error) {
-	model := strings.TrimSpace(req.Model)
-	if model == "" {
-		model = defaultModel
-	}
-	if err := validateModel(model); err != nil {
-		return "", chatCompletionsRequest{}, err
+		return chatCompletionsRequest{}, err
 	}
 
 	searchSource := chatSearchSource{Type: "x"}
@@ -185,7 +170,7 @@ func buildChatCompletionsRequest(req SearchRequest, defaultModel string) (string
 			Sources:         []chatSearchSource{searchSource},
 		},
 	}
-	return model, upstreamRequest, nil
+	return upstreamRequest, nil
 }
 
 func isChatIntermediateAnswer(answer string) bool {

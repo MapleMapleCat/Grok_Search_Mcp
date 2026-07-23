@@ -7,6 +7,7 @@ import {
 import { showToast } from "../components/toast.js";
 import {
   COLLECTION_PAGE_SIZE_OPTIONS,
+  findItemByIdentifier,
   replaceItemByIdentifier,
   resetPagination
 } from "../state.js";
@@ -65,7 +66,7 @@ export function createInviteEvents({
   }
 
   async function toggleEnabled(inviteIdentifier) {
-    const inviteCode = findInvite(inviteIdentifier);
+    const inviteCode = findItemByIdentifier(state.data.invites, inviteIdentifier);
     if (!inviteCode) {
       return;
     }
@@ -88,7 +89,7 @@ export function createInviteEvents({
   }
 
   async function openRedemptions(inviteIdentifier) {
-    const inviteCode = findInvite(inviteIdentifier);
+    const inviteCode = findItemByIdentifier(state.data.invites, inviteIdentifier);
     if (!inviteCode) {
       showToast("无法加载注册记录", "邀请码不存在，请刷新页面后重试。", "error");
       return;
@@ -102,11 +103,11 @@ export function createInviteEvents({
       loadingRecords: false,
       error: "",
       redemptions: [],
-      pageSize: 50,
       cursor: "",
       nextCursor: "",
       previousCursors: [],
-      hasMore: false
+      hasMore: false,
+      pageSize: 50
     });
     await loadRedemptionsPage({ initialLoad: true });
   }
@@ -168,7 +169,13 @@ export function createInviteEvents({
     }
 
     const inviteIdentifier = state.modal.inviteIdentifier;
-    const paginationSnapshot = createRedemptionsPaginationSnapshot(state.modal);
+    const paginationSnapshot = {
+      cursor: state.modal.cursor,
+      nextCursor: state.modal.nextCursor,
+      previousCursors: [...state.modal.previousCursors],
+      hasMore: state.modal.hasMore,
+      pageSize: state.modal.pageSize
+    };
     if (direction === "next") {
       if (!state.modal.hasMore || !state.modal.nextCursor) {
         return;
@@ -185,7 +192,12 @@ export function createInviteEvents({
     renderModalRegion();
     const loaded = await loadRedemptionsPage();
     if (!loaded && isInviteRedemptionsModalFor(state.modal, inviteIdentifier)) {
-      restoreRedemptionsPaginationSnapshot(state.modal, paginationSnapshot);
+      state.modal.cursor = paginationSnapshot.cursor;
+      state.modal.nextCursor = paginationSnapshot.nextCursor;
+      state.modal.previousCursors = [...paginationSnapshot.previousCursors];
+      state.modal.hasMore = paginationSnapshot.hasMore;
+      state.modal.pageSize = paginationSnapshot.pageSize;
+      state.modal.loadingRecords = false;
       renderModalRegion();
     }
   }
@@ -201,17 +213,28 @@ export function createInviteEvents({
     }
 
     const inviteIdentifier = state.modal.inviteIdentifier;
-    const paginationSnapshot = createRedemptionsPaginationSnapshot(state.modal);
-    state.modal.pageSize = pageSize;
+    const paginationSnapshot = {
+      cursor: state.modal.cursor,
+      nextCursor: state.modal.nextCursor,
+      previousCursors: [...state.modal.previousCursors],
+      hasMore: state.modal.hasMore,
+      pageSize: state.modal.pageSize
+    };
     state.modal.cursor = "";
     state.modal.nextCursor = "";
     state.modal.previousCursors = [];
     state.modal.hasMore = false;
+    state.modal.pageSize = pageSize;
     state.modal.loadingRecords = true;
     renderModalRegion();
     const loaded = await loadRedemptionsPage();
     if (!loaded && isInviteRedemptionsModalFor(state.modal, inviteIdentifier)) {
-      restoreRedemptionsPaginationSnapshot(state.modal, paginationSnapshot);
+      state.modal.cursor = paginationSnapshot.cursor;
+      state.modal.nextCursor = paginationSnapshot.nextCursor;
+      state.modal.previousCursors = [...paginationSnapshot.previousCursors];
+      state.modal.hasMore = paginationSnapshot.hasMore;
+      state.modal.pageSize = paginationSnapshot.pageSize;
+      state.modal.loadingRecords = false;
       renderModalRegion();
     }
   }
@@ -230,7 +253,7 @@ export function createInviteEvents({
   }
 
   function openDeleteConfirmation(inviteIdentifier) {
-    const inviteCode = findInvite(inviteIdentifier);
+    const inviteCode = findItemByIdentifier(state.data.invites, inviteIdentifier);
     modalController.openModal({
       type: "confirm",
       confirmAction: "deleteInvite",
@@ -248,12 +271,6 @@ export function createInviteEvents({
     await reloadInviteCollectionFromFirstPage();
   }
 
-  function findInvite(inviteIdentifier) {
-    return (state.data.invites || []).find(
-      (candidateInvite) => candidateInvite.id === inviteIdentifier
-    );
-  }
-
   return {
     openCreateModal,
     submitCreate,
@@ -264,27 +281,6 @@ export function createInviteEvents({
     openDeleteConfirmation,
     deleteConfirmed
   };
-}
-
-function createRedemptionsPaginationSnapshot(modal) {
-  return {
-    cursor: modal.cursor,
-    nextCursor: modal.nextCursor,
-    previousCursors: [...modal.previousCursors],
-    hasMore: modal.hasMore,
-    pageSize: modal.pageSize,
-    redemptions: modal.redemptions
-  };
-}
-
-function restoreRedemptionsPaginationSnapshot(modal, snapshot) {
-  modal.cursor = snapshot.cursor;
-  modal.nextCursor = snapshot.nextCursor;
-  modal.previousCursors = [...snapshot.previousCursors];
-  modal.hasMore = snapshot.hasMore;
-  modal.pageSize = snapshot.pageSize;
-  modal.redemptions = snapshot.redemptions;
-  modal.loadingRecords = false;
 }
 
 function isInviteRedemptionsModalFor(modal, inviteIdentifier) {

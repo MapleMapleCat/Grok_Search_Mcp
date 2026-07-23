@@ -26,6 +26,28 @@ func parseSince(request *http.Request) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+type usagePageQuery struct {
+	Since  time.Time
+	Limit  int
+	Cursor *store.UsageRecordCursor
+}
+
+func parseUsagePageQuery(request *http.Request) (usagePageQuery, error) {
+	since, ok := parseSince(request)
+	if !ok {
+		return usagePageQuery{}, errors.New("invalid 'since' query parameter; expected RFC3339")
+	}
+	limit, err := parsePanelPageLimit(request)
+	if err != nil {
+		return usagePageQuery{}, err
+	}
+	cursor, err := parseUsageRecordCursor(request)
+	if err != nil {
+		return usagePageQuery{}, err
+	}
+	return usagePageQuery{Since: since, Limit: limit, Cursor: cursor}, nil
+}
+
 func (handler *Handler) keyUsage(writer http.ResponseWriter, request *http.Request) {
 	user, ok := auth.UserFromContext(request.Context())
 	if !ok {
@@ -58,22 +80,12 @@ func (handler *Handler) userUsage(writer http.ResponseWriter, request *http.Requ
 		writeError(writer, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	since, ok := parseSince(request)
-	if !ok {
-		writeError(writer, http.StatusBadRequest, "invalid 'since' query parameter; expected RFC3339")
-		return
-	}
-	limit, err := parsePanelPageLimit(request)
+	query, err := parseUsagePageQuery(request)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	cursor, err := parseUsageRecordCursor(request)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err.Error())
-		return
-	}
-	stats, err := handler.Store.GetUserUsageStatsPage(request.Context(), user.ID, since, cursor, limit)
+	stats, err := handler.Store.GetUserUsageStatsPage(request.Context(), user.ID, query.Since, query.Cursor, query.Limit)
 	if err != nil {
 		log.Printf("usage stats for user %s failed error_type=%T", user.ID, err)
 		writeError(writer, http.StatusInternalServerError, "failed to load usage")
@@ -88,22 +100,12 @@ func (handler *Handler) userUsageRecords(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	since, ok := parseSince(request)
-	if !ok {
-		writeError(writer, http.StatusBadRequest, "invalid 'since' query parameter; expected RFC3339")
-		return
-	}
-	limit, err := parsePanelPageLimit(request)
+	query, err := parseUsagePageQuery(request)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	cursor, err := parseUsageRecordCursor(request)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err.Error())
-		return
-	}
-	page, err := handler.Store.ListUsageRecordsPage(request.Context(), store.UsageRecordListScope{UserID: user.ID}, since, cursor, limit)
+	page, err := handler.Store.ListUsageRecordsPage(request.Context(), store.UsageRecordListScope{UserID: user.ID}, query.Since, query.Cursor, query.Limit)
 	if err != nil {
 		log.Printf("usage record page for user %s failed error_type=%T", user.ID, err)
 		writeError(writer, http.StatusInternalServerError, "failed to load usage records")
@@ -147,22 +149,12 @@ func (handler *Handler) adminUserUsage(writer http.ResponseWriter, request *http
 		writeError(writer, http.StatusNotFound, "user not found")
 		return
 	}
-	since, ok := parseSince(request)
-	if !ok {
-		writeError(writer, http.StatusBadRequest, "invalid 'since' query parameter; expected RFC3339")
-		return
-	}
-	limit, err := parsePanelPageLimit(request)
+	query, err := parseUsagePageQuery(request)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err.Error())
 		return
 	}
-	cursor, err := parseUsageRecordCursor(request)
-	if err != nil {
-		writeError(writer, http.StatusBadRequest, err.Error())
-		return
-	}
-	stats, err := handler.Store.GetUserUsageStatsPage(request.Context(), userID, since, cursor, limit)
+	stats, err := handler.Store.GetUserUsageStatsPage(request.Context(), userID, query.Since, query.Cursor, query.Limit)
 	if err != nil {
 		log.Printf("admin usage stats for user %s failed error_type=%T", userID, err)
 		writeError(writer, http.StatusInternalServerError, "failed to load usage")

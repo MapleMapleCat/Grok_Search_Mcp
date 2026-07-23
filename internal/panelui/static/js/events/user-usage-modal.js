@@ -1,6 +1,6 @@
 import { fetchAdminUserUsage } from "../api.js";
 import { showToast } from "../components/toast.js";
-import { COLLECTION_PAGE_SIZE_OPTIONS, normalizeUsage } from "../state.js";
+import { COLLECTION_PAGE_SIZE_OPTIONS, findItemByIdentifier, normalizeUsage } from "../state.js";
 import { getErrorMessage } from "./event-helpers.js";
 
 export function createUserUsageModalEvents({
@@ -10,9 +10,7 @@ export function createUserUsageModalEvents({
   handleSessionError
 }) {
   async function openUserUsageModal(userIdentifier) {
-    const user = (state.data.users || []).find(
-      (candidateUser) => candidateUser.id === userIdentifier
-    );
+    const user = findItemByIdentifier(state.data.users, userIdentifier);
     modalController.openModal({
       type: "userUsage",
       userIdentifier,
@@ -21,11 +19,11 @@ export function createUserUsageModalEvents({
       loadingRecords: false,
       usage: null,
       recentRecords: null,
-      pageSize: 20,
       cursor: "",
       nextCursor: "",
       previousCursors: [],
-      hasMore: false
+      hasMore: false,
+      pageSize: 20
     });
     await loadAdminUserUsagePage({ closeModalOnError: true });
   }
@@ -105,7 +103,13 @@ export function createUserUsageModalEvents({
       return;
     }
 
-    const paginationSnapshot = createPaginationSnapshot(state.modal);
+    const paginationSnapshot = {
+      cursor: state.modal.cursor,
+      nextCursor: state.modal.nextCursor,
+      previousCursors: [...state.modal.previousCursors],
+      hasMore: state.modal.hasMore,
+      pageSize: state.modal.pageSize
+    };
     if (direction === "next") {
       if (!state.modal.hasMore || !state.modal.nextCursor) {
         return;
@@ -122,7 +126,12 @@ export function createUserUsageModalEvents({
     renderModalRegion();
     const loaded = await loadAdminUserUsagePage();
     if (!loaded && state.modal?.type === "userUsageLogs") {
-      restorePaginationSnapshot(state.modal, paginationSnapshot);
+      state.modal.cursor = paginationSnapshot.cursor;
+      state.modal.nextCursor = paginationSnapshot.nextCursor;
+      state.modal.previousCursors = [...paginationSnapshot.previousCursors];
+      state.modal.hasMore = paginationSnapshot.hasMore;
+      state.modal.pageSize = paginationSnapshot.pageSize;
+      state.modal.loadingRecords = false;
       renderModalRegion();
     }
   }
@@ -137,17 +146,28 @@ export function createUserUsageModalEvents({
       return;
     }
 
-    const paginationSnapshot = createPaginationSnapshot(state.modal);
-    state.modal.pageSize = pageSize;
+    const paginationSnapshot = {
+      cursor: state.modal.cursor,
+      nextCursor: state.modal.nextCursor,
+      previousCursors: [...state.modal.previousCursors],
+      hasMore: state.modal.hasMore,
+      pageSize: state.modal.pageSize
+    };
     state.modal.cursor = "";
     state.modal.nextCursor = "";
     state.modal.previousCursors = [];
     state.modal.hasMore = false;
+    state.modal.pageSize = pageSize;
     state.modal.loadingRecords = true;
     renderModalRegion();
     const loaded = await loadAdminUserUsagePage();
     if (!loaded && state.modal?.type === "userUsageLogs") {
-      restorePaginationSnapshot(state.modal, paginationSnapshot);
+      state.modal.cursor = paginationSnapshot.cursor;
+      state.modal.nextCursor = paginationSnapshot.nextCursor;
+      state.modal.previousCursors = [...paginationSnapshot.previousCursors];
+      state.modal.hasMore = paginationSnapshot.hasMore;
+      state.modal.pageSize = paginationSnapshot.pageSize;
+      state.modal.loadingRecords = false;
       renderModalRegion();
     }
   }
@@ -176,25 +196,4 @@ export function createUserUsageModalEvents({
 
 function isUserUsageModal(modal) {
   return Boolean(modal && ["userUsage", "userUsageLogs"].includes(modal.type));
-}
-
-function createPaginationSnapshot(modal) {
-  return {
-    cursor: modal.cursor,
-    nextCursor: modal.nextCursor,
-    previousCursors: [...modal.previousCursors],
-    hasMore: modal.hasMore,
-    pageSize: modal.pageSize,
-    usage: modal.usage
-  };
-}
-
-function restorePaginationSnapshot(modal, snapshot) {
-  modal.cursor = snapshot.cursor;
-  modal.nextCursor = snapshot.nextCursor;
-  modal.previousCursors = [...snapshot.previousCursors];
-  modal.hasMore = snapshot.hasMore;
-  modal.pageSize = snapshot.pageSize;
-  modal.usage = snapshot.usage;
-  modal.loadingRecords = false;
 }

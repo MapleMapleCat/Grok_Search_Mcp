@@ -145,7 +145,10 @@ func (s *SQLiteStore) addRawUsageAggregates(
 		return err
 	}
 	defer rows.Close()
+	return scanUsageAggregateRows(rows, stats)
+}
 
+func scanUsageAggregateRows(rows *sql.Rows, stats *UsageStats) error {
 	for rows.Next() {
 		var toolName string
 		var callCount int64
@@ -170,17 +173,7 @@ func (s *SQLiteStore) addRollupUsageAggregates(
 		return err
 	}
 	defer rows.Close()
-
-	for rows.Next() {
-		var toolName string
-		var callCount int64
-		var successCount int64
-		if err := rows.Scan(&toolName, &callCount, &successCount); err != nil {
-			return err
-		}
-		addUsageAggregate(stats, toolName, callCount, successCount)
-	}
-	return rows.Err()
+	return scanUsageAggregateRows(rows, stats)
 }
 
 func addUsageAggregate(stats *UsageStats, toolName string, callCount, successCount int64) {

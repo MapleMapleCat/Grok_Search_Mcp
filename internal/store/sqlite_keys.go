@@ -255,12 +255,8 @@ func (s *SQLiteStore) UpdateKey(ctx context.Context, id string, updates KeyUpdat
 		args = append(args, name)
 	}
 	if updates.Enabled != nil {
-		en := 0
-		if *updates.Enabled {
-			en = 1
-		}
 		sets = append(sets, "enabled = ?")
-		args = append(args, en)
+		args = append(args, boolAsInteger(*updates.Enabled))
 	}
 
 	if len(sets) == 0 {

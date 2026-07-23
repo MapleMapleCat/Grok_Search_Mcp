@@ -510,7 +510,7 @@ func NormalizeUpstreamProtocol(protocol UpstreamProtocol) (UpstreamProtocol, err
 }
 
 // ValidateModel 校验模型名是否合法：只需包含 "grok"（不区分大小写）即可。
-// 供 config.NormalizeServerSettings 与 grok.validateModel 共享同一规则，
+// 供 config.NormalizeServerSettings 与 Grok 请求构造共享同一规则，
 // 避免面板保存的模型名在请求时被 grok 层拒绝导致全部搜索不可用。
 func ValidateModel(model string) error {
 	if !strings.Contains(strings.ToLower(model), "grok") {

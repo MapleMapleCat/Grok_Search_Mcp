@@ -177,7 +177,7 @@ func (c *Client) SearchStream(ctx context.Context, req SearchRequest, onRound fu
 }
 
 func (s clientSnapshot) searchResponses(ctx context.Context, req SearchRequest, onRound func(SearchRound)) (*SearchResult, error) {
-	_, body, err := buildSearchRequestBody(req, s.defaultModel)
+	body, err := buildSearchRequestBody(req, s.defaultModel)
 	if err != nil {
 		return nil, err
 	}

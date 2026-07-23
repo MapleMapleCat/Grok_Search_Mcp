@@ -165,9 +165,3 @@ func parsePanelClaims(secret, tokenString string) (*panelClaims, error) {
 	}
 	return claims, nil
 }
-
-// ParsePanelToken parses a panel JWT with the same strict verifier used by
-// JWTMiddleware.
-func ParsePanelToken(secret, tokenStr string) (*panelClaims, error) {
-	return parsePanelClaims(secret, tokenStr)
-}
