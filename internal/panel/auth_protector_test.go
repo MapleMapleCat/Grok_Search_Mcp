@@ -173,24 +173,13 @@ func TestHandlerAuthProtectorSeparatesForwardedClientBuckets(t *testing.T) {
 
 func TestAuthProtectorBoundsDistributedUsernameGuessingAcrossClientIPs(t *testing.T) {
 	authProtector := NewAuthProtector(AuthProtectorConfig{
-		ClientIPResolver:      trustedPanelClientIPResolver(),
 		LoginFailureThreshold: 1,
 		LoginBaseLockout:      time.Minute,
 		LoginMaxLockout:       time.Minute,
 	})
 
-	clientARequest := httptest.NewRequest(http.MethodPost, "/panel/v1/auth/login", nil)
-	clientARequest.RemoteAddr = "192.0.2.10:8443"
-	clientARequest.Header.Set("X-Forwarded-For", "198.51.100.10")
-	clientBRequest := httptest.NewRequest(http.MethodPost, "/panel/v1/auth/login", nil)
-	clientBRequest.RemoteAddr = "192.0.2.10:8443"
-	clientBRequest.Header.Set("X-Forwarded-For", "198.51.100.11")
-
-	clientAIP := authProtector.clientIP(clientARequest)
-	clientBIP := authProtector.clientIP(clientBRequest)
-	if clientAIP == clientBIP {
-		t.Fatalf("forwarded clients resolved to the same IP %q", clientAIP)
-	}
+	clientAIP := "198.51.100.10"
+	clientBIP := "198.51.100.11"
 
 	clientAAttempt, retryAfter := authProtector.beginLoginAttempt("alice", clientAIP)
 	if clientAAttempt == nil {

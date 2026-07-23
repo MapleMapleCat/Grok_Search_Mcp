@@ -385,7 +385,7 @@ claude mcp add --transport http grok-search-mcp http://127.0.0.1:8080/mcp \
 | `GROK_DB_PATH` | `./grok-search-mcp.db` | SQLite 路径，修改后需要重启。 |
 | `GROK_BOOTSTRAP_CREDENTIALS_PATH` | `<GROK_DB_PATH>.bootstrap-admin` | bootstrap 管理员 JSON 凭据文件的仅启动时路径；已有路径必须是精确 `0600` 的普通非符号链接文件。 |
 | `GROK_CLIENT_IP_MODE` | `direct` | 仅启动时生效的客户端身份模式：`direct` 使用 `RemoteAddr` 并忽略转发 Header；`trusted_proxy` 先认证直接对端再接受转发 Header。 |
-| `GROK_TRUSTED_PROXY_CIDRS` | 空 | 可信直接代理对端的 IPv4/IPv6 CIDR，逗号分隔。`trusted_proxy` 模式必填且非空；两种模式都会在启动时解析校验。 |
+| `GROK_TRUSTED_PROXY_CIDRS` | 空 | 可信直接代理对端的 IPv4/IPv6 CIDR，逗号分隔。仅在 `trusted_proxy` 模式下必填、解析并校验；`direct` 模式会忽略该变量。 |
 | `GROK_INITIAL_REGISTRATION_MODE` | `disabled` | 初始注册策略：`disabled`、`invite` 或 `free`。仅在尚无持久化服务设置行时使用。 |
 | `GROK_MAX_API_KEYS_PER_USER` | `20` | 仅启动时生效的单用户 API Key 行数上限，范围 1-1,000；禁用仍计数，删除释放容量。 |
 | `GROK_AUTH_PASSWORD_MAX_CONCURRENT` | `4` | 登录、注册和密码修改共享的进程级 bcrypt 并发上限，范围 1-64。 |
@@ -431,9 +431,10 @@ claude mcp add --transport http grok-search-mcp http://127.0.0.1:8080/mcp \
 | `trusted_proxy`，可信对端提供有效转发 Header | 优先使用 `X-Real-IP`，否则使用 `X-Forwarded-For` 中第一个 IP；两者同时存在时，规范化客户端地址必须一致。 |
 
 `GROK_TRUSTED_PROXY_CIDRS` 最多接受 256 个逗号分隔的规范 IPv4/IPv6
-前缀。direct 模式会校验但忽略非空列表；trusted-proxy 模式必须提供列表。信任只
-针对 TCP 直接对端；可信代理仍负责删除客户端提供的同名 Header，并根据自身连接
-元数据重新生成转发 Header。
+前缀；该限制仅在 trusted-proxy 模式解析配置时生效，且该模式必须提供列表。
+direct 模式不会解析或校验该变量，因为它会忽略所有代理身份配置。信任只针对
+TCP 直接对端；可信代理仍负责删除客户端提供的同名 Header，并根据自身连接元数据
+重新生成转发 Header。
 
 `/mcp` 来源 IP 注册表具有硬容量上限。现有 IP 会持续使用自己的独立令牌桶，
 直到正常空闲 TTL 到期；系统不会为了接纳新身份而淘汰活跃条目。分片已满时，

@@ -359,7 +359,3 @@ func (limiter *IPLimiter) Middleware() func(http.Handler) http.Handler {
 		})
 	}
 }
-
-func (limiter *IPLimiter) clientIP(r *http.Request) string {
-	return limiter.clientIPResolver.Resolve(r)
-}

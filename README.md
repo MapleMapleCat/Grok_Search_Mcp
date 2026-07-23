@@ -414,7 +414,7 @@ Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs,
 | `GROK_DB_PATH` | `./grok-search-mcp.db` | SQLite database path. Requires restart to change. |
 | `GROK_BOOTSTRAP_CREDENTIALS_PATH` | `<GROK_DB_PATH>.bootstrap-admin` | Startup-only path for the `0600` bootstrap administrator JSON credential file. Existing files must be regular, non-symlink files with exact restrictive permissions. |
 | `GROK_CLIENT_IP_MODE` | `direct` | Startup-only client identity mode: `direct` uses `RemoteAddr` and ignores forwarding headers; `trusted_proxy` authenticates the immediate peer before accepting forwarding headers. |
-| `GROK_TRUSTED_PROXY_CIDRS` | Empty | Comma-separated IPv4/IPv6 prefixes for trusted immediate proxy peers. Required and non-empty in `trusted_proxy` mode; parsed and validated at startup in both modes. |
+| `GROK_TRUSTED_PROXY_CIDRS` | Empty | Comma-separated IPv4/IPv6 prefixes for trusted immediate proxy peers. Required, parsed, and validated only in `trusted_proxy` mode; ignored in `direct` mode. |
 | `GROK_INITIAL_REGISTRATION_MODE` | `disabled` | Initial registration policy: `disabled`, `invite`, or `free`. Used only when no persisted server-settings row exists. |
 | `GROK_MAX_API_KEYS_PER_USER` | `20` | Startup-only per-user API-key row limit; accepted range 1-1,000. Disabled keys count and deletion frees capacity. |
 | `GROK_AUTH_PASSWORD_MAX_CONCURRENT` | `4` | Startup-only process-wide bcrypt work limit for login, registration, and password changes; accepted range 1-64. |
@@ -461,10 +461,11 @@ The two modes behave as follows:
 | `trusted_proxy`, trusted peer with valid forwarding headers | Uses `X-Real-IP` when present; otherwise uses the first `X-Forwarded-For` IP. If both are present, their canonical client addresses must agree. |
 
 `GROK_TRUSTED_PROXY_CIDRS` accepts at most 256 comma-separated canonical IPv4
-or IPv6 prefixes. In direct mode a non-empty list is validated but ignored. In
-trusted-proxy mode the list is mandatory. Trust applies only to the immediate
-TCP peer; the trusted proxy remains responsible for removing client-supplied
-forwarding headers and rebuilding them from its own connection metadata.
+or IPv6 prefixes in trusted-proxy mode, where the list is mandatory. Direct
+mode does not parse or validate this variable because it ignores all proxy
+identity configuration. Trust applies only to the immediate TCP peer; the
+trusted proxy remains responsible for removing client-supplied forwarding
+headers and rebuilding them from its own connection metadata.
 
 The `/mcp` source-IP registry is capacity bounded. Existing IPs keep their
 dedicated token bucket until the normal idle TTL expires; they are never

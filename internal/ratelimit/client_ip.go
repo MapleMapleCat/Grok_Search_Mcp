@@ -85,17 +85,6 @@ func NewClientIPResolverWithConfig(config ClientIPResolverConfig) *ClientIPResol
 	}
 }
 
-// Resolve returns a canonical client IP, or an empty string when request
-// identity fails validation. Callers that need the failure category should use
-// ResolveAddress.
-func (resolver *ClientIPResolver) Resolve(request *http.Request) string {
-	address, err := resolver.ResolveAddress(request)
-	if err != nil || !address.IsValid() {
-		return ""
-	}
-	return address.String()
-}
-
 // ResolveAddress authenticates the immediate peer before selecting request
 // identity. Direct mode ignores forwarding headers. Trusted-proxy mode accepts
 // them only from a configured immediate peer and requires a forwarding value.

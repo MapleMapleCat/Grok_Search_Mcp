@@ -337,13 +337,9 @@ func (h *Handler) authProtector() *AuthProtector {
 // request after validating identity against the configured network boundary.
 func (p *AuthProtector) RateLimitAuthEndpoint(endpoint authEndpoint, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		clientIP, shouldApplyIPProtection, err := p.clientIPForProtection(r)
+		clientIP, err := p.clientIPForProtection(r)
 		if err != nil {
 			writeClientIPResolutionError(w, err)
-			return
-		}
-		if !shouldApplyIPProtection {
-			next.ServeHTTP(w, r)
 			return
 		}
 
@@ -365,19 +361,15 @@ func writeClientIPResolutionError(writer http.ResponseWriter, err error) {
 	writeError(writer, http.StatusBadRequest, ratelimit.ErrInvalidClientIPIdentity.Error())
 }
 
-func (p *AuthProtector) clientIP(request *http.Request) string {
-	return p.clientIPResolver.Resolve(request)
-}
-
-func (p *AuthProtector) clientIPForProtection(request *http.Request) (string, bool, error) {
+func (p *AuthProtector) clientIPForProtection(request *http.Request) (string, error) {
 	clientAddress, err := p.clientIPResolver.ResolveAddress(request)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
 	if !clientAddress.IsValid() {
-		return "", false, ratelimit.ErrInvalidClientIPIdentity
+		return "", ratelimit.ErrInvalidClientIPIdentity
 	}
-	return clientAddress.String(), true, nil
+	return clientAddress.String(), nil
 }
 
 func (p *AuthProtector) allowAuthRequest(endpoint authEndpoint, clientIP string) (bool, time.Duration) {

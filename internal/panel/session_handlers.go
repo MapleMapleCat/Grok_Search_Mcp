@@ -61,22 +61,18 @@ func (handler *Handler) login(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	authProtector := handler.authProtector()
-	clientIP, shouldApplyIPProtection, clientIPError := authProtector.clientIPForProtection(request)
+	clientIP, clientIPError := authProtector.clientIPForProtection(request)
 	if clientIPError != nil {
 		writeClientIPResolutionError(writer, clientIPError)
 		return
 	}
-	var loginAttempt *loginAttempt
-	if shouldApplyIPProtection {
-		var retryAfter time.Duration
-		loginAttempt, retryAfter = authProtector.beginLoginAttempt(username, clientIP)
-		if loginAttempt == nil {
-			writeRetryAfter(writer, retryAfter)
-			writeError(writer, http.StatusTooManyRequests, "too many failed login attempts")
-			return
-		}
-		defer loginAttempt.abandon()
+	loginAttempt, retryAfter := authProtector.beginLoginAttempt(username, clientIP)
+	if loginAttempt == nil {
+		writeRetryAfter(writer, retryAfter)
+		writeError(writer, http.StatusTooManyRequests, "too many failed login attempts")
+		return
 	}
+	defer loginAttempt.abandon()
 	user, err := handler.Store.GetUserByUsername(request.Context(), username)
 
 	// Always execute bcrypt so unknown usernames cannot be enumerated by timing.
