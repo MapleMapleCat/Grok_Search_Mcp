@@ -15,12 +15,6 @@ func (TestStore) Close() error { return nil }
 func (TestStore) CreateUser(context.Context, string, string, UserRole) (*User, error) {
 	return nil, nil
 }
-func (TestStore) RegisterUser(context.Context, string, string) (*User, error) {
-	return nil, nil
-}
-func (TestStore) RegisterUserWithInviteCode(context.Context, string, string, string) (*User, error) {
-	return nil, nil
-}
 func (TestStore) RegisterUserWithCurrentMode(context.Context, string, string, string, RegistrationMode) (*User, error) {
 	return nil, nil
 }

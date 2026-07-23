@@ -719,7 +719,13 @@ func TestInviteCodePlaintextMigrationClearsLegacyValueAndPreservesRedemption(t *
 		_ = legacyStore.Close()
 		t.Fatal(err)
 	}
-	if _, err := legacyStore.RegisterUserWithInviteCode(requestContext, "legacy-first-redemption", "hash", rawInviteCode); err != nil {
+	if _, err := legacyStore.RegisterUserWithCurrentMode(
+		requestContext,
+		"legacy-first-redemption",
+		"hash",
+		rawInviteCode,
+		RegistrationModeInvite,
+	); err != nil {
 		_ = legacyStore.Close()
 		t.Fatal(err)
 	}
@@ -819,11 +825,12 @@ func TestInviteCodePlaintextMigrationClearsLegacyValueAndPreservesRedemption(t *
 		t.Fatalf("redemption audit changed during migration: %+v", redemptionsAfterMigration.Redemptions)
 	}
 
-	if _, err := migratedStore.RegisterUserWithInviteCode(
+	if _, err := migratedStore.RegisterUserWithCurrentMode(
 		requestContext,
 		"legacy-second-redemption",
 		"hash",
 		rawInviteCode,
+		RegistrationModeInvite,
 	); err != nil {
 		t.Fatalf("redeem original raw invite after plaintext clearing: %v", err)
 	}

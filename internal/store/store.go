@@ -364,10 +364,6 @@ type Store interface {
 
 	// CreateUser 建用户；限额不再随用户保存，统一由默认 tier0 决定。
 	CreateUser(ctx context.Context, username, passwordHash string, role UserRole) (*User, error)
-	// RegisterUser 自助注册：在同一事务内判断是否为首个用户并赋 admin，避免并发双管理员。
-	RegisterUser(ctx context.Context, username, passwordHash string) (*User, error)
-	// RegisterUserWithInviteCode 在同一事务中校验/消耗邀请码并创建普通用户。
-	RegisterUserWithInviteCode(ctx context.Context, username, passwordHash, rawInviteCode string) (*User, error)
 	// RegisterUserWithCurrentMode 在同一事务内读取当前注册模式并按该模式创建用户。
 	RegisterUserWithCurrentMode(ctx context.Context, username, passwordHash, rawInviteCode string, fallbackMode RegistrationMode) (*User, error)
 	// InviteCodeExists performs a cheap non-authoritative lookup before password hashing.

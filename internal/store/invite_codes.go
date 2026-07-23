@@ -302,7 +302,7 @@ func (s *SQLiteStore) DeleteInviteCode(ctx context.Context, id string) error {
 
 // InviteCodeExists performs a cheap, non-authoritative lookup so callers can
 // reject unknown codes before expensive password hashing. Registration must
-// still validate and consume the code inside RegisterUserWithInviteCode.
+// still validate and consume the code inside mode-aware transactional registration.
 func (s *SQLiteStore) InviteCodeExists(ctx context.Context, rawInviteCode string) (bool, error) {
 	rawInviteCode = strings.TrimSpace(rawInviteCode)
 	if rawInviteCode == "" {
@@ -320,107 +320,6 @@ func (s *SQLiteStore) InviteCodeExists(ctx context.Context, rawInviteCode string
 		return false, err
 	}
 	return true, nil
-}
-
-func (s *SQLiteStore) RegisterUserWithInviteCode(ctx context.Context, username, passwordHash, rawInviteCode string) (*User, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return nil, fmt.Errorf("username is required")
-	}
-	rawInviteCode = strings.TrimSpace(rawInviteCode)
-	if rawInviteCode == "" {
-		return nil, ErrInviteCodeInvalid
-	}
-
-	transaction, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = transaction.Rollback() }()
-
-	inviteCode, err := scanInviteCode(transaction.QueryRowContext(ctx,
-		`SELECT `+inviteCodeColumns+` FROM invite_codes WHERE code_hash = ?`, keyhash.HashAPIKey(rawInviteCode),
-	))
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, ErrInviteCodeInvalid
-		}
-		return nil, err
-	}
-	if !inviteCode.Enabled {
-		return nil, ErrInviteCodeDisabled
-	}
-	if inviteCode.RegistrationCount >= inviteCode.RegistrationLimit {
-		return nil, ErrInviteCodeExhausted
-	}
-
-	var tierID string
-	if err := transaction.QueryRowContext(ctx,
-		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, DefaultTierName,
-	).Scan(&tierID); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, ErrTierNotFound
-		}
-		return nil, err
-	}
-
-	userID, err := randomID()
-	if err != nil {
-		return nil, err
-	}
-	now := formatTime(nowUTC())
-	period := successQuotaPeriod(ctx)
-	_, err = transaction.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, success_calls, success_period, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, 0, ?, ?, ?)`,
-		userID,
-		username,
-		passwordHash,
-		string(RoleUser),
-		tierID,
-		period,
-		now,
-		now,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
-			return nil, ErrUsernameTaken
-		}
-		return nil, fmt.Errorf("insert user: %w", err)
-	}
-
-	inviteCodeUpdateResult, err := transaction.ExecContext(ctx,
-		`UPDATE invite_codes
-		 SET registration_count = registration_count + 1, updated_at = ?
-		 WHERE id = ? AND enabled = 1 AND registration_count < registration_limit`,
-		now,
-		inviteCode.ID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	updatedInviteCodeRows, err := inviteCodeUpdateResult.RowsAffected()
-	if err != nil {
-		return nil, err
-	}
-	if updatedInviteCodeRows != 1 {
-		return nil, ErrInviteCodeExhausted
-	}
-	if err := recordInviteCodeRedemptionInTransaction(
-		ctx,
-		transaction,
-		inviteCode,
-		userID,
-		username,
-		now,
-	); err != nil {
-		return nil, err
-	}
-
-	if err := transaction.Commit(); err != nil {
-		return nil, err
-	}
-	return s.GetUserByID(ctx, userID)
 }
 
 func (s *SQLiteStore) getInviteCodeByID(ctx context.Context, id string) (*InviteCode, error) {

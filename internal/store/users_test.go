@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestRegisterUserCreatesOnlyRegularUsersUnderConcurrency(t *testing.T) {
+func TestRegisterUserWithCurrentModeCreatesOnlyRegularUsersUnderConcurrency(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 	const n = 16
@@ -21,7 +21,7 @@ func TestRegisterUserCreatesOnlyRegularUsersUnderConcurrency(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			name := fmt.Sprintf("user%d", i)
-			_, err := s.RegisterUser(ctx, name, "hash")
+			_, err := s.RegisterUserWithCurrentMode(ctx, name, "hash", "", RegistrationModeFree)
 			if err != nil {
 				errCh <- err
 			}
@@ -203,7 +203,7 @@ func TestUpdateUserRejectsMissingOrEmptyTierID(t *testing.T) {
 	}
 }
 
-func TestCreateAndRegisterUserFailClosedWithoutTier0(t *testing.T) {
+func TestCreateAndCurrentModeRegistrationFailClosedWithoutTier0(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 	tier0, err := s.GetTierByName(ctx, "tier0")
@@ -216,8 +216,14 @@ func TestCreateAndRegisterUserFailClosedWithoutTier0(t *testing.T) {
 	if _, err := s.CreateUser(ctx, "without-tier0", "hash", RoleUser); !errors.Is(err, ErrTierNotFound) {
 		t.Fatalf("expected CreateUser to fail closed without tier0, got %v", err)
 	}
-	if _, err := s.RegisterUser(ctx, "registered-without-tier0", "hash"); !errors.Is(err, ErrTierNotFound) {
-		t.Fatalf("expected RegisterUser to fail closed without tier0, got %v", err)
+	if _, err := s.RegisterUserWithCurrentMode(
+		ctx,
+		"registered-without-tier0",
+		"hash",
+		"",
+		RegistrationModeFree,
+	); !errors.Is(err, ErrTierNotFound) {
+		t.Fatalf("expected current-mode registration to fail closed without tier0, got %v", err)
 	}
 }
 
@@ -460,7 +466,13 @@ func TestInviteCodeExistsDoesNotReplaceTransactionalValidation(t *testing.T) {
 	if !inviteCodeStillExists {
 		t.Fatal("disabled invite code should still pass the non-authoritative existence precheck")
 	}
-	if _, err := sqliteStore.RegisterUserWithInviteCode(ctx, "invite-precheck-user", "hash", rawInviteCode); !errors.Is(err, ErrInviteCodeDisabled) {
+	if _, err := sqliteStore.RegisterUserWithCurrentMode(
+		ctx,
+		"invite-precheck-user",
+		"hash",
+		rawInviteCode,
+		RegistrationModeInvite,
+	); !errors.Is(err, ErrInviteCodeDisabled) {
 		t.Fatalf("transactional registration should reject disabled invite code, got %v", err)
 	}
 }

@@ -102,51 +102,6 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 	return s.GetUserByID(ctx, id)
 }
 
-// RegisterUser 插入自助注册用户；自助注册始终创建普通用户，启动 bootstrap 负责创建管理员。
-// 限额由默认 tier0 决定，不再随用户保存。
-func (s *SQLiteStore) RegisterUser(ctx context.Context, username, passwordHash string) (*User, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return nil, fmt.Errorf("username is required")
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	id, err := randomID()
-	if err != nil {
-		return nil, err
-	}
-	now := formatTime(nowUTC())
-	period := successQuotaPeriod(ctx)
-	var tierID string
-	if err := tx.QueryRowContext(ctx,
-		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, DefaultTierName,
-	).Scan(&tierID); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, ErrTierNotFound
-		}
-		return nil, err
-	}
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, success_calls, success_period, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, 0, ?, ?, ?)`,
-		id, username, passwordHash, string(RoleUser), tierID, period, now, now,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
-			return nil, ErrUsernameTaken
-		}
-		return nil, fmt.Errorf("insert user: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return s.GetUserByID(ctx, id)
-}
-
 func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (*User, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT `+userColumns+` FROM users WHERE username = ? COLLATE NOCASE`, strings.TrimSpace(username))
