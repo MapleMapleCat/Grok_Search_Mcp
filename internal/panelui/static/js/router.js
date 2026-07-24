@@ -11,16 +11,16 @@ import { renderUsagePage } from "./pages/usage.js";
 import { renderUsersPage } from "./pages/users.js";
 
 export const pageMetadata = {
-  overview: { title: "总览", section: "工作台" },
-  keys: { title: "API 密钥", section: "访问控制" },
-  tutorial: { title: "配置教程", section: "访问控制", dataMode: "static" },
-  usage: { title: "调用分析", section: "可观测性" },
-  users: { title: "用户管理", section: "系统管理" },
-  tiers: { title: "配额方案", section: "系统管理" },
-  invites: { title: "邀请码", section: "系统管理" },
-  operationsMetrics: { title: "运行指标", section: "系统管理" },
-  settings: { title: "服务设置", section: "系统管理" },
-  account: { title: "账户信息", section: "账户" }
+  overview: { title: "总览", section: "工作台", render: renderOverviewPage },
+  keys: { title: "API 密钥", section: "访问控制", render: renderKeysPage },
+  tutorial: { title: "配置教程", section: "访问控制", dataMode: "static", render: renderConfigurationGuidePage },
+  usage: { title: "调用分析", section: "可观测性", render: renderUsagePage },
+  users: { title: "用户管理", section: "系统管理", render: renderUsersPage },
+  tiers: { title: "配额方案", section: "系统管理", render: renderTiersPage },
+  invites: { title: "邀请码", section: "系统管理", render: renderInvitesPage },
+  operationsMetrics: { title: "运行指标", section: "系统管理", render: renderOperationsMetricsPage },
+  settings: { title: "服务设置", section: "系统管理", render: renderSettingsPage },
+  account: { title: "账户信息", section: "账户", render: renderAccountPage }
 };
 
 export const availablePages = new Set(Object.keys(pageMetadata));
@@ -39,29 +39,7 @@ export function readPageFromLocation(locationHash = window.location.hash) {
 }
 
 export function renderCurrentPage(state) {
-  switch (state.currentPage) {
-    case "keys":
-      return renderKeysPage(state);
-    case "tutorial":
-      return renderConfigurationGuidePage();
-    case "usage":
-      return renderUsagePage(state);
-    case "users":
-      return renderUsersPage(state);
-    case "tiers":
-      return renderTiersPage(state);
-    case "invites":
-      return renderInvitesPage(state);
-    case "operationsMetrics":
-      return renderOperationsMetricsPage(state);
-    case "settings":
-      return renderSettingsPage(state);
-    case "account":
-      return renderAccountPage(state);
-    case "overview":
-    default:
-      return renderOverviewPage(state);
-  }
+  return (pageMetadata[state.currentPage]?.render || pageMetadata.overview.render)(state);
 }
 
 export function renderShell(state) {

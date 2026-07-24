@@ -1,5 +1,12 @@
 import { fetchAdminUserUsage } from "../api.js";
 import { showToast } from "../components/toast.js";
+import {
+  commitCursorPagination,
+  createCursorPaginationState,
+  moveCursorPagination,
+  resetCursorPagination,
+  restoreCursorPagination
+} from "../cursor-pagination.js";
 import { COLLECTION_PAGE_SIZE_OPTIONS, findItemByIdentifier, normalizeUsage } from "../state.js";
 import { getErrorMessage } from "./event-helpers.js";
 
@@ -16,14 +23,9 @@ export function createUserUsageModalEvents({
       userIdentifier,
       username: user?.username || "用户",
       loading: true,
-      loadingRecords: false,
       usage: null,
       recentRecords: null,
-      cursor: "",
-      nextCursor: "",
-      previousCursors: [],
-      hasMore: false,
-      pageSize: 20
+      ...createCursorPaginationState(20, { loadingRecords: false })
     });
     await loadAdminUserUsagePage({ closeModalOnError: true });
   }
@@ -53,10 +55,8 @@ export function createUserUsageModalEvents({
       )) {
         const usage = normalizeUsage(usageResponse);
         state.modal.loading = false;
-        state.modal.loadingRecords = false;
         state.modal.usage = usage;
-        state.modal.nextCursor = usage.next_cursor;
-        state.modal.hasMore = Boolean(usage.has_more && usage.next_cursor);
+        commitCursorPagination(state.modal, usage);
         if (!Array.isArray(state.modal.recentRecords)) {
           state.modal.recentRecords = usage.records.slice(0, 8);
         }
@@ -103,35 +103,15 @@ export function createUserUsageModalEvents({
       return;
     }
 
-    const paginationSnapshot = {
-      cursor: state.modal.cursor,
-      nextCursor: state.modal.nextCursor,
-      previousCursors: [...state.modal.previousCursors],
-      hasMore: state.modal.hasMore,
-      pageSize: state.modal.pageSize
-    };
-    if (direction === "next") {
-      if (!state.modal.hasMore || !state.modal.nextCursor) {
-        return;
-      }
-      state.modal.previousCursors.push(state.modal.cursor);
-      state.modal.cursor = state.modal.nextCursor;
-    } else if (direction === "previous" && state.modal.previousCursors.length > 0) {
-      state.modal.cursor = state.modal.previousCursors.pop() || "";
-    } else {
+    const paginationSnapshot = moveCursorPagination(state.modal, direction, true);
+    if (!paginationSnapshot) {
       return;
     }
 
-    state.modal.loadingRecords = true;
     renderModalRegion();
     const loaded = await loadAdminUserUsagePage();
     if (!loaded && state.modal?.type === "userUsageLogs") {
-      state.modal.cursor = paginationSnapshot.cursor;
-      state.modal.nextCursor = paginationSnapshot.nextCursor;
-      state.modal.previousCursors = [...paginationSnapshot.previousCursors];
-      state.modal.hasMore = paginationSnapshot.hasMore;
-      state.modal.pageSize = paginationSnapshot.pageSize;
-      state.modal.loadingRecords = false;
+      restoreCursorPagination(state.modal, paginationSnapshot);
       renderModalRegion();
     }
   }
@@ -146,28 +126,11 @@ export function createUserUsageModalEvents({
       return;
     }
 
-    const paginationSnapshot = {
-      cursor: state.modal.cursor,
-      nextCursor: state.modal.nextCursor,
-      previousCursors: [...state.modal.previousCursors],
-      hasMore: state.modal.hasMore,
-      pageSize: state.modal.pageSize
-    };
-    state.modal.cursor = "";
-    state.modal.nextCursor = "";
-    state.modal.previousCursors = [];
-    state.modal.hasMore = false;
-    state.modal.pageSize = pageSize;
-    state.modal.loadingRecords = true;
+    const paginationSnapshot = resetCursorPagination(state.modal, pageSize, true);
     renderModalRegion();
     const loaded = await loadAdminUserUsagePage();
     if (!loaded && state.modal?.type === "userUsageLogs") {
-      state.modal.cursor = paginationSnapshot.cursor;
-      state.modal.nextCursor = paginationSnapshot.nextCursor;
-      state.modal.previousCursors = [...paginationSnapshot.previousCursors];
-      state.modal.hasMore = paginationSnapshot.hasMore;
-      state.modal.pageSize = paginationSnapshot.pageSize;
-      state.modal.loadingRecords = false;
+      restoreCursorPagination(state.modal, paginationSnapshot);
       renderModalRegion();
     }
   }

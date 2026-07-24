@@ -6,13 +6,20 @@ import {
 } from "../api.js";
 import { showToast } from "../components/toast.js";
 import {
+  commitCursorPagination,
+  createCursorPaginationState,
+  moveCursorPagination,
+  resetCursorPagination,
+  restoreCursorPagination
+} from "../cursor-pagination.js";
+import {
   COLLECTION_PAGE_SIZE_OPTIONS,
   findItemByIdentifier,
   replaceItemByIdentifier,
   resetPagination
 } from "../state.js";
 import { createFormDataObject } from "../utils.js";
-import { getErrorMessage } from "./event-helpers.js";
+import { getErrorMessage, handleModalMutationError, openConfirmationModal } from "./event-helpers.js";
 
 export function createInviteEvents({
   state,
@@ -59,9 +66,7 @@ export function createInviteEvents({
       };
       await reloadInviteCollectionFromFirstPage();
     } catch (error) {
-      if (!handleSessionError(error)) {
-        modalController.setModalBusy(false, getErrorMessage(error));
-      }
+      handleModalMutationError(error, modalController, handleSessionError);
     }
   }
 
@@ -100,14 +105,9 @@ export function createInviteEvents({
       inviteIdentifier,
       inviteCode,
       loading: true,
-      loadingRecords: false,
       error: "",
       redemptions: [],
-      cursor: "",
-      nextCursor: "",
-      previousCursors: [],
-      hasMore: false,
-      pageSize: 50
+      ...createCursorPaginationState(50, { loadingRecords: false })
     });
     await loadRedemptionsPage({ initialLoad: true });
   }
@@ -135,13 +135,11 @@ export function createInviteEvents({
         requestedPageSize
       )) {
         state.modal.loading = false;
-        state.modal.loadingRecords = false;
         state.modal.error = "";
         state.modal.redemptions = Array.isArray(response?.redemptions)
           ? response.redemptions
           : [];
-        state.modal.nextCursor = String(response?.next_cursor || "");
-        state.modal.hasMore = Boolean(response?.has_more && state.modal.nextCursor);
+        commitCursorPagination(state.modal, response);
         renderModalRegion();
         return true;
       }
@@ -169,35 +167,15 @@ export function createInviteEvents({
     }
 
     const inviteIdentifier = state.modal.inviteIdentifier;
-    const paginationSnapshot = {
-      cursor: state.modal.cursor,
-      nextCursor: state.modal.nextCursor,
-      previousCursors: [...state.modal.previousCursors],
-      hasMore: state.modal.hasMore,
-      pageSize: state.modal.pageSize
-    };
-    if (direction === "next") {
-      if (!state.modal.hasMore || !state.modal.nextCursor) {
-        return;
-      }
-      state.modal.previousCursors.push(state.modal.cursor);
-      state.modal.cursor = state.modal.nextCursor;
-    } else if (direction === "previous" && state.modal.previousCursors.length > 0) {
-      state.modal.cursor = state.modal.previousCursors.pop() || "";
-    } else {
+    const paginationSnapshot = moveCursorPagination(state.modal, direction, true);
+    if (!paginationSnapshot) {
       return;
     }
 
-    state.modal.loadingRecords = true;
     renderModalRegion();
     const loaded = await loadRedemptionsPage();
     if (!loaded && isInviteRedemptionsModalFor(state.modal, inviteIdentifier)) {
-      state.modal.cursor = paginationSnapshot.cursor;
-      state.modal.nextCursor = paginationSnapshot.nextCursor;
-      state.modal.previousCursors = [...paginationSnapshot.previousCursors];
-      state.modal.hasMore = paginationSnapshot.hasMore;
-      state.modal.pageSize = paginationSnapshot.pageSize;
-      state.modal.loadingRecords = false;
+      restoreCursorPagination(state.modal, paginationSnapshot);
       renderModalRegion();
     }
   }
@@ -213,28 +191,11 @@ export function createInviteEvents({
     }
 
     const inviteIdentifier = state.modal.inviteIdentifier;
-    const paginationSnapshot = {
-      cursor: state.modal.cursor,
-      nextCursor: state.modal.nextCursor,
-      previousCursors: [...state.modal.previousCursors],
-      hasMore: state.modal.hasMore,
-      pageSize: state.modal.pageSize
-    };
-    state.modal.cursor = "";
-    state.modal.nextCursor = "";
-    state.modal.previousCursors = [];
-    state.modal.hasMore = false;
-    state.modal.pageSize = pageSize;
-    state.modal.loadingRecords = true;
+    const paginationSnapshot = resetCursorPagination(state.modal, pageSize, true);
     renderModalRegion();
     const loaded = await loadRedemptionsPage();
     if (!loaded && isInviteRedemptionsModalFor(state.modal, inviteIdentifier)) {
-      state.modal.cursor = paginationSnapshot.cursor;
-      state.modal.nextCursor = paginationSnapshot.nextCursor;
-      state.modal.previousCursors = [...paginationSnapshot.previousCursors];
-      state.modal.hasMore = paginationSnapshot.hasMore;
-      state.modal.pageSize = paginationSnapshot.pageSize;
-      state.modal.loadingRecords = false;
+      restoreCursorPagination(state.modal, paginationSnapshot);
       renderModalRegion();
     }
   }
@@ -254,15 +215,12 @@ export function createInviteEvents({
 
   function openDeleteConfirmation(inviteIdentifier) {
     const inviteCode = findItemByIdentifier(state.data.invites, inviteIdentifier);
-    modalController.openModal({
-      type: "confirm",
+    openConfirmationModal(modalController, {
       confirmAction: "deleteInvite",
       identifier: inviteIdentifier,
       title: "删除邀请码",
       message: `删除“${inviteCode?.code_prefix || "该邀请码"}”后，尚未使用的注册名额也会立即失效。`,
-      confirmLabel: "删除邀请码",
-      busy: false,
-      error: ""
+      confirmLabel: "删除邀请码"
     });
   }
 

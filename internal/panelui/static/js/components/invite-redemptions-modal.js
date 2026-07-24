@@ -1,6 +1,6 @@
-import { COLLECTION_PAGE_SIZE_OPTIONS } from "../pagination-config.js";
-import { escapeHTML, formatDateTime, formatNumber } from "../utils.js";
+import { escapeHTML, formatDateTime } from "../utils.js";
 import { renderIcon } from "./icons.js";
+import { renderModalPagination } from "./modal-pagination.js";
 
 export function renderInviteRedemptionsModal(modal, renderModalFrame) {
   const inviteCode = modal.inviteCode || {};
@@ -43,22 +43,13 @@ export function renderInviteRedemptionsModal(modal, renderModalFrame) {
   const body = modal.loadingRecords
     ? '<div class="skeleton invite-redemptions-skeleton"></div>'
     : redemptionList;
-  const loadingRecords = Boolean(modal.loadingRecords);
-  const previousPageAvailable = (modal.previousCursors?.length || 0) > 0;
-  const nextPageAvailable = Boolean(modal.hasMore && modal.nextCursor);
-  const currentPage = (modal.previousCursors?.length || 0) + 1;
-  const footer = `
-    <button class="button button-secondary" type="button" data-action="close-modal" >关闭</button>
-    <span class="muted modal-pagination-status">第 ${escapeHTML(formatNumber(currentPage))} 页 · 本页 ${escapeHTML(formatNumber(redemptions.length))} 条</span>
-    <label class="pagination-page-size">
-      <span>每页</span>
-      <select class="select-input" data-action="change-invite-redemptions-page-size" aria-label="每页显示条数" ${loadingRecords ? "disabled" : ""}>
-        ${COLLECTION_PAGE_SIZE_OPTIONS.map((pageSize) => `<option value="${pageSize}" ${Number(modal.pageSize) === pageSize ? "selected" : ""}>${pageSize} 条</option>`).join("")}
-      </select>
-    </label>
-    <button class="button button-secondary" type="button" data-action="change-invite-redemptions-page" data-direction="previous" ${!loadingRecords && previousPageAvailable ? "" : "disabled"}>上一页</button>
-    <button class="button button-primary" type="button" data-action="change-invite-redemptions-page" data-direction="next" ${!loadingRecords && nextPageAvailable ? "" : "disabled"}>下一页</button>
-  `;
+  const footer = renderModalPagination({
+    pagination: modal,
+    itemCount: redemptions.length,
+    leadingContent: '<button class="button button-secondary" type="button" data-action="close-modal">关闭</button>',
+    pageAction: "change-invite-redemptions-page",
+    pageSizeAction: "change-invite-redemptions-page-size"
+  });
 
   return renderModalFrame({
     title: "邀请码注册记录",

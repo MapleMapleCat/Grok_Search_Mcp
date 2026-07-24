@@ -220,7 +220,7 @@
 /* Responsive */
 
 @media (max-width: 1180px) {
-.settings-layout {
+  .settings-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -231,16 +231,14 @@
 }
 
 @media (max-width: 820px) {
-.settings-section {
+  .settings-section {
     grid-template-columns: minmax(0, 1fr);
     gap: 18px;
   }
-
-  
 }
 
 @media (max-width: 640px) {
-.settings-layout .info-card {
+  .settings-layout .info-card {
     display: block;
   }
 
@@ -254,6 +252,4 @@
   .modal-footer .button {
     width: 100%;
   }
-
-  
 }

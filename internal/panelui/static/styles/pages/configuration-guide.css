@@ -407,8 +407,7 @@
 }
 
 @media (max-width: 980px) {
-  .guide-hero,
-  .guide-config-grid {
+  .guide-hero {
     grid-template-columns: minmax(0, 1fr);
   }
 

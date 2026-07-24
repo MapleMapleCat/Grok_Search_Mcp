@@ -7,6 +7,10 @@ export function escapeHTML(value) {
     .replaceAll("'", "&#039;");
 }
 
+export function createEmptyUsage() {
+  return { total_calls: 0, success_calls: 0, current_rpm: 0, by_tool: {}, traffic_buckets: [], records: [] };
+}
+
 export function formatNumber(value, options = {}) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) {

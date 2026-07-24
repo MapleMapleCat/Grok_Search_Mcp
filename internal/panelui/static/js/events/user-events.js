@@ -1,7 +1,7 @@
 import { deleteAdminUser, updateAdminUser } from "../api.js";
 import { showToast } from "../components/toast.js";
 import { findItemByIdentifier, removeItemByIdentifier, replaceItemByIdentifier } from "../state.js";
-import { getErrorMessage } from "./event-helpers.js";
+import { handleModalMutationError, openConfirmationModal } from "./event-helpers.js";
 
 export function createUserEvents({
   state,
@@ -42,9 +42,7 @@ export function createUserEvents({
       renderApplication();
       showToast("用户已更新", "角色、等级与会话策略已应用。", "success");
     } catch (error) {
-      if (!handleSessionError(error)) {
-        modalController.setModalBusy(false, getErrorMessage(error));
-      }
+      handleModalMutationError(error, modalController, handleSessionError);
     }
   }
 
@@ -54,15 +52,12 @@ export function createUserEvents({
 
   function openDeleteConfirmation(userIdentifier) {
     const user = findItemByIdentifier(state.data.users, userIdentifier);
-    modalController.openModal({
-      type: "confirm",
+    openConfirmationModal(modalController, {
       confirmAction: "deleteUser",
       identifier: userIdentifier,
       title: "删除用户",
       message: `删除“${user?.username || "该用户"}”会同时删除其全部 API 密钥与调用日志，且无法恢复。`,
-      confirmLabel: "删除用户",
-      busy: false,
-      error: ""
+      confirmLabel: "删除用户"
     });
   }
 

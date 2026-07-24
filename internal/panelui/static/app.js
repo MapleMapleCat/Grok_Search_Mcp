@@ -236,12 +236,7 @@ async function loadPageData(page, signal) {
       };
     }
     case "keys": {
-      const keyResponse = await fetchKeys({
-        signal,
-        cursor: state.pagination.keys.cursor,
-        limit: COLLECTION_PAGE_SIZE
-      });
-      return { keyResponse };
+      return { keyResponse: await fetchCollectionPage(fetchKeys, state.pagination.keys, signal) };
     }
     case "usage": {
       const since = getUsagePeriodSince(state.filters.usagePeriod);
@@ -263,30 +258,16 @@ async function loadPageData(page, signal) {
     }
     case "users": {
       const [userResponse, tierResponse] = await Promise.all([
-        fetchAdminUsers({
-          signal,
-          cursor: state.pagination.users.cursor,
-          limit: COLLECTION_PAGE_SIZE
-        }),
+        fetchCollectionPage(fetchAdminUsers, state.pagination.users, signal),
         fetchAllTiers({ signal, limit: 100 })
       ]);
       return { userResponse, tierResponse };
     }
     case "tiers": {
-      const tierResponse = await fetchTiers({
-        signal,
-        cursor: state.pagination.tiers.cursor,
-        limit: COLLECTION_PAGE_SIZE
-      });
-      return { tierResponse };
+      return { tierResponse: await fetchCollectionPage(fetchTiers, state.pagination.tiers, signal) };
     }
     case "invites": {
-      const inviteResponse = await fetchInviteCodes({
-        signal,
-        cursor: state.pagination.invites.cursor,
-        limit: COLLECTION_PAGE_SIZE
-      });
-      return { inviteResponse };
+      return { inviteResponse: await fetchCollectionPage(fetchInviteCodes, state.pagination.invites, signal) };
     }
     case "settings":
       return { settings: await fetchSettings({ signal }) };
@@ -297,6 +278,14 @@ async function loadPageData(page, signal) {
     default:
       return {};
   }
+}
+
+function fetchCollectionPage(fetchCollection, pagination, signal) {
+  return fetchCollection({
+    signal,
+    cursor: pagination.cursor,
+    limit: COLLECTION_PAGE_SIZE
+  });
 }
 
 function handleSessionError(error) {

@@ -27,8 +27,7 @@
 }
 
 .text-input,
-.select-input,
-.textarea-input {
+.select-input {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -43,34 +42,24 @@
   padding: 0 14px;
 }
 
-.textarea-input {
-  min-height: 112px;
-  padding: 13px 14px;
-  resize: vertical;
-}
-
-.text-input::placeholder,
-.textarea-input::placeholder {
+.text-input::placeholder {
   color: #a7b0aa;
 }
 
 .text-input:hover,
-.select-input:hover,
-.textarea-input:hover {
+.select-input:hover {
   border-color: var(--line-strong);
 }
 
 .text-input:focus,
-.select-input:focus,
-.textarea-input:focus {
+.select-input:focus {
   border-color: var(--violet);
   box-shadow: 0 0 0 4px rgba(118, 103, 244, 0.1);
   outline: none;
 }
 
 .text-input:disabled,
-.select-input:disabled,
-.textarea-input:disabled {
+.select-input:disabled {
   background: var(--surface-muted);
   color: var(--ink-faint);
   cursor: not-allowed;
@@ -116,9 +105,7 @@
 }
 
 @media (max-width: 640px) {
-.form-grid .is-full {
+  .form-grid .is-full {
     grid-column: auto;
   }
-
-  
 }

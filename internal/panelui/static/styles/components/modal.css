@@ -178,7 +178,7 @@
 }
 
 @media (max-width: 640px) {
-.modal-backdrop {
+  .modal-backdrop {
     align-items: end;
     padding: 0;
   }
@@ -189,6 +189,4 @@
     max-height: 92vh;
     border-radius: 22px 22px 0 0;
   }
-
-  
 }

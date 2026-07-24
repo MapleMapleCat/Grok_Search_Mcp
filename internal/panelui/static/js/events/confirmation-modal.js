@@ -1,5 +1,5 @@
 import { showToast } from "../components/toast.js";
-import { getErrorMessage } from "./event-helpers.js";
+import { handleModalMutationError } from "./event-helpers.js";
 
 export function createConfirmationModalEvents({
   state,
@@ -26,9 +26,7 @@ export function createConfirmationModalEvents({
       renderApplication();
       showToast("删除成功", "资源已从服务中永久移除。", "success");
     } catch (error) {
-      if (!handleSessionError(error)) {
-        modalController.setModalBusy(false, getErrorMessage(error));
-      }
+      handleModalMutationError(error, modalController, handleSessionError);
     }
   }
 

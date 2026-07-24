@@ -1,4 +1,4 @@
-import { escapeHTML, formatNumber, formatPercent, getSuccessRate } from "../utils.js";
+import { createEmptyUsage, escapeHTML, formatNumber, formatPercent, getSuccessRate } from "../utils.js";
 import { renderPageHeading } from "../components/loading.js";
 import { renderMetricCard } from "../components/metric-card.js";
 import { renderToolBreakdown } from "../components/tool-breakdown.js";
@@ -49,10 +49,6 @@ export function renderUsagePage(state) {
 
 function renderUsageLoading() {
   return `<section class="metric-grid">${Array.from({ length: 4 }, () => '<div class="skeleton" style="height:142px;border-radius:16px"></div>').join("")}</section><div class="skeleton" style="height:360px;border-radius:16px"></div>`;
-}
-
-function createEmptyUsage() {
-  return { total_calls: 0, success_calls: 0, current_rpm: 0, by_tool: {}, traffic_buckets: [], records: [] };
 }
 
 function getPeriodLabel(period) {

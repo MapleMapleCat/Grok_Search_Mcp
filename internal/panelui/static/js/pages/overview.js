@@ -1,5 +1,6 @@
 import {
   calculatePercent,
+  createEmptyUsage,
   escapeHTML,
   formatDateTime,
   formatLimit,
@@ -95,10 +96,6 @@ function renderOverviewLoading() {
       <div class="skeleton" style="height:350px;border-radius:16px"></div>
     </section>
   `;
-}
-
-function createEmptyUsage() {
-  return { total_calls: 0, success_calls: 0, current_rpm: 0, by_tool: {}, traffic_buckets: [], records: [] };
 }
 
 function getOverviewHealthPresentation(health) {

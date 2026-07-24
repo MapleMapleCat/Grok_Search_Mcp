@@ -34,6 +34,16 @@ export function getErrorMessage(error) {
   return "发生未知错误，请稍后重试。";
 }
 
+export function handleModalMutationError(error, modalController, handleSessionError) {
+  if (!handleSessionError(error)) {
+    modalController.setModalBusy(false, getErrorMessage(error));
+  }
+}
+
+export function openConfirmationModal(modalController, confirmation) {
+  modalController.openModal({ type: "confirm", busy: false, error: "", ...confirmation });
+}
+
 export function withRetryAfter(message, error) {
   if (Number.isFinite(error?.retryAfterSeconds) && error.retryAfterSeconds > 0) {
     return `${message} 约 ${Math.ceil(error.retryAfterSeconds)} 秒后可重试。`;

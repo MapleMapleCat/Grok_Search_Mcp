@@ -1,19 +1,20 @@
 import { readPageFromLocation } from "./router.js";
 import { COLLECTION_PAGE_SIZE, COLLECTION_PAGE_SIZE_OPTIONS } from "./pagination-config.js";
+import {
+  commitCursorPagination,
+  createCursorPaginationState,
+  moveCursorPagination,
+  restoreCursorPagination
+} from "./cursor-pagination.js";
 
 export { COLLECTION_PAGE_SIZE, COLLECTION_PAGE_SIZE_OPTIONS } from "./pagination-config.js";
 
 function createPaginationState(pageSize = COLLECTION_PAGE_SIZE) {
-  return {
-    cursor: "",
-    nextCursor: "",
-    previousCursors: [],
-    hasMore: false,
-    pageSize,
+  return createCursorPaginationState(pageSize, {
     totalCount: 0,
     activeCount: 0,
     assignedUserCount: 0
-  };
+  });
 }
 
 export const state = {
@@ -87,36 +88,11 @@ export function setPaginationPageSize(collectionName, requestedPageSize) {
 }
 
 export function movePaginationCursor(collectionName, direction) {
-  const pagination = state.pagination[collectionName];
-  if (!pagination) {
-    return null;
-  }
-  const snapshot = {
-    cursor: pagination.cursor,
-    previousCursors: [...pagination.previousCursors]
-  };
-  if (direction === "next") {
-    if (!pagination.hasMore || !pagination.nextCursor) {
-      return null;
-    }
-    pagination.previousCursors.push(pagination.cursor);
-    pagination.cursor = pagination.nextCursor;
-    return snapshot;
-  }
-  if (direction === "previous" && pagination.previousCursors.length > 0) {
-    pagination.cursor = pagination.previousCursors.pop() || "";
-    return snapshot;
-  }
-  return null;
+  return moveCursorPagination(state.pagination[collectionName], direction);
 }
 
 export function restorePaginationCursor(collectionName, snapshot) {
-  const pagination = state.pagination[collectionName];
-  if (!pagination || !snapshot) {
-    return;
-  }
-  pagination.cursor = snapshot.cursor;
-  pagination.previousCursors = [...snapshot.previousCursors];
+  restoreCursorPagination(state.pagination[collectionName], snapshot);
 }
 
 function commitPagination(collectionName, response) {
@@ -124,8 +100,7 @@ function commitPagination(collectionName, response) {
   if (!pagination) {
     return;
   }
-  pagination.nextCursor = String(response?.next_cursor || "");
-  pagination.hasMore = Boolean(response?.has_more && pagination.nextCursor);
+  commitCursorPagination(pagination, response);
   pagination.totalCount = Number(response?.total_count ?? pagination.totalCount ?? 0);
   pagination.activeCount = Number(response?.active_count ?? pagination.activeCount ?? 0);
   pagination.assignedUserCount = Number(response?.assigned_user_count ?? pagination.assignedUserCount ?? 0);
@@ -145,28 +120,17 @@ export function clearAuthenticatedState() {
 }
 
 export function pageHasExistingData(page) {
-  switch (page) {
-    case "overview":
-      return Boolean(state.data.overviewUsage && state.data.keys);
-    case "usage":
-      return Boolean(state.data.usage);
-    case "keys":
-      return Boolean(state.data.keys);
-    case "users":
-      return Boolean(state.data.users && state.data.tiers);
-    case "tiers":
-      return Boolean(state.data.tiers);
-    case "invites":
-      return Boolean(state.data.invites);
-    case "settings":
-      return Boolean(state.data.settings);
-    case "operationsMetrics":
-      return Boolean(state.data.operationsMetrics);
-    case "account":
-      return Boolean(state.user);
-    default:
-      return false;
+  if (page === "overview") {
+    return Boolean(state.data.overviewUsage && state.data.keys);
   }
+  if (page === "users") {
+    return Boolean(state.data.users && state.data.tiers);
+  }
+  if (page === "account") {
+    return Boolean(state.user);
+  }
+  const dataKeyByPage = { usage: "usage", keys: "keys", tiers: "tiers", invites: "invites", settings: "settings", operationsMetrics: "operationsMetrics" };
+  return Boolean(state.data[dataKeyByPage[page]]);
 }
 
 export function commitPageData(page, pageResult) {

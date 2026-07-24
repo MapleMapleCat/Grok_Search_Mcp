@@ -206,25 +206,21 @@
 }
 
 @media (max-width: 980px) {
-.dashboard-grid {
+  .dashboard-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .hero-card {
     grid-template-columns: minmax(0, 1fr) 240px;
   }
-
-  
 }
 
 @media (max-width: 640px) {
-.hero-card {
+  .hero-card {
     display: block;
   }
 
   .hero-gauge-wrap {
     display: none;
   }
-
-  
 }

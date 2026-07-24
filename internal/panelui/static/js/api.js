@@ -166,6 +166,24 @@ function buildCollectionPath(path, { cursor = "", limit = 50, since = "" } = {})
   return queryString ? `${path}?${queryString}` : path;
 }
 
+function requestCollection(path, options = {}, queryOverrides = {}) {
+  const { cursor = "", limit = 50, since = "", ...requestOptions } = options;
+  return panelAPI.request(
+    buildCollectionPath(path, { cursor, limit, since, ...queryOverrides }),
+    requestOptions
+  );
+}
+
+function requestMutation(path, method, body) {
+  return panelAPI.request(path, { method, body });
+}
+
+async function requestReplacementSession(path, requestOptions = {}) {
+  const replacementSession = await panelAPI.request(path, { method: "POST", ...requestOptions });
+  panelAPI.saveSession(replacementSession.token, replacementSession.expires_at);
+  return replacementSession;
+}
+
 function translateBackendError(message, status) {
   const normalizedMessage = String(message || "").trim();
   const messageTranslations = {
@@ -273,21 +291,14 @@ export function fetchCurrentUser(options = {}) {
 }
 
 export async function changePassword(passwords) {
-  const replacementSession = await panelAPI.request("/panel/v1/me/change-password", {
-    method: "POST",
+  return requestReplacementSession("/panel/v1/me/change-password", {
     body: passwords,
     clearSessionOnUnauthorized: false
   });
-  panelAPI.saveSession(replacementSession.token, replacementSession.expires_at);
-  return replacementSession;
 }
 
 export async function revokeSessions() {
-  const replacementSession = await panelAPI.request("/panel/v1/me/revoke-sessions", {
-    method: "POST"
-  });
-  panelAPI.saveSession(replacementSession.token, replacementSession.expires_at);
-  return replacementSession;
+  return requestReplacementSession("/panel/v1/me/revoke-sessions");
 }
 
 export function fetchOverviewHealth(options = {}) {
@@ -295,8 +306,7 @@ export function fetchOverviewHealth(options = {}) {
 }
 
 export function fetchKeys(options = {}) {
-  const { cursor = "", limit = 50, ...requestOptions } = options;
-  return panelAPI.request(buildCollectionPath("/panel/v1/keys", { cursor, limit }), requestOptions);
+  return requestCollection("/panel/v1/keys", options);
 }
 
 export function createKey(keyData) {
@@ -308,10 +318,7 @@ export function revealKey(keyIdentifier) {
 }
 
 export function updateKey(keyIdentifier, keyData) {
-  return panelAPI.request(`/panel/v1/keys/${encodeURIComponent(keyIdentifier)}`, {
-    method: "PATCH",
-    body: keyData
-  });
+  return requestMutation(`/panel/v1/keys/${encodeURIComponent(keyIdentifier)}`, "PATCH", keyData);
 }
 
 export function deleteKey(keyIdentifier) {
@@ -323,13 +330,11 @@ export function fetchKeyUsage(keyIdentifier, options = {}) {
 }
 
 export function fetchUsage(since = "", options = {}) {
-  const { cursor = "", limit = 50, ...requestOptions } = options;
-  return panelAPI.request(buildCollectionPath("/panel/v1/usage", { since, cursor, limit }), requestOptions);
+  return requestCollection("/panel/v1/usage", options, { since });
 }
 
 export function fetchUsageRecords(since = "", options = {}) {
-  const { cursor = "", limit = 50, ...requestOptions } = options;
-  return panelAPI.request(buildCollectionPath("/panel/v1/usage/records", { since, cursor, limit }), requestOptions);
+  return requestCollection("/panel/v1/usage/records", options, { since });
 }
 
 export function fetchUsageRecordDetail(recordIdentifier, options = {}) {
@@ -337,15 +342,11 @@ export function fetchUsageRecordDetail(recordIdentifier, options = {}) {
 }
 
 export function fetchAdminUsers(options = {}) {
-  const { cursor = "", limit = 50, ...requestOptions } = options;
-  return panelAPI.request(buildCollectionPath("/panel/v1/admin/users", { cursor, limit }), requestOptions);
+  return requestCollection("/panel/v1/admin/users", options);
 }
 
 export function updateAdminUser(userIdentifier, userData) {
-  return panelAPI.request(`/panel/v1/admin/users/${encodeURIComponent(userIdentifier)}`, {
-    method: "PATCH",
-    body: userData
-  });
+  return requestMutation(`/panel/v1/admin/users/${encodeURIComponent(userIdentifier)}`, "PATCH", userData);
 }
 
 export function deleteAdminUser(userIdentifier) {
@@ -353,16 +354,11 @@ export function deleteAdminUser(userIdentifier) {
 }
 
 export function fetchAdminUserUsage(userIdentifier, options = {}) {
-  const { since = "", cursor = "", limit = 50, ...requestOptions } = options;
-  return panelAPI.request(buildCollectionPath(
-    `/panel/v1/admin/users/${encodeURIComponent(userIdentifier)}/usage`,
-    { since, cursor, limit }
-  ), requestOptions);
+  return requestCollection(`/panel/v1/admin/users/${encodeURIComponent(userIdentifier)}/usage`, options);
 }
 
 export function fetchTiers(options = {}) {
-  const { cursor = "", limit = 50, ...requestOptions } = options;
-  return panelAPI.request(buildCollectionPath("/panel/v1/admin/tiers", { cursor, limit }), requestOptions);
+  return requestCollection("/panel/v1/admin/tiers", options);
 }
 
 export async function fetchAllTiers(options = {}) {
@@ -422,10 +418,7 @@ export function createTier(tierData) {
 }
 
 export function updateTier(tierIdentifier, tierData) {
-  return panelAPI.request(`/panel/v1/admin/tiers/${encodeURIComponent(tierIdentifier)}`, {
-    method: "PATCH",
-    body: tierData
-  });
+  return requestMutation(`/panel/v1/admin/tiers/${encodeURIComponent(tierIdentifier)}`, "PATCH", tierData);
 }
 
 export function deleteTier(tierIdentifier) {
@@ -433,19 +426,14 @@ export function deleteTier(tierIdentifier) {
 }
 
 export function fetchInviteCodes(options = {}) {
-	const { cursor = "", limit = 50, ...requestOptions } = options;
-	return panelAPI.request(buildCollectionPath("/panel/v1/admin/invite-codes", { cursor, limit }), requestOptions);
+  return requestCollection("/panel/v1/admin/invite-codes", options);
 }
 
 export function fetchInviteCodeRedemptions(inviteIdentifier, options = {}) {
-	const { cursor = "", limit = 50, ...requestOptions } = options;
-	return panelAPI.request(
-		buildCollectionPath(
-			`/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}/redemptions`,
-			{ cursor, limit }
-		),
-		requestOptions
-	);
+  return requestCollection(
+    `/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}/redemptions`,
+    options
+  );
 }
 
 export function createInviteCode(inviteCodeData) {
@@ -453,10 +441,7 @@ export function createInviteCode(inviteCodeData) {
 }
 
 export function updateInviteCode(inviteIdentifier, inviteCodeData) {
-  return panelAPI.request(`/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}`, {
-    method: "PATCH",
-    body: inviteCodeData
-  });
+  return requestMutation(`/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}`, "PATCH", inviteCodeData);
 }
 
 export function deleteInviteCode(inviteIdentifier) {
@@ -472,7 +457,7 @@ export function fetchOperationalMetrics(options = {}) {
 }
 
 export function updateSettings(settingsData) {
-  return panelAPI.request("/panel/v1/admin/settings", { method: "PATCH", body: settingsData });
+  return requestMutation("/panel/v1/admin/settings", "PATCH", settingsData);
 }
 
 export function fetchModels() {

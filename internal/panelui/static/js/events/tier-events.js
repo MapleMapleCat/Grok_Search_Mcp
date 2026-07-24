@@ -8,7 +8,7 @@ import {
   replaceItemByIdentifier
 } from "../state.js";
 import { createFormDataObject } from "../utils.js";
-import { getErrorMessage } from "./event-helpers.js";
+import { handleModalMutationError, openConfirmationModal } from "./event-helpers.js";
 
 export function createTierEvents({
   state,
@@ -63,23 +63,18 @@ export function createTierEvents({
       renderApplication();
       showToast(isEdit ? "方案已更新" : "方案已创建", "新的配额方案已可以分配给用户。", "success");
     } catch (error) {
-      if (!handleSessionError(error)) {
-        modalController.setModalBusy(false, getErrorMessage(error));
-      }
+      handleModalMutationError(error, modalController, handleSessionError);
     }
   }
 
   function openDeleteConfirmation(tierIdentifier) {
     const tier = findItemByIdentifier(state.data.tiers, tierIdentifier);
-    modalController.openModal({
-      type: "confirm",
+    openConfirmationModal(modalController, {
       confirmAction: "deleteTier",
       identifier: tierIdentifier,
       title: "删除配额方案",
       message: `将永久删除“${tier?.name || "该方案"}”。仍有用户使用的方案无法删除。`,
-      confirmLabel: "删除方案",
-      busy: false,
-      error: ""
+      confirmLabel: "删除方案"
     });
   }
 

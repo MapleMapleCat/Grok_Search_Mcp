@@ -7,6 +7,17 @@ import {
   setPaginationPageSize
 } from "../state.js";
 
+const pageByCollection = {
+  keys: "keys",
+  users: "users",
+  tiers: "tiers",
+  invites: "invites",
+  usageRecords: "usage"
+};
+const collectionByPage = Object.fromEntries(
+  Object.entries(pageByCollection).map(([collectionName, page]) => [page, collectionName])
+);
+
 export function createNavigationEvents({
   state,
   modalController,
@@ -59,13 +70,6 @@ export function createNavigationEvents({
   }
 
   async function changeListPage(collectionName, direction) {
-    const pageByCollection = {
-      keys: "keys",
-      users: "users",
-      tiers: "tiers",
-      invites: "invites",
-      usageRecords: "usage"
-    };
     if (pageByCollection[collectionName] !== state.currentPage) {
       return;
     }
@@ -107,14 +111,7 @@ export function createNavigationEvents({
   }
 
   function resetCurrentPagePagination() {
-    const paginationByPage = {
-      keys: "keys",
-      usage: "usageRecords",
-      users: "users",
-      tiers: "tiers",
-      invites: "invites"
-    };
-    const collectionName = paginationByPage[state.currentPage];
+    const collectionName = collectionByPage[state.currentPage];
     if (collectionName) {
       resetPagination(collectionName);
     }

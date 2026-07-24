@@ -14,7 +14,7 @@ import {
   replaceItemByIdentifier
 } from "../state.js";
 import { createFormDataObject } from "../utils.js";
-import { getErrorMessage } from "./event-helpers.js";
+import { getErrorMessage, handleModalMutationError, openConfirmationModal } from "./event-helpers.js";
 
 export function createKeyEvents({
   state,
@@ -53,9 +53,7 @@ export function createKeyEvents({
       };
       renderApplication();
     } catch (error) {
-      if (!handleSessionError(error)) {
-        modalController.setModalBusy(false, getErrorMessage(error));
-      }
+      handleModalMutationError(error, modalController, handleSessionError);
     }
   }
 
@@ -73,9 +71,7 @@ export function createKeyEvents({
       renderApplication();
       showToast("密钥已更新", "名称与访问状态已保存。", "success");
     } catch (error) {
-      if (!handleSessionError(error)) {
-        modalController.setModalBusy(false, getErrorMessage(error));
-      }
+      handleModalMutationError(error, modalController, handleSessionError);
     }
   }
 
@@ -133,15 +129,12 @@ export function createKeyEvents({
 
   function openDeleteConfirmation(keyIdentifier) {
     const apiKey = findItemByIdentifier(state.data.keys, keyIdentifier);
-    modalController.openModal({
-      type: "confirm",
+    openConfirmationModal(modalController, {
       confirmAction: "deleteKey",
       identifier: keyIdentifier,
       title: "删除 API 密钥",
       message: `删除“${apiKey?.name || "该密钥"}”后，使用它的 MCP 客户端将立即无法访问服务。此操作无法撤销。`,
-      confirmLabel: "删除密钥",
-      busy: false,
-      error: ""
+      confirmLabel: "删除密钥"
     });
   }
 
