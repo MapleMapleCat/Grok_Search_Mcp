@@ -15,7 +15,7 @@ import (
 )
 
 func TestUserMiddlewareRejectsNegativeRPM(t *testing.T) {
-	l := NewUserLimiter()
+	l := NewUserLimiterWithConfig(UserLimiterConfig{})
 	defer l.Close()
 
 	var called bool
@@ -177,7 +177,7 @@ func TestUserMiddlewareRPMZeroBypassesRegistry(t *testing.T) {
 }
 
 func TestUserMiddlewareSkipsNonToolCallTraffic(t *testing.T) {
-	l := NewUserLimiter()
+	l := NewUserLimiterWithConfig(UserLimiterConfig{})
 	defer l.Close()
 
 	var called int
@@ -204,7 +204,7 @@ func TestUserMiddlewareSkipsNonToolCallTraffic(t *testing.T) {
 }
 
 func TestUserLimiterRebuildsWhenRPMChanges(t *testing.T) {
-	l := NewUserLimiter()
+	l := NewUserLimiterWithConfig(UserLimiterConfig{})
 	defer l.Close()
 
 	custom := 120

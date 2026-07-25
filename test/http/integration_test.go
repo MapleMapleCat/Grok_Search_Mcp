@@ -208,16 +208,16 @@ func TestHTTPPanelAndMCPFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "grok-mcp", Version: version.Version}, nil)
-	mcpserver.RegisterToolsWithLogger(server, client, logx.New("mcp-test", false))
+	mcpserver.RegisterToolsWithLogger(server, client, logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)))
 
-	userLimiter := ratelimit.NewUserLimiter()
+	userLimiter := ratelimit.NewUserLimiterWithConfig(ratelimit.UserLimiterConfig{})
 	defer userLimiter.Close()
 	searchConcurrencyLimiter := ratelimit.NewSearchConcurrencyLimiter(16, 4)
 	defer searchConcurrencyLimiter.Close()
-	mcpIPLimiter := ratelimit.NewIPLimiter(10000)
+	mcpIPLimiter := ratelimit.NewIPLimiterWithConfig(ratelimit.IPLimiterConfig{RequestsPerMinute: 10000})
 	defer mcpIPLimiter.Close()
 
-	authResolver := auth.NewCachedAPIKeyResolver(st, 30*time.Second)
+	authResolver := auth.NewCachedAPIKeyResolverWithConfig(st, auth.APIKeyCacheConfig{TTL: 30 * time.Second})
 	defer authResolver.Close()
 	panelHandler := &panel.Handler{
 		Store:                 st,

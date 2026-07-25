@@ -16,10 +16,11 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/grok"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
 
 type overviewHealthSettingsFailureStore struct {
-	store.TestStore
+	testsupport.Store
 }
 
 type countingOverviewHealthModelLister struct {

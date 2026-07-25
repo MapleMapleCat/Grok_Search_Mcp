@@ -14,12 +14,13 @@ import (
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/auth"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
 
 // fakeStore 的 recordedUsage 字段会被 AsyncUsageWriter 后台 goroutine 写入、
 // 测试主 goroutine 读取，因此用 mutex 保护以避免数据竞争。
 type fakeStore struct {
-	store.TestStore
+	testsupport.Store
 	mu            sync.Mutex
 	recordedUsage []store.UsageRecord
 }
@@ -315,7 +316,7 @@ func (f *flushRecorder) Flush() {
 
 // releaseCountingStore 记录 ReleaseSuccessCall 调用次数，用于断言 panic 时的回滚行为。
 type releaseCountingStore struct {
-	store.TestStore
+	testsupport.Store
 	releasedReservations []store.SuccessQuotaReservation
 }
 
@@ -325,13 +326,13 @@ func (r *releaseCountingStore) ReleaseSuccessCall(_ context.Context, reservation
 }
 
 type releaseContextRecordingStore struct {
-	store.TestStore
+	testsupport.Store
 	releasedReservations []store.SuccessQuotaReservation
 	releaseContextErr    error
 }
 
 type panickingQuotaReleaser struct {
-	store.TestStore
+	testsupport.Store
 	releaseAttempts int
 }
 
@@ -347,13 +348,13 @@ func (r *releaseContextRecordingStore) ReleaseSuccessCall(ctx context.Context, r
 }
 
 type failureRecordingStore struct {
-	store.TestStore
+	testsupport.Store
 	releasedReservations []store.SuccessQuotaReservation
 	recordedUsage        []store.UsageRecord
 }
 
 type debugCaptureRecordingStore struct {
-	store.TestStore
+	testsupport.Store
 	mu                  sync.Mutex
 	recordedUsage       []store.UsageRecord
 	requestBody         []byte
@@ -364,10 +365,6 @@ type debugCaptureRecordingStore struct {
 
 func (s *debugCaptureRecordingStore) Enabled() bool {
 	return true
-}
-
-func (s *debugCaptureRecordingStore) TouchKeyUsage(context.Context, string) error {
-	return nil
 }
 
 func (s *debugCaptureRecordingStore) RecordUsage(_ context.Context, record store.UsageRecord) error {

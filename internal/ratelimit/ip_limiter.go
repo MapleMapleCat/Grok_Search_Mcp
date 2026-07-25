@@ -85,11 +85,6 @@ type IPLimiter struct {
 	workerDone            chan struct{}
 }
 
-// NewIPLimiter 创建来源 IP 限流器。
-func NewIPLimiter(requestsPerMinute int) *IPLimiter {
-	return NewIPLimiterWithConfig(IPLimiterConfig{RequestsPerMinute: requestsPerMinute})
-}
-
 // NewIPLimiterWithConfig creates a sharded limiter with incremental cleanup.
 func NewIPLimiterWithConfig(config IPLimiterConfig) *IPLimiter {
 	if config.RequestsPerMinute <= 0 {
@@ -221,12 +216,6 @@ func (limiter *IPLimiter) cleanupNextShards(now time.Time) {
 	for cleanedShardCount := 0; cleanedShardCount < limiter.cleanupShardBatchSize; cleanedShardCount++ {
 		limiter.cleanupShard(limiter.cleanupCursor, now)
 		limiter.cleanupCursor = (limiter.cleanupCursor + 1) % len(limiter.shards)
-	}
-}
-
-func (limiter *IPLimiter) cleanupExpiredEntries(now time.Time) {
-	for shardIndex := range limiter.shards {
-		limiter.cleanupShard(shardIndex, now)
 	}
 }
 

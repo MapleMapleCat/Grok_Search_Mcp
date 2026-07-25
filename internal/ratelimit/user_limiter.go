@@ -73,11 +73,6 @@ type UserLimiter struct {
 	cleanupInterval     time.Duration
 }
 
-// NewUserLimiter 创建用户级限流器；实际限流速率来自请求上的 AuthenticatedUser.RPM。
-func NewUserLimiter() *UserLimiter {
-	return NewUserLimiterWithConfig(UserLimiterConfig{})
-}
-
 // NewUserLimiterWithConfig creates a capacity-bounded per-user limiter.
 func NewUserLimiterWithConfig(config UserLimiterConfig) *UserLimiter {
 	if config.MaximumEntries <= 0 {

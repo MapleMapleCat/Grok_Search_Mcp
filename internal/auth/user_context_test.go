@@ -3,10 +3,32 @@ package auth
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
+
+func requireSQLiteTierByName(t *testing.T, sqliteStore *store.SQLiteStore, tierName string) *store.Tier {
+	t.Helper()
+	var cursor *store.TierCursor
+	for {
+		page, err := sqliteStore.ListTiersPage(context.Background(), cursor, 100)
+		if err != nil {
+			t.Fatalf("ListTiersPage: %v", err)
+		}
+		for _, tier := range page.Tiers {
+			if strings.EqualFold(tier.Name, tierName) {
+				return tier
+			}
+		}
+		if !page.HasMore || page.NextCursor == nil {
+			t.Fatalf("tier %q was not found", tierName)
+		}
+		cursor = page.NextCursor
+	}
+}
 
 // openAuthStore 打开一个临时 SQLite 库；迁移已预置 tier0（rpm=10, success=800）。
 func openAuthStore(t *testing.T) *store.SQLiteStore {
@@ -24,10 +46,7 @@ func TestLoadUserWithTierLimitsResolvesFromTier(t *testing.T) {
 	st := openAuthStore(t)
 	ctx := context.Background()
 
-	tier0, err := st.GetTierByName(ctx, "tier0")
-	if err != nil || tier0 == nil {
-		t.Fatalf("tier0 should be seeded by migration: %v", err)
-	}
+	tier0 := requireSQLiteTierByName(t, st, "tier0")
 
 	u, err := st.CreateUser(ctx, "u", "h", store.RoleUser)
 	if err != nil {
@@ -44,7 +63,7 @@ func TestLoadUserWithTierLimitsResolvesFromTier(t *testing.T) {
 }
 
 type tierResolvingStore struct {
-	store.TestStore
+	testsupport.Store
 	user  *store.User
 	tiers map[string]*store.Tier
 }

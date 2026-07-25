@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
 
 type cachedResolverStore struct {
-	store.TestStore
+	testsupport.Store
 	key          *store.APIKey
 	keys         map[string]*store.APIKey
 	user         *store.User
@@ -22,7 +23,7 @@ type cachedResolverStore struct {
 }
 
 type blockingCachedResolverStore struct {
-	store.TestStore
+	testsupport.Store
 	key         *store.APIKey
 	user        *store.User
 	tier        *store.Tier
@@ -275,7 +276,7 @@ func TestCachedAPIKeyResolverCachesCompleteAuthenticationSnapshot(t *testing.T) 
 		user: &store.User{ID: "user-id", Enabled: true, TierID: tier.ID},
 		tier: tier,
 	}
-	resolver := NewCachedAPIKeyResolver(fakeStore, time.Hour)
+	resolver := NewCachedAPIKeyResolverWithConfig(fakeStore, APIKeyCacheConfig{TTL: time.Hour})
 	t.Cleanup(resolver.Close)
 
 	_, firstUser, err := resolver.Resolve(context.Background(), "hashed-key")
@@ -313,7 +314,7 @@ func TestCachedAPIKeyResolverRefreshesAuthenticationSnapshotAfterInvalidation(t 
 		user: &store.User{ID: "user-id", Enabled: true, TierID: tier.ID},
 		tier: tier,
 	}
-	resolver := NewCachedAPIKeyResolver(fakeStore, time.Hour)
+	resolver := NewCachedAPIKeyResolverWithConfig(fakeStore, APIKeyCacheConfig{TTL: time.Hour})
 	t.Cleanup(resolver.Close)
 
 	if _, _, err := resolver.Resolve(context.Background(), "hashed-key"); err != nil {

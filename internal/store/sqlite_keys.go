@@ -76,8 +76,6 @@ func scanAPIKey(row interface {
 
 const keyColumns = `id, user_id, name, key_hash, key_prefix, key_ciphertext, key_nonce, key_encryption_version, enabled, created_at, updated_at, last_used_at, total_calls`
 
-const listKeysByUserQuery = `SELECT ` + keyColumns + ` FROM apikeys WHERE user_id = ? ORDER BY created_at DESC`
-
 // CreateKey inserts a new key while enforcing the per-user row limit in the
 // same serialized SQLite write transaction. Disabled keys continue to count.
 func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string, maximumKeys int) (*APIKey, string, error) {
@@ -183,14 +181,7 @@ func (s *SQLiteStore) GetKeyByHash(ctx context.Context, hash string) (*APIKey, e
 
 func (s *SQLiteStore) ListKeysByUserPage(ctx context.Context, userID string, cursor *TimeIDCursor, limit int) (*APIKeyPage, error) {
 	pageLimit := normalizePanelPageLimit(limit)
-	query := `SELECT ` + keyColumns + ` FROM apikeys WHERE user_id = ?`
-	queryArgs := []any{userID}
-	if cursor != nil {
-		query += ` AND ` + timeIDCursorPredicate(timeIDDescending)
-		queryArgs = appendTimeIDCursorArguments(queryArgs, cursor)
-	}
-	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
-	queryArgs = append(queryArgs, keysetFetchLimit(pageLimit))
+	query, queryArgs := buildListKeysByUserPageQuery(userID, cursor, pageLimit)
 
 	rows, err := s.readDB.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
@@ -225,6 +216,18 @@ func (s *SQLiteStore) ListKeysByUserPage(ctx context.Context, userID string, cur
 		return nil, err
 	}
 	return page, nil
+}
+
+func buildListKeysByUserPageQuery(userID string, cursor *TimeIDCursor, pageLimit int) (string, []any) {
+	query := `SELECT ` + keyColumns + ` FROM apikeys WHERE user_id = ?`
+	queryArgs := []any{userID}
+	if cursor != nil {
+		query += ` AND ` + timeIDCursorPredicate(timeIDDescending)
+		queryArgs = appendTimeIDCursorArguments(queryArgs, cursor)
+	}
+	query += ` ORDER BY created_at DESC, id DESC LIMIT ?`
+	queryArgs = append(queryArgs, keysetFetchLimit(pageLimit))
+	return query, queryArgs
 }
 
 func (s *SQLiteStore) GetKeyByID(ctx context.Context, id string) (*APIKey, error) {

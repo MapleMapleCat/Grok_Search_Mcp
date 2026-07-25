@@ -12,25 +12,8 @@ const userColumns = `id, username, password_hash, role, enabled, tier_id, succes
 
 const successQuotaPeriodLayout = "2006-01"
 
-type successQuotaNowContextKey struct{}
-
-// WithSuccessQuotaNow pins the quota clock for tests that need to cross month boundaries.
-func WithSuccessQuotaNow(ctx context.Context, now time.Time) context.Context {
-	return context.WithValue(ctx, successQuotaNowContextKey{}, now.UTC())
-}
-
-func successQuotaNow(ctx context.Context) time.Time {
-	if ctx == nil {
-		return nowUTC()
-	}
-	if now, ok := ctx.Value(successQuotaNowContextKey{}).(time.Time); ok && !now.IsZero() {
-		return now.UTC()
-	}
-	return nowUTC()
-}
-
-func successQuotaPeriod(ctx context.Context) string {
-	return successQuotaNow(ctx).Format(successQuotaPeriodLayout)
+func currentSuccessQuotaPeriod() string {
+	return nowUTC().Format(successQuotaPeriodLayout)
 }
 
 type queryRowContextExecutor interface {
@@ -87,7 +70,7 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 	if err != nil {
 		return nil, err
 	}
-	period := successQuotaPeriod(ctx)
+	period := currentSuccessQuotaPeriod()
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, success_calls, success_period, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, 1, ?, 0, ?, ?, ?)`,
@@ -382,7 +365,7 @@ func (s *SQLiteStore) ReserveSuccessCall(ctx context.Context, userID string, suc
 		s.metrics.observeQuotaReserve(time.Since(operationStartedAt), returnErr)
 	}()
 
-	period := successQuotaPeriod(ctx)
+	period := currentSuccessQuotaPeriod()
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE users
 		 SET success_calls = CASE WHEN success_period = ? THEN success_calls + 1 ELSE 1 END,
@@ -445,7 +428,7 @@ func (s *SQLiteStore) resetUserSuccessPeriodIfNeeded(ctx context.Context, user *
 	if user == nil {
 		return nil
 	}
-	period := successQuotaPeriod(ctx)
+	period := currentSuccessQuotaPeriod()
 	if user.SuccessPeriod == period {
 		return nil
 	}

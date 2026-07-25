@@ -10,7 +10,7 @@ import (
 )
 
 func TestIPLimiterDirectModeLimitsHeaderlessRequestsAndIgnoresSpoofedHeaders(t *testing.T) {
-	limiter := NewIPLimiter(1)
+	limiter := NewIPLimiterWithConfig(IPLimiterConfig{RequestsPerMinute: 1})
 	defer limiter.Close()
 
 	allowedRequests := 0
@@ -236,7 +236,7 @@ func TestIPLimiterRebuildsShardAfterHighWatermarkDrops(t *testing.T) {
 	}
 	shard.highWatermark = len(shard.entries)
 
-	limiter.cleanupExpiredEntries(now)
+	limiter.cleanupNextShards(now)
 	if len(shard.entries) != 0 {
 		t.Fatalf("entry count after cleanup = %d, want 0", len(shard.entries))
 	}

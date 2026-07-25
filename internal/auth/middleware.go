@@ -18,7 +18,7 @@ type KeyLookup interface {
 	GetKeyByHash(ctx context.Context, hash string) (*store.APIKey, error)
 }
 
-// APIKeyStore is the minimal store surface for uncached API key resolution.
+// APIKeyStore is the minimal store surface for API key resolution.
 type APIKeyStore interface {
 	KeyLookup
 	UserTierLoader
@@ -51,27 +51,6 @@ func bearerToken(r *http.Request) (string, bool) {
 // APIKeyResolver 解析 Bearer 令牌对应的 API Key 与所属用户（含 tier 限额）。
 type APIKeyResolver interface {
 	Resolve(ctx context.Context, keyHash string) (key *store.APIKey, user *AuthenticatedUser, err error)
-}
-
-type storeAPIKeyResolver struct {
-	st APIKeyStore
-}
-
-func (s storeAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*store.APIKey, *AuthenticatedUser, error) {
-	key, err := s.st.GetKeyByHash(ctx, keyHash)
-	if err != nil || key == nil {
-		return key, nil, err
-	}
-	user, err := LoadUserWithTierLimits(ctx, s.st, key.UserID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return key, user, nil
-}
-
-// NewStoreAPIKeyResolver 使用 Store 直接解析（无缓存）。
-func NewStoreAPIKeyResolver(st APIKeyStore) APIKeyResolver {
-	return storeAPIKeyResolver{st: st}
 }
 
 // writeAuthLoadError 统一 JWT / MCP 鉴权在加载用户+tier 失败时的 HTTP 语义：

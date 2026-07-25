@@ -13,10 +13,11 @@ import (
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/auth"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
 
 type inviteRedemptionListStore struct {
-	store.TestStore
+	testsupport.Store
 
 	page                    *store.InviteCodeRedemptionPage
 	requestedInviteCodeID   string

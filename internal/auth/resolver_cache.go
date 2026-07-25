@@ -82,11 +82,6 @@ type CachedAPIKeyResolver struct {
 	closeOnce     sync.Once
 }
 
-// NewCachedAPIKeyResolver 创建鉴权解析缓存；ttl<=0 时使用默认 30s。
-func NewCachedAPIKeyResolver(st APIKeyStore, ttl time.Duration) *CachedAPIKeyResolver {
-	return NewCachedAPIKeyResolverWithConfig(st, APIKeyCacheConfig{TTL: ttl})
-}
-
 // NewCachedAPIKeyResolverWithConfig creates a sharded, capacity-bounded cache.
 // Unknown hashes are cached briefly to avoid repeated storage work for the same
 // invalid credential. Call Close when the resolver is no longer needed.

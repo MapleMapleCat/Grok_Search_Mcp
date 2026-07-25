@@ -21,6 +21,7 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/grok"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -114,7 +115,7 @@ func panelTestServerWithAuthProtector(t *testing.T, authProtector *AuthProtector
 }
 
 func TestCurrentRegistrationModeDefaultsToDisabledWithoutSettings(t *testing.T) {
-	handler := &Handler{Store: store.TestStore{}}
+	handler := &Handler{Store: testsupport.Store{}}
 	request := httptest.NewRequest(http.MethodGet, "/panel/v1/auth/registration-settings", nil)
 
 	registrationMode, err := handler.currentRegistrationMode(request)
@@ -154,14 +155,14 @@ type staticModelLister struct {
 }
 
 type inviteRegistrationPrecheckStore struct {
-	store.TestStore
+	testsupport.Store
 	existingUser        *store.User
 	inviteCodeExists    bool
 	usernameLookupCount int
 }
 
 type registrationModeSwitchStore struct {
-	store.TestStore
+	testsupport.Store
 	initialMode        store.RegistrationMode
 	currentMode        store.RegistrationMode
 	inviteCodeExists   bool
@@ -170,16 +171,16 @@ type registrationModeSwitchStore struct {
 }
 
 type registrationInternalFailureStore struct {
-	store.TestStore
+	testsupport.Store
 }
 
 type loginLookupCountingStore struct {
-	store.TestStore
+	testsupport.Store
 	lookupCount atomic.Int64
 }
 
 type panicLoginLookupStore struct {
-	store.TestStore
+	testsupport.Store
 }
 
 func (testStore *loginLookupCountingStore) GetUserByUsername(context.Context, string) (*store.User, error) {

@@ -127,14 +127,3 @@ func updateAPIKeyUsageBatch(ctx context.Context, transaction *sql.Tx, keyUpdates
 	}
 	return nil
 }
-
-// TouchKeyUsage 保留给直接调用方；异步用量生产路径通过 RecordUsage 原子更新计数。
-// 不触碰 updated_at——该字段只随 CreateKey/UpdateKey 的配置变更而更新。
-func (s *SQLiteStore) TouchKeyUsage(ctx context.Context, keyID string) error {
-	now := formatTime(time.Now().UTC())
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE apikeys SET last_used_at = ?, total_calls = total_calls + 1 WHERE id = ?`,
-		now, keyID,
-	)
-	return err
-}

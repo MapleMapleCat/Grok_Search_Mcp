@@ -31,6 +31,26 @@ func openTestDB(t *testing.T) *SQLiteStore {
 	return s
 }
 
+func requireTierByName(t *testing.T, sqliteStore *SQLiteStore, tierName string) *Tier {
+	t.Helper()
+	var cursor *TierCursor
+	for {
+		page, err := sqliteStore.ListTiersPage(context.Background(), cursor, 100)
+		if err != nil {
+			t.Fatalf("ListTiersPage: %v", err)
+		}
+		for _, tier := range page.Tiers {
+			if strings.EqualFold(tier.Name, tierName) {
+				return tier
+			}
+		}
+		if !page.HasMore || page.NextCursor == nil {
+			t.Fatalf("tier %q was not found", tierName)
+		}
+		cursor = page.NextCursor
+	}
+}
+
 func readQueryPlanDetails(t *testing.T, database *sql.DB, query string, arguments ...any) []string {
 	t.Helper()
 
@@ -80,9 +100,15 @@ func TestSQLiteCoreUsageAndOwnershipQueriesUseIndexes(t *testing.T) {
 			expectedIndexes: []string{"idx_usage_log_key_id_timestamp", "idx_apikeys_user_id"},
 		},
 		{
-			name:            "API keys by owner",
-			query:           listKeysByUserQuery,
-			arguments:       []any{"user-id"},
+			name: "API keys by owner",
+			query: func() string {
+				query, _ := buildListKeysByUserPageQuery("user-id", nil, 50)
+				return query
+			}(),
+			arguments: func() []any {
+				_, queryArguments := buildListKeysByUserPageQuery("user-id", nil, 50)
+				return queryArguments
+			}(),
 			expectedIndexes: []string{"idx_apikeys_user_id"},
 		},
 		{
@@ -361,7 +387,9 @@ func BenchmarkSQLiteMixedAuthenticationReadsAndWrites(b *testing.B) {
 				for parallelBenchmark.Next() {
 					operationNumber := atomic.AddUint64(&operationCounter, 1)
 					if operationNumber%10 == 0 {
-						if err := sqliteStore.TouchKeyUsage(ctx, apiKey.ID); err != nil {
+						if err := sqliteStore.RecordUsage(ctx, UsageRecord{
+							KeyID: apiKey.ID, ToolName: "benchmark", Timestamp: time.Now().UTC(),
+						}); err != nil {
 							firstErrorOnce.Do(func() { firstError = err })
 							return
 						}
@@ -991,10 +1019,6 @@ func TestUsageStats(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.TouchKeyUsage(ctx, k.ID); err != nil {
-		t.Fatal(err)
-	}
-
 	stats, err := s.GetUsageStats(ctx, k.ID, now.Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -1003,10 +1027,6 @@ func TestUsageStats(t *testing.T) {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
 
-	g, err := s.GetGlobalStats(ctx, now.Add(-time.Hour))
-	if err != nil || g.TotalCalls != 3 {
-		t.Fatalf("global stats: %+v err=%v", g, err)
-	}
 }
 
 func TestUsageDebugBodiesPersistInSeparateDatabaseWithBoundedBlobs(t *testing.T) {
@@ -1226,7 +1246,7 @@ func TestUsageStatsSinceFilterAndUserScope(t *testing.T) {
 		t.Fatalf("unexpected key stats by tool: %+v", stats.ByTool)
 	}
 
-	userStats, err := s.GetUserUsageStats(ctx, firstUserID, now.Add(-time.Minute))
+	userStats, err := s.GetUserUsageStatsPage(ctx, firstUserID, now.Add(-time.Minute), nil, usageRecordPageSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1258,7 +1278,7 @@ func TestUsageStatsAggregatesTrafficAndRPMBeyondRecordLimit(t *testing.T) {
 		}
 	}
 
-	stats, err := s.GetUserUsageStats(ctx, userID, recordTimestamp.Add(-time.Hour))
+	stats, err := s.GetUserUsageStatsPage(ctx, userID, recordTimestamp.Add(-time.Hour), nil, usageRecordPageSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1353,10 +1373,7 @@ func TestUpdateUserTokenVersionSemantics(t *testing.T) {
 	}
 	initialTokenVersion := user.TokenVersion
 
-	tier, err := s.GetTierByName(ctx, "tier1")
-	if err != nil || tier == nil {
-		t.Fatalf("tier1 should be seeded by migration: %v", err)
-	}
+	tier := requireTierByName(t, s, "tier1")
 	updated, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &tier.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -1430,10 +1447,7 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inUseTier, err := s.GetTierByName(ctx, "tier1")
-	if err != nil || inUseTier == nil {
-		t.Fatalf("tier1 should be seeded by migration: %v", err)
-	}
+	inUseTier := requireTierByName(t, s, "tier1")
 	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &inUseTier.ID}); err != nil {
 		t.Fatal(err)
 	}

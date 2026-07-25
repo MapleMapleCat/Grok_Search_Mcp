@@ -119,21 +119,13 @@ func TestUsageMaintenanceCompactsRetainsAndPreservesStatistics(t *testing.T) {
 		t.Fatalf("traffic bucket calls = %d, want 3", trafficCalls)
 	}
 
-	userStats, err := sqliteStore.GetUserUsageStats(ctx, userID, now.Add(-400*time.Hour))
+	userStats, err := sqliteStore.GetUserUsageStatsPage(ctx, userID, now.Add(-400*time.Hour), nil, usageRecordPageSize)
 	if err != nil {
 		t.Fatalf("GetUserUsageStats: %v", err)
 	}
 	if userStats.TotalCalls != 3 || userStats.SuccessCalls != 2 {
 		t.Fatalf("user usage totals = (%d, %d), want (3, 2)", userStats.TotalCalls, userStats.SuccessCalls)
 	}
-	globalStats, err := sqliteStore.GetGlobalStats(ctx, now.Add(-400*time.Hour))
-	if err != nil {
-		t.Fatalf("GetGlobalStats: %v", err)
-	}
-	if globalStats.TotalCalls != 3 || globalStats.SuccessCalls != 2 {
-		t.Fatalf("global usage totals = (%d, %d), want (3, 2)", globalStats.TotalCalls, globalStats.SuccessCalls)
-	}
-
 	secondResult, err := sqliteStore.RunUsageMaintenance(ctx, policy, now)
 	if err != nil {
 		t.Fatalf("second RunUsageMaintenance: %v", err)

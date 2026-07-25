@@ -153,10 +153,7 @@ func TestUpdateUserChangesTierID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tier, err := s.GetTierByName(ctx, "tier1")
-	if err != nil || tier == nil {
-		t.Fatalf("tier1 should be seeded by migration: %v", err)
-	}
+	tier := requireTierByName(t, s, "tier1")
 	updated, err := s.UpdateUser(ctx, u.ID, UserUpdates{TierID: &tier.ID})
 	if err != nil {
 		t.Fatal(err)
@@ -206,10 +203,7 @@ func TestUpdateUserRejectsMissingOrEmptyTierID(t *testing.T) {
 func TestCreateAndCurrentModeRegistrationFailClosedWithoutTier0(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
-	tier0, err := s.GetTierByName(ctx, "tier0")
-	if err != nil || tier0 == nil {
-		t.Fatalf("tier0 should be seeded by migration: %v", err)
-	}
+	tier0 := requireTierByName(t, s, "tier0")
 	if err := s.DeleteTier(ctx, tier0.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -229,65 +223,71 @@ func TestCreateAndCurrentModeRegistrationFailClosedWithoutTier0(t *testing.T) {
 
 func TestSuccessQuotaResetsEachUTCMonth(t *testing.T) {
 	s := openTestDB(t)
-	januaryContext := WithSuccessQuotaNow(context.Background(), time.Date(2026, time.January, 15, 12, 0, 0, 0, time.UTC))
-	februaryContext := WithSuccessQuotaNow(context.Background(), time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC))
+	requestContext := context.Background()
+	currentPeriod := currentSuccessQuotaPeriod()
+	previousPeriod := nowUTC().AddDate(0, -1, 0).Format(successQuotaPeriodLayout)
 
-	user, err := s.CreateUser(januaryContext, "monthly-quota", "hash", RoleUser)
+	user, err := s.CreateUser(requestContext, "monthly-quota", "hash", RoleUser)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ReserveSuccessCall(januaryContext, user.ID, 1); err != nil {
+	if _, err := s.db.ExecContext(requestContext,
+		`UPDATE users SET success_calls = 1, success_period = ? WHERE id = ?`,
+		previousPeriod,
+		user.ID,
+	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ReserveSuccessCall(januaryContext, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
-		t.Fatalf("expected January quota exhaustion, got %v", err)
-	}
-
-	if _, err := s.ReserveSuccessCall(februaryContext, user.ID, 1); err != nil {
+	if _, err := s.ReserveSuccessCall(requestContext, user.ID, 1); err != nil {
 		t.Fatalf("new month should reset quota before reserve: %v", err)
 	}
-	updatedUser, err := s.GetUserByID(februaryContext, user.ID)
+	if _, err := s.ReserveSuccessCall(requestContext, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+		t.Fatalf("expected current-month quota exhaustion, got %v", err)
+	}
+	updatedUser, err := s.GetUserByID(requestContext, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != "2026-02" {
-		t.Fatalf("monthly reset should leave one February call, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
+	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != currentPeriod {
+		t.Fatalf("monthly reset should leave one current-period call, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
 	}
 }
 
 func TestReleaseSuccessCallPreservesLaterMonthReservation(t *testing.T) {
 	sqliteStore := openTestDB(t)
-	januaryContext := WithSuccessQuotaNow(context.Background(), time.Date(2026, time.January, 31, 23, 59, 0, 0, time.UTC))
-	februaryContext := WithSuccessQuotaNow(context.Background(), time.Date(2026, time.February, 1, 0, 1, 0, 0, time.UTC))
+	requestContext := context.Background()
+	currentPeriod := currentSuccessQuotaPeriod()
+	previousPeriod := nowUTC().AddDate(0, -1, 0).Format(successQuotaPeriodLayout)
 
-	user, err := sqliteStore.CreateUser(januaryContext, "cross-month-release", "hash", RoleUser)
+	user, err := sqliteStore.CreateUser(requestContext, "cross-month-release", "hash", RoleUser)
 	if err != nil {
 		t.Fatal(err)
 	}
-	januaryReservation, err := sqliteStore.ReserveSuccessCall(januaryContext, user.ID, 2)
+	previousReservation := SuccessQuotaReservation{UserID: user.ID, Period: previousPeriod}
+	if _, err := sqliteStore.db.ExecContext(requestContext,
+		`UPDATE users SET success_calls = 1, success_period = ? WHERE id = ?`,
+		previousPeriod,
+		user.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	currentReservation, err := sqliteStore.ReserveSuccessCall(requestContext, user.ID, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if januaryReservation.UserID != user.ID || januaryReservation.Period != "2026-01" {
-		t.Fatalf("January reservation = %+v, want user=%q period=2026-01", januaryReservation, user.ID)
-	}
-	februaryReservation, err := sqliteStore.ReserveSuccessCall(februaryContext, user.ID, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if februaryReservation.UserID != user.ID || februaryReservation.Period != "2026-02" {
-		t.Fatalf("February reservation = %+v, want user=%q period=2026-02", februaryReservation, user.ID)
+	if currentReservation.UserID != user.ID || currentReservation.Period != currentPeriod {
+		t.Fatalf("current reservation = %+v, want user=%q period=%s", currentReservation, user.ID, currentPeriod)
 	}
 
-	if err := sqliteStore.ReleaseSuccessCall(februaryContext, januaryReservation); err != nil {
+	if err := sqliteStore.ReleaseSuccessCall(requestContext, previousReservation); err != nil {
 		t.Fatal(err)
 	}
-	updatedUser, err := sqliteStore.GetUserByID(februaryContext, user.ID)
+	updatedUser, err := sqliteStore.GetUserByID(requestContext, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != "2026-02" {
-		t.Fatalf("releasing January must preserve February reservation, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
+	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != currentPeriod {
+		t.Fatalf("releasing the previous period must preserve the current reservation, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
 	}
 }
 
@@ -350,7 +350,7 @@ func TestDeleteUserRemovesUserKeysAndUsage(t *testing.T) {
 	if len(keys) != 0 {
 		t.Fatalf("expected user keys to be deleted, got %d", len(keys))
 	}
-	stats, err := s.GetGlobalStats(ctx, time.Time{})
+	stats, err := s.GetUsageStats(ctx, key.ID, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -83,13 +83,6 @@ func (limiter *SearchConcurrencyLimiter) UpdateLimits(globalLimit, perUserLimit 
 	return nil
 }
 
-// Limits returns the capacities currently applied to new search requests.
-func (limiter *SearchConcurrencyLimiter) Limits() (globalLimit, perUserLimit int) {
-	limiter.mu.Lock()
-	defer limiter.mu.Unlock()
-	return limiter.globalLimit, limiter.perUserLimit
-}
-
 // Middleware limits only tool calls selected by isSearchTool. It must run after
 // tool-name extraction and authentication, and before quota and usage tracking.
 func (limiter *SearchConcurrencyLimiter) Middleware(isSearchTool func(string) bool) func(http.Handler) http.Handler {

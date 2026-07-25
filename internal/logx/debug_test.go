@@ -7,27 +7,12 @@ import (
 	"testing"
 )
 
-func TestTruncate(t *testing.T) {
-	if got := Truncate("hello", 10); got != "hello" {
-		t.Fatalf("got %q, want %q", got, "hello")
-	}
-	if got := Truncate("hello", 5); got != "hello" {
-		t.Fatalf("got %q, want %q", got, "hello")
-	}
-	if got := Truncate("hello world", 5); got != "hello..." {
-		t.Fatalf("got %q, want %q", got, "hello...")
-	}
-	if got := Truncate("", 5); got != "" {
-		t.Fatalf("got %q, want empty", got)
-	}
-}
-
 func TestDebugfDisabled(t *testing.T) {
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(nil)
 
-	l := New("test", false)
+	l := NewWithDebugState("test", NewDebugState(false))
 	l.Debugf("should not appear %d", 1)
 	if buf.Len() != 0 {
 		t.Fatalf("expected no output when disabled, got %q", buf.String())
@@ -39,7 +24,7 @@ func TestDebugfEnabled(t *testing.T) {
 	log.SetOutput(&buf)
 	defer log.SetOutput(nil)
 
-	l := New("test", true)
+	l := NewWithDebugState("test", NewDebugState(true))
 	l.Debugf("hello %s", "world")
 	got := buf.String()
 	if !strings.Contains(got, "[test]") {

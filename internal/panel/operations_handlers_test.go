@@ -75,7 +75,7 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 	})
 	authProtector.allowAuthRequest(authEndpointLogin, "198.51.100.50")
 	authProtector.allowAuthRequest(authEndpointLogin, "198.51.100.51")
-	userLimiter := ratelimit.NewUserLimiter()
+	userLimiter := ratelimit.NewUserLimiterWithConfig(ratelimit.UserLimiterConfig{})
 	defer userLimiter.Close()
 	loginAttempt, _ := authProtector.beginLoginAttempt("metrics-user", "198.51.100.50")
 	if loginAttempt == nil {

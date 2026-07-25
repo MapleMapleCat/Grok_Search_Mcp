@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
 
 type userListTierStore struct {
-	store.TestStore
+	testsupport.Store
 
 	userPage            *store.UserPage
 	tierByID            map[string]*store.Tier

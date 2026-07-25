@@ -15,6 +15,7 @@ import (
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/version"
 )
 
@@ -27,7 +28,7 @@ type recordingSettingsApplier struct {
 }
 
 type failingServerSettingsStore struct {
-	store.TestStore
+	testsupport.Store
 	persistenceError error
 }
 
@@ -461,7 +462,7 @@ func TestAdminUpdateServerSettingsRejectsInvalidSearchConcurrency(t *testing.T) 
 		RegistrationMode:           store.RegistrationModeFree,
 	}
 	handler := &Handler{
-		Store:                 store.TestStore{},
+		Store:                 testsupport.Store{},
 		InitialServerSettings: initialSettings,
 	}
 

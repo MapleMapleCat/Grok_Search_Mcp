@@ -13,10 +13,11 @@ import (
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
 
 type passwordWorkRegistrationStore struct {
-	store.TestStore
+	testsupport.Store
 }
 
 func (passwordWorkRegistrationStore) GetServerSettings(context.Context) (*store.ServerSettings, error) {

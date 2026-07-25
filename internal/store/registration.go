@@ -89,7 +89,7 @@ func registerUserInTransaction(ctx context.Context, transaction *sql.Tx, usernam
 		return "", err
 	}
 	now := formatTime(nowUTC())
-	period := successQuotaPeriod(ctx)
+	period := currentSuccessQuotaPeriod()
 	var tierID string
 	if err := transaction.QueryRowContext(ctx,
 		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, DefaultTierName,

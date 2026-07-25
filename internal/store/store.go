@@ -380,7 +380,6 @@ type Store interface {
 
 	GetTierByID(ctx context.Context, id string) (*Tier, error)
 	GetTiersByIDs(ctx context.Context, ids []string) (map[string]*Tier, error)
-	GetTierByName(ctx context.Context, name string) (*Tier, error)
 	ListTiersPage(ctx context.Context, cursor *TierCursor, limit int) (*TierPage, error)
 	CreateTier(ctx context.Context, name string, level, rpm, successLimit int) (*Tier, error)
 	UpdateTier(ctx context.Context, id string, updates TierUpdates) (*Tier, error)
@@ -397,9 +396,7 @@ type Store interface {
 	DeleteKey(ctx context.Context, id string) error
 	RecordUsage(ctx context.Context, record UsageRecord) error
 	GetUsageStats(ctx context.Context, keyID string, since time.Time) (*UsageStats, error)
-	GetUserUsageStats(ctx context.Context, userID string, since time.Time) (*UsageStats, error)
 	GetUserUsageStatsPage(ctx context.Context, userID string, since time.Time, cursor *UsageRecordCursor, limit int) (*UsageStats, error)
-	GetGlobalStats(ctx context.Context, since time.Time) (*UsageStats, error)
 	ListUsageRecordsPage(ctx context.Context, scope UsageRecordListScope, since time.Time, cursor *UsageRecordCursor, limit int) (*UsageRecordPage, error)
 	GetUsageRecordDetail(ctx context.Context, usageID int64, scope UsageRecordScope) (*UsageRecord, error)
 	ListInviteCodesPage(ctx context.Context, cursor *TimeIDCursor, limit int) (*InviteCodePage, error)

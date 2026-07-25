@@ -55,10 +55,6 @@ func (s *SQLiteStore) GetUsageStats(ctx context.Context, keyID string, since tim
 	return s.queryUsageStats(ctx, usageStatsByKey, []any{keyID}, since, nil, usageRecordPageSize)
 }
 
-func (s *SQLiteStore) GetUserUsageStats(ctx context.Context, userID string, since time.Time) (*UsageStats, error) {
-	return s.GetUserUsageStatsPage(ctx, userID, since, nil, usageRecordPageSize)
-}
-
 func (s *SQLiteStore) GetUserUsageStatsPage(
 	ctx context.Context,
 	userID string,
@@ -67,10 +63,6 @@ func (s *SQLiteStore) GetUserUsageStatsPage(
 	limit int,
 ) (*UsageStats, error) {
 	return s.queryUsageStats(ctx, usageStatsByUser, []any{userID}, since, cursor, limit)
-}
-
-func (s *SQLiteStore) GetGlobalStats(ctx context.Context, since time.Time) (*UsageStats, error) {
-	return s.queryUsageStats(ctx, usageStatsGlobal, nil, since, nil, usageRecordPageSize)
 }
 
 const (

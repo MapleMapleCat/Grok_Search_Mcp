@@ -37,6 +37,26 @@ type integrationEnv struct {
 	login   panel.LoginResponse
 }
 
+func requireIntegrationTierByName(t *testing.T, sqliteStore *store.SQLiteStore, tierName string) *store.Tier {
+	t.Helper()
+	var cursor *store.TierCursor
+	for {
+		page, err := sqliteStore.ListTiersPage(context.Background(), cursor, 100)
+		if err != nil {
+			t.Fatalf("ListTiersPage: %v", err)
+		}
+		for _, tier := range page.Tiers {
+			if strings.EqualFold(tier.Name, tierName) {
+				return tier
+			}
+		}
+		if !page.HasMore || page.NextCursor == nil {
+			t.Fatalf("tier %q was not found", tierName)
+		}
+		cursor = page.NextCursor
+	}
+}
+
 func bootIntegrationEnv(t *testing.T, cpa *httptest.Server) *integrationEnv {
 	return bootIntegrationEnvWithSearchConcurrency(t, cpa, 16, 4)
 }
@@ -79,11 +99,11 @@ func bootIntegrationEnvWithStoreDecorator(
 		t.Fatal(err)
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "grok-mcp", Version: version.Version}, nil)
-	mcpserver.RegisterToolsWithLogger(server, client, logx.New("mcp-test", false))
-	userLimiter := ratelimit.NewUserLimiter()
+	mcpserver.RegisterToolsWithLogger(server, client, logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)))
+	userLimiter := ratelimit.NewUserLimiterWithConfig(ratelimit.UserLimiterConfig{})
 	searchConcurrencyLimiter := ratelimit.NewSearchConcurrencyLimiter(globalLimit, perUserLimit)
-	mcpIPLimiter := ratelimit.NewIPLimiter(10000)
-	authResolver := auth.NewCachedAPIKeyResolver(st, 30*time.Second)
+	mcpIPLimiter := ratelimit.NewIPLimiterWithConfig(ratelimit.IPLimiterConfig{RequestsPerMinute: 10000})
+	authResolver := auth.NewCachedAPIKeyResolverWithConfig(st, auth.APIKeyCacheConfig{TTL: 30 * time.Second})
 	panelHandler := &panel.Handler{
 		Store:                 st,
 		JWTSecret:             cfg.JWTSecret,
@@ -152,9 +172,8 @@ type crossMonthQuotaStore struct {
 	*store.SQLiteStore
 
 	mutex                sync.Mutex
-	reservationTimes     []time.Time
+	reservationPeriods   []string
 	nextReservationIndex int
-	releaseTime          time.Time
 	reservedTokens       []store.SuccessQuotaReservation
 	releasedTokens       []store.SuccessQuotaReservation
 }
@@ -216,18 +235,23 @@ func (quotaStore *crossMonthQuotaStore) ReserveSuccessCall(
 	successLimit int,
 ) (store.SuccessQuotaReservation, error) {
 	quotaStore.mutex.Lock()
-	if quotaStore.nextReservationIndex >= len(quotaStore.reservationTimes) {
+	if quotaStore.nextReservationIndex >= len(quotaStore.reservationPeriods) {
 		quotaStore.mutex.Unlock()
 		return store.SuccessQuotaReservation{}, errors.New("unexpected extra quota reservation")
 	}
-	reservationTime := quotaStore.reservationTimes[quotaStore.nextReservationIndex]
+	desiredPeriod := quotaStore.reservationPeriods[quotaStore.nextReservationIndex]
 	quotaStore.nextReservationIndex++
 	quotaStore.mutex.Unlock()
 
-	reservationContext := store.WithSuccessQuotaNow(requestContext, reservationTime)
-	reservation, err := quotaStore.SQLiteStore.ReserveSuccessCall(reservationContext, userID, successLimit)
+	reservation, err := quotaStore.SQLiteStore.ReserveSuccessCall(requestContext, userID, successLimit)
 	if err != nil {
 		return store.SuccessQuotaReservation{}, err
+	}
+	if reservation.Period != desiredPeriod {
+		if err := quotaStore.SQLiteStore.ReleaseSuccessCall(requestContext, reservation); err != nil {
+			return store.SuccessQuotaReservation{}, err
+		}
+		reservation.Period = desiredPeriod
 	}
 
 	quotaStore.mutex.Lock()
@@ -244,8 +268,7 @@ func (quotaStore *crossMonthQuotaStore) ReleaseSuccessCall(
 	quotaStore.releasedTokens = append(quotaStore.releasedTokens, reservation)
 	quotaStore.mutex.Unlock()
 
-	releaseContext := store.WithSuccessQuotaNow(requestContext, quotaStore.releaseTime)
-	return quotaStore.SQLiteStore.ReleaseSuccessCall(releaseContext, reservation)
+	return quotaStore.SQLiteStore.ReleaseSuccessCall(requestContext, reservation)
 }
 
 func (quotaStore *crossMonthQuotaStore) quotaTokens() (
@@ -294,14 +317,13 @@ func TestHTTPCrossMonthFailurePreservesLaterReservation(t *testing.T) {
 	}))
 	defer cpa.Close()
 
-	januaryTime := time.Date(2026, time.January, 31, 23, 59, 0, 0, time.UTC)
-	februaryTime := time.Date(2026, time.February, 1, 0, 1, 0, 0, time.UTC)
+	currentPeriod := time.Now().UTC().Format("2006-01")
+	previousPeriod := time.Now().UTC().AddDate(0, -1, 0).Format("2006-01")
 	var quotaStore *crossMonthQuotaStore
 	environment := bootIntegrationEnvWithStoreDecorator(t, cpa, 16, 4, func(sqliteStore *store.SQLiteStore) store.Store {
 		quotaStore = &crossMonthQuotaStore{
-			SQLiteStore:      sqliteStore,
-			reservationTimes: []time.Time{januaryTime, februaryTime},
-			releaseTime:      februaryTime,
+			SQLiteStore:        sqliteStore,
+			reservationPeriods: []string{previousPeriod, currentPeriod},
 		}
 		return quotaStore
 	})
@@ -355,20 +377,19 @@ func TestHTTPCrossMonthFailurePreservesLaterReservation(t *testing.T) {
 	}
 
 	reservedTokens, releasedTokens := quotaStore.quotaTokens()
-	if len(reservedTokens) != 2 || reservedTokens[0].Period != "2026-01" || reservedTokens[1].Period != "2026-02" {
-		t.Fatalf("reserved tokens = %+v, want January then February", reservedTokens)
+	if len(reservedTokens) != 2 || reservedTokens[0].Period != previousPeriod || reservedTokens[1].Period != currentPeriod {
+		t.Fatalf("reserved tokens = %+v, want previous period then current period", reservedTokens)
 	}
 	if len(releasedTokens) != 1 || releasedTokens[0] != reservedTokens[0] {
 		t.Fatalf("released tokens = %+v, want original January token %+v", releasedTokens, reservedTokens[0])
 	}
 
-	februaryContext := store.WithSuccessQuotaNow(context.Background(), februaryTime)
-	user, err := environment.st.GetUserByID(februaryContext, environment.login.User.ID)
+	user, err := environment.st.GetUserByID(context.Background(), environment.login.User.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if user.SuccessPeriod != "2026-02" || user.SuccessCalls != 1 {
-		t.Fatalf("February reservation was altered: calls=%d period=%q", user.SuccessCalls, user.SuccessPeriod)
+	if user.SuccessPeriod != currentPeriod || user.SuccessCalls != 1 {
+		t.Fatalf("current-period reservation was altered: calls=%d period=%q", user.SuccessCalls, user.SuccessPeriod)
 	}
 }
 
@@ -751,10 +772,7 @@ func TestHTTPJSONRPCErrorsReleaseSuccessQuota(t *testing.T) {
 
 			env := bootIntegrationEnv(t, cpa)
 			requestContext := context.Background()
-			tier0, err := env.st.GetTierByName(requestContext, "tier0")
-			if err != nil || tier0 == nil {
-				t.Fatalf("tier0 should be seeded by migration: %v", err)
-			}
+			tier0 := requireIntegrationTierByName(t, env.st, "tier0")
 			singleSuccessLimit := 1
 			if _, err := env.st.UpdateTier(requestContext, tier0.ID, store.TierUpdates{SuccessLimit: &singleSuccessLimit}); err != nil {
 				t.Fatal(err)
@@ -805,10 +823,7 @@ func TestHTTPMCPQuotaExhaustionSkipsUpstreamAndUsage(t *testing.T) {
 
 	env := bootIntegrationEnv(t, cpa)
 	ctx := context.Background()
-	tier0, err := env.st.GetTierByName(ctx, "tier0")
-	if err != nil || tier0 == nil {
-		t.Fatalf("tier0 should be seeded by migration: %v", err)
-	}
+	tier0 := requireIntegrationTierByName(t, env.st, "tier0")
 	singleSuccessLimit := 1
 	if _, err := env.st.UpdateTier(ctx, tier0.ID, store.TierUpdates{SuccessLimit: &singleSuccessLimit}); err != nil {
 		t.Fatal(err)

@@ -11,12 +11,29 @@ import (
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/keyhash"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
 
 type memStore struct {
-	store.TestStore
+	testsupport.Store
 	byHash map[string]*store.APIKey
 	users  map[string]*store.User
+}
+
+type directAPIKeyResolver struct {
+	store APIKeyStore
+}
+
+func (resolver directAPIKeyResolver) Resolve(ctx context.Context, keyHash string) (*store.APIKey, *AuthenticatedUser, error) {
+	apiKey, err := resolver.store.GetKeyByHash(ctx, keyHash)
+	if err != nil || apiKey == nil {
+		return apiKey, nil, err
+	}
+	authenticatedUser, err := LoadUserWithTierLimits(ctx, resolver.store, apiKey.UserID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return apiKey, authenticatedUser, nil
 }
 
 func (m *memStore) GetKeyByHash(_ context.Context, hash string) (*store.APIKey, error) {
@@ -50,7 +67,7 @@ func TestAPIKeyMiddleware(t *testing.T) {
 	}
 
 	var gotID string
-	h := APIKeyMiddleware(NewStoreAPIKeyResolver(st))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := APIKeyMiddleware(directAPIKeyResolver{store: st})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		k, ok := APIKeyFromContext(r.Context())
 		if !ok {
 			t.Fatal("missing key in context")
@@ -112,7 +129,7 @@ func TestAPIKeyMiddlewareRejectsInvalidDisabledKeyAndDisabledUser(t *testing.T) 
 				st.users[testCase.user.ID] = testCase.user
 			}
 
-			handler := APIKeyMiddleware(NewStoreAPIKeyResolver(st))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			handler := APIKeyMiddleware(directAPIKeyResolver{store: st})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			}))
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -303,7 +320,7 @@ func TestCachedAPIKeyResolverReturnsClonesAndInvalidates(t *testing.T) {
 		user: &store.User{ID: "u1", Enabled: true, TierID: "tier-paid"},
 		tier: &store.Tier{ID: "tier-paid", RPM: 42, SuccessLimit: 84},
 	}
-	resolver := NewCachedAPIKeyResolver(st, time.Hour)
+	resolver := NewCachedAPIKeyResolverWithConfig(st, APIKeyCacheConfig{TTL: time.Hour})
 	t.Cleanup(resolver.Close)
 
 	firstKey, firstUser, err := resolver.Resolve(context.Background(), keyHash)
@@ -347,7 +364,7 @@ func TestCachedAPIKeyResolverReloadsAfterTTL(t *testing.T) {
 		tier: &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800},
 	}
 	currentTime := time.Date(2026, time.July, 13, 12, 0, 0, 0, time.UTC)
-	resolver := NewCachedAPIKeyResolver(st, time.Second)
+	resolver := NewCachedAPIKeyResolverWithConfig(st, APIKeyCacheConfig{TTL: time.Second})
 	t.Cleanup(resolver.Close)
 	resolver.now = func() time.Time { return currentTime }
 
@@ -370,7 +387,7 @@ func TestCachedAPIKeyResolverReloadsAfterTTL(t *testing.T) {
 }
 
 type cacheResolverStore struct {
-	store.TestStore
+	testsupport.Store
 	key         *store.APIKey
 	user        *store.User
 	tier        *store.Tier
@@ -404,17 +421,6 @@ func (s *cacheResolverStore) GetTierByID(_ context.Context, tierID string) (*sto
 	return &tierCopy, nil
 }
 
-func (s *cacheResolverStore) GetTierByName(_ context.Context, tierName string) (*store.Tier, error) {
-	if s.tier != nil && strings.EqualFold(s.tier.Name, tierName) {
-		tierCopy := *s.tier
-		return &tierCopy, nil
-	}
-	if strings.EqualFold(tierName, store.DefaultTierName) {
-		return &store.Tier{ID: "tier0-id", Name: "tier0", RPM: 10, SuccessLimit: 800}, nil
-	}
-	return nil, nil
-}
-
 func generatedAPIKeyForTest(hexCharacter byte) string {
 	return "grok_" + strings.Repeat(string(hexCharacter), 64)
 }
@@ -431,7 +437,7 @@ func TestAPIKeyMiddlewareMissingTierReturnsInternalServerError(t *testing.T) {
 		},
 	}
 	// memStore GetTierByID defaults via TestStore to ErrTierNotFound
-	h := APIKeyMiddleware(NewStoreAPIKeyResolver(st))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := APIKeyMiddleware(directAPIKeyResolver{store: st})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler must not run when tier is missing")
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

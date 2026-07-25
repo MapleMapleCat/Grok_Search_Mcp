@@ -37,11 +37,6 @@ type Logger struct {
 	prefix     string
 }
 
-// New 创建带 [prefix] 前缀的调试日志器。
-func New(prefix string, enabled bool) *Logger {
-	return NewWithDebugState(prefix, NewDebugState(enabled))
-}
-
 // NewWithDebugState 创建读取共享运行时调试状态的日志器。
 func NewWithDebugState(prefix string, debugState *DebugState) *Logger {
 	if debugState == nil {
@@ -56,12 +51,4 @@ func (l *Logger) Debugf(format string, args ...any) {
 		return
 	}
 	log.Printf("["+l.prefix+"] "+format, args...)
-}
-
-// Truncate 将字符串截断到 max 字节长度，超出部分以 "..." 结尾（用于日志脱敏/限长）。
-func Truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "..."
 }

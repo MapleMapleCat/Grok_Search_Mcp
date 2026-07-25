@@ -11,7 +11,7 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/app"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/panel"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/ratelimit"
-	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -21,7 +21,7 @@ func buildNetworkTrustHandler(
 ) http.Handler {
 	testingInstance.Helper()
 
-	userLimiter := ratelimit.NewUserLimiter()
+	userLimiter := ratelimit.NewUserLimiterWithConfig(ratelimit.UserLimiterConfig{})
 	searchConcurrencyLimiter := ratelimit.NewSearchConcurrencyLimiter(1, 1)
 	mcpIPLimiter := ratelimit.NewIPLimiterWithConfig(ratelimit.IPLimiterConfig{
 		RequestsPerMinute: 1,
@@ -34,7 +34,7 @@ func buildNetworkTrustHandler(
 	})
 
 	panelHandler := &panel.Handler{
-		Store:     store.TestStore{},
+		Store:     testsupport.Store{},
 		JWTSecret: "network-trust-test-jwt-secret-at-least-32-bytes",
 		AuthProtector: panel.NewAuthProtector(panel.AuthProtectorConfig{
 			ClientIPResolver:         clientIPResolver,
@@ -43,7 +43,7 @@ func buildNetworkTrustHandler(
 		}),
 	}
 	return app.BuildHTTPHandler(app.HTTPDependencies{
-		Store:                    store.TestStore{},
+		Store:                    testsupport.Store{},
 		MCPServer:                mcp.NewServer(&mcp.Implementation{Name: "network-trust-test", Version: "test"}, nil),
 		UserLimiter:              userLimiter,
 		SearchConcurrencyLimiter: searchConcurrencyLimiter,

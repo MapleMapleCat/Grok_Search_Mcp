@@ -251,7 +251,7 @@ func TestRunSearchReturnsStructuredOutputFromUpstream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	toolResult, output, err := runSearch(context.Background(), nil, newMCPTestClient(t, server.URL), logx.New("mcp-test", false), grok.SearchRequest{
+	toolResult, output, err := runSearch(context.Background(), nil, newMCPTestClient(t, server.URL), logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)), grok.SearchRequest{
 		Query:          "  structured query  ",
 		ToolType:       grok.ToolTypeWebSearch,
 		AllowedDomains: []string{"example.com"},
@@ -282,7 +282,7 @@ func TestRunSearchReturnsStructuredOutputFromUpstream(t *testing.T) {
 func TestRunSearchMarksAuthoritativeSemanticOutcome(t *testing.T) {
 	t.Run("validation error", func(t *testing.T) {
 		ctx, marker := usage.WithToolOutcomeMarker(context.Background())
-		toolResult, _, err := runSearch(ctx, nil, nil, logx.New("mcp-test", false), grok.SearchRequest{})
+		toolResult, _, err := runSearch(ctx, nil, nil, logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)), grok.SearchRequest{})
 		if err != nil || toolResult == nil || !toolResult.IsError {
 			t.Fatalf("unexpected validation result: toolResult=%+v err=%v", toolResult, err)
 		}
@@ -301,7 +301,7 @@ func TestRunSearchMarksAuthoritativeSemanticOutcome(t *testing.T) {
 		defer server.Close()
 
 		ctx, marker := usage.WithToolOutcomeMarker(context.Background())
-		toolResult, output, err := runSearch(ctx, nil, newMCPTestClient(t, server.URL), logx.New("mcp-test", false), grok.SearchRequest{
+		toolResult, output, err := runSearch(ctx, nil, newMCPTestClient(t, server.URL), logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)), grok.SearchRequest{
 			Query:    "semantic outcome",
 			ToolType: grok.ToolTypeWebSearch,
 		})
@@ -404,7 +404,7 @@ func TestRunSearchMapsValidationAndUpstreamErrorsToMCPToolErrors(t *testing.T) {
 		}))
 		defer server.Close()
 
-		toolResult, output, err := runSearch(context.Background(), nil, newMCPTestClient(t, server.URL), logx.New("mcp-test", false), grok.SearchRequest{
+		toolResult, output, err := runSearch(context.Background(), nil, newMCPTestClient(t, server.URL), logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)), grok.SearchRequest{
 			Query:    "   ",
 			ToolType: grok.ToolTypeWebSearch,
 		})
@@ -426,7 +426,7 @@ func TestRunSearchMapsValidationAndUpstreamErrorsToMCPToolErrors(t *testing.T) {
 		}))
 		defer server.Close()
 
-		toolResult, output, err := runSearch(context.Background(), nil, newMCPTestClient(t, server.URL), logx.New("mcp-test", false), grok.SearchRequest{
+		toolResult, output, err := runSearch(context.Background(), nil, newMCPTestClient(t, server.URL), logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)), grok.SearchRequest{
 			Query:    "upstream failure",
 			ToolType: grok.ToolTypeWebSearch,
 		})
@@ -461,7 +461,7 @@ func TestRunSearchSendsXSearchToolTypeWithoutWebOnlyFields(t *testing.T) {
 	}))
 	defer server.Close()
 
-	toolResult, output, err := runSearch(context.Background(), nil, newMCPTestClient(t, server.URL), logx.New("mcp-test", false), grok.SearchRequest{
+	toolResult, output, err := runSearch(context.Background(), nil, newMCPTestClient(t, server.URL), logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)), grok.SearchRequest{
 		Query:                    "x query",
 		ToolType:                 grok.ToolTypeXSearch,
 		AllowedDomains:           []string{"ignored.example"},
@@ -505,7 +505,7 @@ func TestRunListModelsReturnsOnlyFilteredGrokModels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	toolResult, output, err := runListModels(context.Background(), newMCPTestClient(t, server.URL), logx.New("mcp-test", false))
+	toolResult, output, err := runListModels(context.Background(), newMCPTestClient(t, server.URL), logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)))
 	if err != nil {
 		t.Fatalf("runListModels returned Go error: %v", err)
 	}

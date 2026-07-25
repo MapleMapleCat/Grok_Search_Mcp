@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -323,10 +324,7 @@ func TestJWTTierOnlyUpdateKeepsTokenValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tier1, err := st.GetTierByName(t.Context(), "tier1")
-	if err != nil || tier1 == nil {
-		t.Fatalf("tier1 should be seeded by migration: %v", err)
-	}
+	tier1 := requireSQLiteTierByName(t, st, "tier1")
 	// 仅改 tier_id 到已有内置 tier，不应自增 token_version。
 	if _, err := st.UpdateUser(t.Context(), user.ID, store.UserUpdates{TierID: &tier1.ID}); err != nil {
 		t.Fatal(err)
@@ -337,7 +335,7 @@ func TestJWTTierOnlyUpdateKeepsTokenValid(t *testing.T) {
 }
 
 type jwtTierFailStore struct {
-	store.TestStore
+	testsupport.Store
 	user *store.User
 	err  error
 }
@@ -352,10 +350,6 @@ func (s jwtTierFailStore) GetUserByID(context.Context, string) (*store.User, err
 
 func (s jwtTierFailStore) GetTierByID(context.Context, string) (*store.Tier, error) {
 	return nil, s.err
-}
-
-func (s jwtTierFailStore) GetTierByName(context.Context, string) (*store.Tier, error) {
-	return nil, nil
 }
 
 // TestJWTMissingTierReturnsInternalServerError 与 MCP 对齐：tier 缺失返回 500 且不泄露内部标识。

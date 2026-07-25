@@ -14,6 +14,7 @@ import (
 
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
 )
 
 func TestRegistrationProofVerifiesOnceAndBindsRegistrationData(t *testing.T) {
@@ -184,7 +185,7 @@ func TestRegisterReturnsServiceUnavailableWhenReplayTableIsAtCapacity(t *testing
 		t.Fatal(err)
 	}
 	handler := &Handler{
-		Store: store.TestStore{},
+		Store: testsupport.Store{},
 		InitialServerSettings: config.ServerSettings{
 			RegistrationMode: store.RegistrationModeFree,
 		},

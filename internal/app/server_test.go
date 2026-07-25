@@ -16,14 +16,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/auth"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/ratelimit"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/testsupport"
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/usage"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type failingBootstrapCreationStore struct {
-	store.TestStore
+	testsupport.Store
 }
 
 func (failingBootstrapCreationStore) CreateUser(context.Context, string, string, store.UserRole) (*store.User, error) {
@@ -46,7 +49,7 @@ func TestRuntimeServerSettingsApplierKeepsConfirmedVersionAfterFailure(t *testin
 		t.Fatal(err)
 	}
 	defer sqliteStore.Close()
-	usageWriter := store.NewAsyncUsageWriter(store.TestStore{}, 1)
+	usageWriter := store.NewAsyncUsageWriter(testsupport.Store{}, 1)
 	defer usageWriter.Close()
 
 	upstreamApplier := &recordingRuntimeSettingsApplier{applyError: errors.New("upstream apply failed")}
@@ -96,9 +99,53 @@ func TestRuntimeServerSettingsApplierUpdatesSearchConcurrency(t *testing.T) {
 		t.Fatalf("upstream applied settings = %+v, want %+v", upstreamApplier.appliedSettings, settings)
 	}
 
-	globalLimit, perUserLimit := searchConcurrencyLimiter.Limits()
-	if globalLimit != 2 || perUserLimit != 2 {
-		t.Fatalf("limiter limits = (%d, %d), want (2, 2)", globalLimit, perUserLimit)
+	requestEntered := make(chan struct{}, 2)
+	releaseRequests := make(chan struct{})
+	handler := searchConcurrencyLimiter.Middleware(func(toolName string) bool {
+		return toolName == "grok_web_search"
+	})(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+		requestEntered <- struct{}{}
+		<-releaseRequests
+		responseWriter.WriteHeader(http.StatusOK)
+	}))
+
+	performRequest := func() <-chan int {
+		result := make(chan int, 1)
+		go func() {
+			request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			requestContext := auth.WithUser(request.Context(), &auth.AuthenticatedUser{User: store.User{ID: "settings-user"}})
+			requestContext = usage.WithToolName(requestContext, "grok_web_search")
+			responseRecorder := httptest.NewRecorder()
+			handler.ServeHTTP(responseRecorder, request.WithContext(requestContext))
+			result <- responseRecorder.Code
+		}()
+		return result
+	}
+
+	firstResult := performRequest()
+	secondResult := performRequest()
+	for admittedRequestCount := 0; admittedRequestCount < 2; admittedRequestCount++ {
+		select {
+		case <-requestEntered:
+		case <-time.After(time.Second):
+			close(releaseRequests)
+			t.Fatal("updated per-user limit did not admit two concurrent requests")
+		}
+	}
+
+	thirdRequest := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	thirdRequestContext := auth.WithUser(thirdRequest.Context(), &auth.AuthenticatedUser{User: store.User{ID: "settings-user"}})
+	thirdRequestContext = usage.WithToolName(thirdRequestContext, "grok_web_search")
+	thirdResponse := httptest.NewRecorder()
+	handler.ServeHTTP(thirdResponse, thirdRequest.WithContext(thirdRequestContext))
+	if thirdResponse.Code != http.StatusServiceUnavailable {
+		close(releaseRequests)
+		t.Fatalf("third concurrent request status = %d, want %d", thirdResponse.Code, http.StatusServiceUnavailable)
+	}
+
+	close(releaseRequests)
+	if firstStatus, secondStatus := <-firstResult, <-secondResult; firstStatus != http.StatusOK || secondStatus != http.StatusOK {
+		t.Fatalf("admitted request statuses = (%d, %d), want (200, 200)", firstStatus, secondStatus)
 	}
 }
 
