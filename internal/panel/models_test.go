@@ -25,7 +25,7 @@ func TestToUserResponseWithTierMarksUnavailableWhenTierMissing(t *testing.T) {
 
 func TestToUserResponseWithTierUsesTierLimits(t *testing.T) {
 	user := &store.User{ID: "u1", Username: "alice", Role: store.RoleUser, Enabled: true, TierID: "t1"}
-	tier := &store.Tier{ID: "t1", Name: "custom", Level: 9, RPM: 12, SuccessLimit: 34}
+	tier := &store.Tier{ID: "t1", Name: "custom", RPM: 12, SuccessLimit: 34}
 	resp := toUserResponseWithTier(user, tier)
 	if resp.LimitsUnavailable {
 		t.Fatal("limits must be available when tier is present")

@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const tierColumns = `id, name, level, rpm, success_limit, is_default, created_at, updated_at`
+const tierColumns = `id, name, rpm, success_limit, is_default, created_at, updated_at`
 
 func scanTier(row interface {
 	Scan(dest ...any) error
@@ -16,7 +16,7 @@ func scanTier(row interface {
 	var isDefault int
 	var createdAt, updatedAt string
 	err := row.Scan(
-		&t.ID, &t.Name, &t.Level, &t.RPM, &t.SuccessLimit,
+		&t.ID, &t.Name, &t.RPM, &t.SuccessLimit,
 		&isDefault, &createdAt, &updatedAt,
 	)
 	if err != nil {
@@ -105,14 +105,13 @@ func (s *SQLiteStore) GetTiersByIDs(ctx context.Context, ids []string) (map[stri
 func (s *SQLiteStore) ListTiersPage(ctx context.Context, cursor *TierCursor, limit int) (*TierPage, error) {
 	pageLimit := normalizePanelPageLimit(limit)
 	query := `SELECT ` + tierColumns + ` FROM tiers`
-	queryArgs := make([]any, 0, 7)
+	queryArgs := make([]any, 0, 3)
 	if cursor != nil {
-		query += ` WHERE level > ?
-			OR (level = ? AND name > ?)
-			OR (level = ? AND name = ? AND id > ?)`
-		queryArgs = append(queryArgs, cursor.Level, cursor.Level, cursor.Name, cursor.Level, cursor.Name, cursor.ID)
+		query += ` WHERE created_at > ? OR (created_at = ? AND id > ?)`
+		formattedCreatedAt := formatTime(cursor.CreatedAt)
+		queryArgs = append(queryArgs, formattedCreatedAt, formattedCreatedAt, cursor.ID)
 	}
-	query += ` ORDER BY level ASC, name ASC, id ASC LIMIT ?`
+	query += ` ORDER BY created_at ASC, id ASC LIMIT ?`
 	queryArgs = append(queryArgs, pageLimit+1)
 
 	rows, err := s.readDB.QueryContext(ctx, query, queryArgs...)
@@ -141,7 +140,7 @@ func (s *SQLiteStore) ListTiersPage(ctx context.Context, cursor *TierCursor, lim
 	page.Tiers = tiers
 	if page.HasMore && len(tiers) > 0 {
 		lastTier := tiers[len(tiers)-1]
-		page.NextCursor = &TierCursor{Level: lastTier.Level, Name: lastTier.Name, ID: lastTier.ID}
+		page.NextCursor = &TierCursor{CreatedAt: lastTier.CreatedAt, ID: lastTier.ID}
 	}
 	if err := s.readDB.QueryRowContext(ctx, `SELECT COUNT(*) FROM tiers`).Scan(&page.TotalCount); err != nil {
 		return nil, err
@@ -149,13 +148,10 @@ func (s *SQLiteStore) ListTiersPage(ctx context.Context, cursor *TierCursor, lim
 	return page, nil
 }
 
-func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, successLimit int, isDefault bool) (*Tier, error) {
+func (s *SQLiteStore) CreateTier(ctx context.Context, name string, rpm, successLimit int, isDefault bool) (*Tier, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("tier name is required")
-	}
-	if level < 0 {
-		return nil, fmt.Errorf("level must be >= 0")
 	}
 	if rpm < 0 {
 		return nil, fmt.Errorf("rpm must be >= 0")
@@ -188,9 +184,9 @@ func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, s
 	}
 
 	_, err = transaction.ExecContext(ctx,
-		`INSERT INTO tiers (id, name, level, rpm, success_limit, is_default, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, name, level, rpm, successLimit, boolAsInteger(shouldBecomeDefault), now, now,
+		`INSERT INTO tiers (id, name, rpm, success_limit, is_default, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, name, rpm, successLimit, boolAsInteger(shouldBecomeDefault), now, now,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -227,13 +223,6 @@ func (s *SQLiteStore) UpdateTier(ctx context.Context, id string, updates TierUpd
 		}
 		sets = append(sets, "name = ?")
 		args = append(args, name)
-	}
-	if updates.Level != nil {
-		if *updates.Level < 0 {
-			return nil, fmt.Errorf("level must be >= 0")
-		}
-		sets = append(sets, "level = ?")
-		args = append(args, *updates.Level)
 	}
 	if updates.RPM != nil {
 		if *updates.RPM < 0 {

@@ -37,8 +37,8 @@ func (testStore *userListTierStore) GetTierByID(context.Context, string) (*store
 }
 
 func TestAdminListUsersLoadsUniqueTiersInOneBatch(t *testing.T) {
-	firstTier := &store.Tier{ID: "tier-one", Name: "tier1", Level: 1, RPM: 10, SuccessLimit: 100}
-	secondTier := &store.Tier{ID: "tier-two", Name: "tier2", Level: 2, RPM: 20, SuccessLimit: 200}
+	firstTier := &store.Tier{ID: "tier-one", Name: "tier1", RPM: 10, SuccessLimit: 100}
+	secondTier := &store.Tier{ID: "tier-two", Name: "tier2", RPM: 20, SuccessLimit: 200}
 	testStore := &userListTierStore{
 		userPage: &store.UserPage{
 			Users: []*store.User{

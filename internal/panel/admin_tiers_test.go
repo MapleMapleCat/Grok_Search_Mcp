@@ -47,7 +47,6 @@ func (testStore *adminTierStore) CountUsers(context.Context) (int64, error) {
 func (testStore *adminTierStore) CreateTier(
 	_ context.Context,
 	name string,
-	level int,
 	rpm int,
 	successLimit int,
 	isDefault bool,
@@ -56,7 +55,6 @@ func (testStore *adminTierStore) CreateTier(
 	return &store.Tier{
 		ID:           "created-tier",
 		Name:         name,
-		Level:        level,
 		RPM:          rpm,
 		SuccessLimit: successLimit,
 		IsDefault:    isDefault,
@@ -70,8 +68,8 @@ func (testStore *adminTierStore) UpdateTier(_ context.Context, tierID string, up
 }
 
 func TestAdminListTiersReturnsExplicitDefaultOutsideCurrentPage(t *testing.T) {
-	visibleTier := &store.Tier{ID: "visible-tier", Name: "Visible", Level: 1}
-	defaultTier := &store.Tier{ID: "default-tier", Name: "Default", Level: 99, IsDefault: true}
+	visibleTier := &store.Tier{ID: "visible-tier", Name: "Visible"}
+	defaultTier := &store.Tier{ID: "default-tier", Name: "Default", IsDefault: true}
 	testStore := &adminTierStore{
 		tierPage: &store.TierPage{
 			Tiers:      []*store.Tier{visibleTier},
@@ -107,7 +105,7 @@ func TestAdminTierMutationsForwardExplicitDefaultSelection(t *testing.T) {
 		request := httptest.NewRequest(
 			http.MethodPost,
 			"/panel/v1/admin/tiers",
-			strings.NewReader(`{"name":"Starter","level":1,"rpm":10,"success_limit":100,"is_default":true}`),
+			strings.NewReader(`{"name":"Starter","rpm":10,"success_limit":100,"is_default":true}`),
 		)
 		responseRecorder := httptest.NewRecorder()
 

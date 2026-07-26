@@ -170,7 +170,7 @@ func TestUpdateUserAllowsAnyExistingTierID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	customTier, err := s.CreateTier(ctx, "custom", 9, 1, 1, false)
+	customTier, err := s.CreateTier(ctx, "custom", 1, 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}

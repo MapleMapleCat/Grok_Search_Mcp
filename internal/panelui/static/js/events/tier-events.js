@@ -41,7 +41,6 @@ export function createTierEvents({
     const formData = createFormDataObject(formElement);
     const tierPayload = {
       name: String(formData.name || "").trim(),
-      level: Number(formData.level),
       rpm: Number(formData.rpm),
       success_limit: Number(formData.success_limit),
       is_default: Boolean(formElement.elements.is_default.checked)

@@ -31,8 +31,6 @@ type panelCursor struct {
 	Timestamp string `json:"timestamp,omitempty"`
 	StringID  string `json:"string_id,omitempty"`
 	NumericID int64  `json:"numeric_id,omitempty"`
-	Level     int    `json:"level,omitempty"`
-	Name      string `json:"name,omitempty"`
 }
 
 func parsePanelPageLimit(request *http.Request) (int, error) {
@@ -108,10 +106,14 @@ func parseTierCursor(request *http.Request) (*store.TierCursor, error) {
 	if err != nil || cursor == nil {
 		return nil, err
 	}
-	if cursor.Name == "" || cursor.StringID == "" || cursor.Level < 0 {
+	if cursor.Timestamp == "" || cursor.StringID == "" {
 		return nil, fmt.Errorf("cursor is missing its keyset boundary")
 	}
-	return &store.TierCursor{Level: cursor.Level, Name: cursor.Name, ID: cursor.StringID}, nil
+	createdAt, err := time.Parse(time.RFC3339Nano, cursor.Timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("cursor timestamp is invalid")
+	}
+	return &store.TierCursor{CreatedAt: createdAt.UTC(), ID: cursor.StringID}, nil
 }
 
 func encodeTierCursor(cursor *store.TierCursor) string {
@@ -119,10 +121,9 @@ func encodeTierCursor(cursor *store.TierCursor) string {
 		return ""
 	}
 	return encodePanelCursor(panelCursor{
-		Kind:     cursorKindTiers,
-		Level:    cursor.Level,
-		Name:     cursor.Name,
-		StringID: cursor.ID,
+		Kind:      cursorKindTiers,
+		Timestamp: cursor.CreatedAt.UTC().Format(time.RFC3339Nano),
+		StringID:  cursor.ID,
 	})
 }
 

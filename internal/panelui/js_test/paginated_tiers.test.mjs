@@ -29,10 +29,10 @@ function createTier(tierNumber) {
   return {
     id: `tier-${tierNumber}`,
     name: `Tier ${tierNumber}`,
-    level: tierNumber,
     rpm: tierNumber,
     success_limit: tierNumber * 100,
-    is_default: tierNumber === 101
+    is_default: tierNumber === 101,
+    created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, tierNumber)).toISOString()
   };
 }
 

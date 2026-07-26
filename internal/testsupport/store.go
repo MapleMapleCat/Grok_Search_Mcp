@@ -55,7 +55,7 @@ func (Store) GetTiersByIDs(context.Context, []string) (map[string]*store.Tier, e
 func (Store) ListTiersPage(context.Context, *store.TierCursor, int) (*store.TierPage, error) {
 	return &store.TierPage{}, nil
 }
-func (Store) CreateTier(context.Context, string, int, int, int, bool) (*store.Tier, error) {
+func (Store) CreateTier(context.Context, string, int, int, bool) (*store.Tier, error) {
 	return nil, nil
 }
 func (Store) UpdateTier(context.Context, string, store.TierUpdates) (*store.Tier, error) {

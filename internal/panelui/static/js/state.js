@@ -217,6 +217,6 @@ export function removeItemByIdentifier(items, identifier) {
 }
 
 export function compareTiers(firstTier, secondTier) {
-  return Number(firstTier.level || 0) - Number(secondTier.level || 0)
-    || String(firstTier.name || "").localeCompare(String(secondTier.name || ""), "zh-CN");
+  const creationTimeComparison = String(firstTier.created_at || "").localeCompare(String(secondTier.created_at || ""));
+  return creationTimeComparison || String(firstTier.id || "").localeCompare(String(secondTier.id || ""));
 }

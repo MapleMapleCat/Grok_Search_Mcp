@@ -117,6 +117,12 @@ func TestSQLiteCoreUsageAndOwnershipQueriesUseIndexes(t *testing.T) {
 			arguments:       []any{"tier-id"},
 			expectedIndexes: []string{"idx_users_tier_id"},
 		},
+		{
+			name:            "tiers by creation order",
+			query:           `SELECT ` + tierColumns + ` FROM tiers ORDER BY created_at ASC, id ASC LIMIT ?`,
+			arguments:       []any{50},
+			expectedIndexes: []string{"idx_tiers_created_id"},
+		},
 	}
 
 	for _, testCase := range testCases {
@@ -245,6 +251,7 @@ func TestSQLiteStrictSchemaExcludesRetiredStorage(t *testing.T) {
 	retiredColumns := map[string]string{
 		"usage_log":       "debug_json",
 		"server_settings": "cpa_api_key",
+		"tiers":           "level",
 	}
 	for tableName, retiredColumnName := range retiredColumns {
 		rows, err := sqliteStore.db.QueryContext(ctx, `PRAGMA table_info(`+tableName+`)`)
@@ -1424,11 +1431,11 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
-	tier, err := s.CreateTier(ctx, "paid", 7, 70, 700, false)
+	tier, err := s.CreateTier(ctx, "paid", 70, 700, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateTier(ctx, "PAID", 8, 80, 800, false); !errors.Is(err, ErrTierNameTaken) {
+	if _, err := s.CreateTier(ctx, "PAID", 80, 800, false); !errors.Is(err, ErrTierNameTaken) {
 		t.Fatalf("expected case-insensitive duplicate tier name error, got %v", err)
 	}
 
@@ -1455,7 +1462,7 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 		t.Fatalf("expected in-use tier delete to fail, got %v", err)
 	}
 
-	unusedTier, err := s.CreateTier(ctx, "unused", 99, 0, 0, false)
+	unusedTier, err := s.CreateTier(ctx, "unused", 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1543,7 +1550,7 @@ func TestCreateTierRestoresMissingDefaultAndCanReplaceExistingDefault(t *testing
 	if _, err := sqliteStore.db.ExecContext(requestContext, `UPDATE tiers SET is_default = 0 WHERE is_default = 1`); err != nil {
 		t.Fatal(err)
 	}
-	automaticDefaultTier, err := sqliteStore.CreateTier(requestContext, "automatic-default", 20, 5, 50, false)
+	automaticDefaultTier, err := sqliteStore.CreateTier(requestContext, "automatic-default", 5, 50, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1551,7 +1558,7 @@ func TestCreateTierRestoresMissingDefaultAndCanReplaceExistingDefault(t *testing
 		t.Fatalf("first tier created without an existing default was not promoted: %+v", automaticDefaultTier)
 	}
 
-	explicitDefaultTier, err := sqliteStore.CreateTier(requestContext, "explicit-default", 21, 6, 60, true)
+	explicitDefaultTier, err := sqliteStore.CreateTier(requestContext, "explicit-default", 6, 60, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1576,7 +1583,6 @@ func TestListTiersPageContinuesBeyondFirstHundredWithoutGaps(t *testing.T) {
 		tier, err := sqliteStore.CreateTier(
 			requestContext,
 			fmt.Sprintf("pagination-tier-%03d", tierNumber),
-			100+tierNumber,
 			tierNumber,
 			tierNumber*100,
 			false,

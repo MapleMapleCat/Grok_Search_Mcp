@@ -131,7 +131,6 @@ func (reservation SuccessQuotaReservation) IsValid() bool {
 type Tier struct {
 	ID           string
 	Name         string
-	Level        int
 	RPM          int
 	SuccessLimit int
 	IsDefault    bool
@@ -244,11 +243,10 @@ type TimeIDCursor struct {
 	ID        string
 }
 
-// TierCursor is a stable keyset boundary for tiers ordered by level, name, and ID.
+// TierCursor is a stable keyset boundary for tiers ordered by creation time and ID.
 type TierCursor struct {
-	Level int
-	Name  string
-	ID    string
+	CreatedAt time.Time
+	ID        string
 }
 
 // UsageRecordCursor is a stable keyset boundary for usage records ordered newest first.
@@ -350,7 +348,6 @@ type UserUpdates struct {
 // TierUpdates 用于管理员 PATCH 等级；指针字段为 nil 表示不修改。
 type TierUpdates struct {
 	Name         *string
-	Level        *int
 	RPM          *int
 	SuccessLimit *int
 	IsDefault    *bool
@@ -386,7 +383,7 @@ type Store interface {
 	GetDefaultTier(ctx context.Context) (*Tier, error)
 	GetTiersByIDs(ctx context.Context, ids []string) (map[string]*Tier, error)
 	ListTiersPage(ctx context.Context, cursor *TierCursor, limit int) (*TierPage, error)
-	CreateTier(ctx context.Context, name string, level, rpm, successLimit int, isDefault bool) (*Tier, error)
+	CreateTier(ctx context.Context, name string, rpm, successLimit int, isDefault bool) (*Tier, error)
 	UpdateTier(ctx context.Context, id string, updates TierUpdates) (*Tier, error)
 	DeleteTier(ctx context.Context, id string) error
 	CountUsersByTier(ctx context.Context, tierID string) (int64, error)

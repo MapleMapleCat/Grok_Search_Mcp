@@ -48,13 +48,12 @@ type SessionReplacementResponse struct {
 }
 
 type UserResponse struct {
-	ID        string         `json:"id"`
-	Username  string         `json:"username"`
-	Role      store.UserRole `json:"role"`
-	Enabled   bool           `json:"enabled"`
-	TierID    string         `json:"tier_id,omitempty"`
-	TierName  string         `json:"tier_name,omitempty"`
-	TierLevel *int           `json:"tier_level,omitempty"`
+	ID       string         `json:"id"`
+	Username string         `json:"username"`
+	Role     store.UserRole `json:"role"`
+	Enabled  bool           `json:"enabled"`
+	TierID   string         `json:"tier_id,omitempty"`
+	TierName string         `json:"tier_name,omitempty"`
 	// LimitsUnavailable 为 true 表示未能解析所属 tier，rpm/success_limit 不可信（勿当作 0=不限）。
 	LimitsUnavailable bool      `json:"limits_unavailable,omitempty"`
 	RPM               int       `json:"rpm"`
@@ -130,7 +129,6 @@ type UpdateUserRequest struct {
 type TierResponse struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
-	Level        int       `json:"level"`
 	RPM          int       `json:"rpm"`
 	SuccessLimit int       `json:"success_limit"`
 	IsDefault    bool      `json:"is_default"`
@@ -141,7 +139,6 @@ type TierResponse struct {
 
 type CreateTierRequest struct {
 	Name         string `json:"name"`
-	Level        int    `json:"level"`
 	RPM          int    `json:"rpm"`
 	SuccessLimit int    `json:"success_limit"`
 	IsDefault    bool   `json:"is_default"`
@@ -149,7 +146,6 @@ type CreateTierRequest struct {
 
 type UpdateTierRequest struct {
 	Name         *string `json:"name,omitempty"`
-	Level        *int    `json:"level,omitempty"`
 	RPM          *int    `json:"rpm,omitempty"`
 	SuccessLimit *int    `json:"success_limit,omitempty"`
 	IsDefault    *bool   `json:"is_default,omitempty"`
@@ -334,8 +330,6 @@ func toUserResponseWithTier(u *store.User, tier *store.Tier) UserResponse {
 	}
 	resp.LimitsUnavailable = false
 	resp.TierName = tier.Name
-	lvl := tier.Level
-	resp.TierLevel = &lvl
 	resp.RPM = tier.RPM
 	resp.SuccessLimit = tier.SuccessLimit
 	return resp
@@ -343,7 +337,7 @@ func toUserResponseWithTier(u *store.User, tier *store.Tier) UserResponse {
 
 func toTierResponse(t *store.Tier, userCount int64) TierResponse {
 	return TierResponse{
-		ID: t.ID, Name: t.Name, Level: t.Level,
+		ID: t.ID, Name: t.Name,
 		RPM: t.RPM, SuccessLimit: t.SuccessLimit, IsDefault: t.IsDefault,
 		UserCount: userCount, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}

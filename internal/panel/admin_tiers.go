@@ -63,7 +63,6 @@ func (handler *Handler) adminCreateTier(writer http.ResponseWriter, request *htt
 	tier, err := handler.Store.CreateTier(
 		request.Context(),
 		name,
-		createRequest.Level,
 		createRequest.RPM,
 		createRequest.SuccessLimit,
 		createRequest.IsDefault,
@@ -89,7 +88,6 @@ func (handler *Handler) adminUpdateTier(writer http.ResponseWriter, request *htt
 	}
 	tier, err := handler.Store.UpdateTier(request.Context(), tierID, store.TierUpdates{
 		Name:         updateRequest.Name,
-		Level:        updateRequest.Level,
 		RPM:          updateRequest.RPM,
 		SuccessLimit: updateRequest.SuccessLimit,
 		IsDefault:    updateRequest.IsDefault,

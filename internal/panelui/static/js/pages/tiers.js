@@ -25,7 +25,7 @@ export function renderTiersPage(state) {
             <span class="tier-catalog-kicker">方案目录</span>
             <h2>当前配额策略</h2>
           </div>
-          <p>方案按等级从低到高排列；调整限额后，会同步应用到已分配用户。</p>
+          <p>方案按创建时间排列；调整限额后，会同步应用到已分配用户。</p>
         </div>
         <section class="tier-grid" aria-label="配额方案列表">
           ${tiers.map((tier) => renderTierCard(tier)).join("")}
@@ -70,7 +70,6 @@ function renderTierCard(tier) {
   const assignedUserCount = getNonNegativeNumber(tier.user_count);
   const tierHasAssignedUsers = assignedUserCount > 0;
   const tierIdentifier = escapeHTML(tier.id);
-  const tierLevel = getNonNegativeNumber(tier.level);
 
   return `
     <article class="tier-card ${tierIsDefault ? "is-default" : ""}">
@@ -79,7 +78,7 @@ function renderTierCard(tier) {
           <div class="tier-symbol">${renderIcon(tierIsDefault ? "spark" : "layers")}</div>
           <div class="tier-title-group">
             <div class="tier-card-meta">
-              <span>Level ${escapeHTML(formatNumber(tierLevel))}</span>
+              <span>配额方案</span>
               ${tierIsDefault ? '<span class="tier-default-note"><i></i> 默认方案</span>' : ""}
             </div>
             <h3>${escapeHTML(tier.name)}</h3>
