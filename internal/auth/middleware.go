@@ -55,7 +55,7 @@ type APIKeyResolver interface {
 
 // writeAuthLoadError 统一 JWT / MCP 鉴权在加载用户+tier 失败时的 HTTP 语义：
 // - 用户不存在 → 401 + "user not found"
-// - tier 缺失（含默认 tier0 / 已分配 tier）→ generic 500（fail-closed，避免 0 限额被当成不限）
+// - tier 缺失（含显式默认 tier / 已分配 tier）→ generic 500（fail-closed，避免 0 限额被当成不限）
 // - 其它存储错误 → 500 + "authentication failed"
 func writeAuthLoadError(w http.ResponseWriter, err error, logPrefix string) {
 	if err == nil {

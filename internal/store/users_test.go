@@ -170,7 +170,7 @@ func TestUpdateUserAllowsAnyExistingTierID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	customTier, err := s.CreateTier(ctx, "custom", 9, 1, 1)
+	customTier, err := s.CreateTier(ctx, "custom", 9, 1, 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,24 +200,23 @@ func TestUpdateUserRejectsMissingOrEmptyTierID(t *testing.T) {
 	}
 }
 
-func TestCreateAndCurrentModeRegistrationFailClosedWithoutTier0(t *testing.T) {
+func TestCreateAndCurrentModeRegistrationFailClosedWithoutDefaultTier(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
-	tier0 := requireTierByName(t, s, "tier0")
-	if err := s.DeleteTier(ctx, tier0.ID); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE tiers SET is_default = 0 WHERE is_default = 1`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateUser(ctx, "without-tier0", "hash", RoleUser); !errors.Is(err, ErrTierNotFound) {
-		t.Fatalf("expected CreateUser to fail closed without tier0, got %v", err)
+	if _, err := s.CreateUser(ctx, "without-default-tier", "hash", RoleUser); !errors.Is(err, ErrTierNotFound) {
+		t.Fatalf("expected CreateUser to fail closed without a default tier, got %v", err)
 	}
 	if _, err := s.RegisterUserWithCurrentMode(
 		ctx,
-		"registered-without-tier0",
+		"registered-without-default-tier",
 		"hash",
 		"",
 		RegistrationModeFree,
 	); !errors.Is(err, ErrTierNotFound) {
-		t.Fatalf("expected current-mode registration to fail closed without tier0, got %v", err)
+		t.Fatalf("expected current-mode registration to fail closed without a default tier, got %v", err)
 	}
 }
 

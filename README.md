@@ -580,17 +580,19 @@ Administrators can create, disable, and delete invite codes and set their regist
 
 Each user belongs to a tier. All of a user's API keys share that tier's RPM and monthly successful-call allowance. Only actual `tools/call` requests are metered; initialization, ping, and tool-list requests are not.
 
-Default tiers for a new database:
+An explicit default-tier flag determines the initial tier for self-registered users and users created by administrators. The default no longer depends on the name `tier0` or on `level=0`. Any tier can be selected as the default in the administration panel. Changing it affects only users created afterward; existing assignments are left unchanged. A default tier cannot be unset or deleted until another tier replaces it.
 
-| Tier | RPM | Monthly successful calls |
-|---|---:|---:|
-| `tier0` | 10 | 800 |
-| `tier1` | 20 | 4,000 |
-| `tier2` | 40 | 16,000 |
-| `tier3` | 60 | 40,000 |
-| `tier4` | 120 | 160,000 |
-| `tier5` | 300 | 800,000 |
-| `tier6` | Unlimited | Unlimited |
+Built-in tiers for a new database (`tier0` is only the initial default selection):
+
+| Tier | Initial default | RPM | Monthly successful calls |
+|---|:---:|---:|---:|
+| `tier0` | Yes | 10 | 800 |
+| `tier1` |  | 20 | 4,000 |
+| `tier2` |  | 40 | 16,000 |
+| `tier3` |  | 60 | 40,000 |
+| `tier4` |  | 120 | 160,000 |
+| `tier5` |  | 300 | 800,000 |
+| `tier6` |  | Unlimited | Unlimited |
 
 Successful-call periods use UTC calendar months. A call reserves quota before tool execution; failed calls roll the reservation back. Tier values can be customized in the panel.
 

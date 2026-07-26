@@ -49,6 +49,7 @@ export const state = {
     usage: null,
     users: null,
     tiers: null,
+    defaultTier: null,
     invites: null,
     settings: null,
     operationsMetrics: null,
@@ -157,10 +158,12 @@ export function commitPageData(page, pageResult) {
     case "users":
       state.data.users = pageResult.userResponse?.users || [];
       state.data.tiers = pageResult.tierResponse?.tiers || [];
+      state.data.defaultTier = pageResult.tierResponse?.default_tier || null;
       commitPagination("users", pageResult.userResponse);
       break;
     case "tiers":
       state.data.tiers = pageResult.tierResponse?.tiers || [];
+      state.data.defaultTier = pageResult.tierResponse?.default_tier || null;
       commitPagination("tiers", pageResult.tierResponse);
       break;
     case "invites":

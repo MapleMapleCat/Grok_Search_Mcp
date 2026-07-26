@@ -208,7 +208,7 @@
   opacity: 0.36;
 }
 
-.tier-card.is-initial::before {
+.tier-card.is-default::before {
   background: linear-gradient(90deg, transparent, var(--accent-strong), transparent);
   opacity: 0.78;
 }
@@ -246,7 +246,7 @@
   color: var(--violet);
 }
 
-.tier-card.is-initial .tier-symbol {
+.tier-card.is-default .tier-symbol {
   border-color: rgba(144, 206, 44, 0.22);
   background: rgba(189, 244, 92, 0.23);
   color: #568b11;
@@ -274,14 +274,14 @@
   text-transform: uppercase;
 }
 
-.tier-initial-note {
+.tier-default-note {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   color: #568b11;
 }
 
-.tier-initial-note i {
+.tier-default-note i {
   width: 5px;
   height: 5px;
   border-radius: 50%;

@@ -92,7 +92,7 @@ func registerUserInTransaction(ctx context.Context, transaction *sql.Tx, usernam
 	period := currentSuccessQuotaPeriod()
 	var tierID string
 	if err := transaction.QueryRowContext(ctx,
-		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, DefaultTierName,
+		`SELECT id FROM tiers WHERE is_default = 1 LIMIT 1`,
 	).Scan(&tierID); err != nil {
 		if err == sql.ErrNoRows {
 			return "", ErrTierNotFound

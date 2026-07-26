@@ -312,7 +312,7 @@ function renderEditUserModal(modal, tiers, currentUser) {
     <form class="stack-form" id="edit-user-form" data-form="edit-user" data-id="${escapeHTML(user.id)}">
       <div class="form-grid">
         <label class="field-group"><span class="field-label">角色</span><select class="select-input" name="role" ${isCurrentUser ? "disabled" : ""}><option value="user" ${user.role === "user" ? "selected" : ""}>用户</option><option value="admin" ${user.role === "admin" ? "selected" : ""}>管理员</option></select></label>
-        <label class="field-group"><span class="field-label">配额方案</span><select class="select-input" name="tier_id" required>${unavailableTierOption}${tiers.map((tier) => `<option value="${escapeHTML(tier.id)}" ${tier.id === user.tier_id ? "selected" : ""}>${escapeHTML(tier.name)}</option>`).join("")}</select></label>
+        <label class="field-group"><span class="field-label">配额方案</span><select class="select-input" name="tier_id" required>${unavailableTierOption}${tiers.map((tier) => `<option value="${escapeHTML(tier.id)}" ${tier.id === user.tier_id ? "selected" : ""}>${escapeHTML(tier.name)}${tier.is_default ? "（默认）" : ""}</option>`).join("")}</select></label>
       </div>
       <label class="switch-row"><span class="switch-copy"><strong>启用账户</strong><span>禁用后用户的面板与 MCP 访问都会失效</span></span><span class="switch"><input name="enabled" type="checkbox" ${user.enabled ? "checked" : ""} ${isCurrentUser ? "disabled" : ""}><span class="switch-track"></span></span></label>
       <label class="switch-row"><span class="switch-copy"><strong>吊销全部会话</strong><span>保存后立即使该用户的所有现有 JWT 失效</span></span><span class="switch"><input name="revoke_tokens" type="checkbox"><span class="switch-track"></span></span></label>
@@ -374,8 +374,11 @@ function renderUserUsageLogsModal(modal) {
 }
 
 function renderTierModal(modal, isEdit) {
-  const tier = modal.data || { name: "", level: 0, rpm: 0, success_limit: 0 };
+  const tier = modal.data || { name: "", level: 0, rpm: 0, success_limit: 0, is_default: false };
   const formName = isEdit ? "edit-tier" : "create-tier";
+  const defaultTierDescription = tier.is_default
+    ? "当前默认方案不能直接取消；请在其他方案上启用此选项完成切换。"
+    : "启用后，新注册用户和管理员新建的用户会自动使用此方案。";
   const body = `
     <form class="stack-form" id="tier-form" data-form="${formName}" ${isEdit ? `data-id="${escapeHTML(tier.id)}"` : ""}>
       <label class="field-group"><span class="field-label">方案名称</span><input class="text-input" name="name" type="text" value="${escapeHTML(tier.name)}" placeholder="例如：Pro" required autofocus></label>
@@ -384,11 +387,12 @@ function renderTierModal(modal, isEdit) {
         <label class="field-group"><span class="field-label"><span>RPM</span><span class="field-hint">0 = 不限</span></span><input class="text-input" name="rpm" type="number" min="0" step="1" value="${escapeHTML(tier.rpm)}" required></label>
         <label class="field-group is-full"><span class="field-label"><span>月度成功调用额度</span><span class="field-hint">0 = 不限</span></span><input class="text-input" name="success_limit" type="number" min="0" step="1" value="${escapeHTML(tier.success_limit)}" required></label>
       </div>
+      <label class="switch-row"><span class="switch-copy"><strong>设为默认方案</strong><span>${defaultTierDescription}</span></span><span class="switch"><input name="is_default" type="checkbox" ${tier.is_default ? "checked disabled" : ""}><span class="switch-track"></span></span></label>
       ${modal.error ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(modal.error)}</span></div>` : ""}
     </form>
   `;
   const footer = `<button class="button button-secondary" type="button" data-action="close-modal">取消</button><button class="button button-primary" type="submit" form="tier-form" ${modal.busy ? "disabled" : ""}>${isEdit ? "保存方案" : `${renderIcon("plus")} 创建方案`}</button>`;
-  return renderModalFrame({ title: isEdit ? "编辑配额方案" : "创建配额方案", description: "方案控制用户限额；展示顺序只影响列表排列，不代表权限或套餐高低。", body, footer });
+  return renderModalFrame({ title: isEdit ? "编辑配额方案" : "创建配额方案", description: "方案控制用户限额；默认方案决定新用户的初始配额，展示顺序只影响列表排列。", body, footer });
 }
 
 function renderCreateInviteModal(modal) {

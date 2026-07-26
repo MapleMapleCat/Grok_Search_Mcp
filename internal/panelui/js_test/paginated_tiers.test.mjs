@@ -31,7 +31,8 @@ function createTier(tierNumber) {
     name: `Tier ${tierNumber}`,
     level: tierNumber,
     rpm: tierNumber,
-    success_limit: tierNumber * 100
+    success_limit: tierNumber * 100,
+    is_default: tierNumber === 101
   };
 }
 
@@ -60,6 +61,7 @@ test("fetchAllTiers follows opaque cursors beyond the first 100 tiers", async (t
     if (requestedCursors.length === 1) {
       return createJSONResponse({
         tiers: firstPageTiers,
+        default_tier: createTier(101),
         next_cursor: opaqueNextCursor,
         has_more: true,
         total_count: 101
@@ -78,6 +80,8 @@ test("fetchAllTiers follows opaque cursors beyond the first 100 tiers", async (t
   assert.deepEqual(requestedCursors, ["", opaqueNextCursor]);
   assert.equal(response.tiers.length, 101);
   assert.equal(response.tiers[100].id, "tier-101");
+  assert.equal(response.default_tier.id, "tier-101");
+  assert.equal(response.default_tier.is_default, true);
   assert.equal(response.has_more, false);
   assert.equal(response.next_cursor, "");
 });

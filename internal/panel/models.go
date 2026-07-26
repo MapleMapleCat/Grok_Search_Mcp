@@ -110,6 +110,7 @@ type UsersResponse struct {
 
 type TiersResponse struct {
 	Tiers             []TierResponse `json:"tiers"`
+	DefaultTier       *TierResponse  `json:"default_tier,omitempty"`
 	NextCursor        string         `json:"next_cursor,omitempty"`
 	HasMore           bool           `json:"has_more"`
 	TotalCount        int64          `json:"total_count"`
@@ -132,6 +133,7 @@ type TierResponse struct {
 	Level        int       `json:"level"`
 	RPM          int       `json:"rpm"`
 	SuccessLimit int       `json:"success_limit"`
+	IsDefault    bool      `json:"is_default"`
 	UserCount    int64     `json:"user_count"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -142,6 +144,7 @@ type CreateTierRequest struct {
 	Level        int    `json:"level"`
 	RPM          int    `json:"rpm"`
 	SuccessLimit int    `json:"success_limit"`
+	IsDefault    bool   `json:"is_default"`
 }
 
 type UpdateTierRequest struct {
@@ -149,6 +152,7 @@ type UpdateTierRequest struct {
 	Level        *int    `json:"level,omitempty"`
 	RPM          *int    `json:"rpm,omitempty"`
 	SuccessLimit *int    `json:"success_limit,omitempty"`
+	IsDefault    *bool   `json:"is_default,omitempty"`
 }
 
 type ServerSettingsResponse struct {
@@ -340,7 +344,7 @@ func toUserResponseWithTier(u *store.User, tier *store.Tier) UserResponse {
 func toTierResponse(t *store.Tier, userCount int64) TierResponse {
 	return TierResponse{
 		ID: t.ID, Name: t.Name, Level: t.Level,
-		RPM: t.RPM, SuccessLimit: t.SuccessLimit,
+		RPM: t.RPM, SuccessLimit: t.SuccessLimit, IsDefault: t.IsDefault,
 		UserCount: userCount, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 }

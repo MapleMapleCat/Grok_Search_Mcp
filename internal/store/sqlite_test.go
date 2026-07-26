@@ -1424,11 +1424,11 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
-	tier, err := s.CreateTier(ctx, "paid", 7, 70, 700)
+	tier, err := s.CreateTier(ctx, "paid", 7, 70, 700, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateTier(ctx, "PAID", 8, 80, 800); !errors.Is(err, ErrTierNameTaken) {
+	if _, err := s.CreateTier(ctx, "PAID", 8, 80, 800, false); !errors.Is(err, ErrTierNameTaken) {
 		t.Fatalf("expected case-insensitive duplicate tier name error, got %v", err)
 	}
 
@@ -1455,7 +1455,7 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 		t.Fatalf("expected in-use tier delete to fail, got %v", err)
 	}
 
-	unusedTier, err := s.CreateTier(ctx, "unused", 99, 0, 0)
+	unusedTier, err := s.CreateTier(ctx, "unused", 99, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1464,6 +1464,106 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 	}
 	if _, err := s.GetTierByID(ctx, unusedTier.ID); !errors.Is(err, ErrTierNotFound) {
 		t.Fatalf("expected deleted tier to be missing, got %v", err)
+	}
+}
+
+func TestDefaultTierIsExplicitUniqueAndIndependentOfName(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+
+	initialDefaultTier, err := sqliteStore.GetDefaultTier(requestContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initialDefaultTier.Name != "tier0" || !initialDefaultTier.IsDefault {
+		t.Fatalf("initial default tier = %+v, want tier0 marked as default", initialDefaultTier)
+	}
+
+	newDefaultTier := requireTierByName(t, sqliteStore, "tier2")
+	renamedTier := "starter"
+	setAsDefault := true
+	updatedDefaultTier, err := sqliteStore.UpdateTier(requestContext, newDefaultTier.ID, TierUpdates{
+		Name:      &renamedTier,
+		IsDefault: &setAsDefault,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedDefaultTier.Name != renamedTier || !updatedDefaultTier.IsDefault {
+		t.Fatalf("updated default tier = %+v, want renamed explicit default", updatedDefaultTier)
+	}
+
+	previousDefaultTier, err := sqliteStore.GetTierByID(requestContext, initialDefaultTier.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previousDefaultTier.IsDefault {
+		t.Fatalf("previous default tier remained marked as default: %+v", previousDefaultTier)
+	}
+
+	createdUser, err := sqliteStore.CreateUser(requestContext, "explicit-default-user", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if createdUser.TierID != updatedDefaultTier.ID {
+		t.Fatalf("created user tier_id = %s, want explicit default %s", createdUser.TierID, updatedDefaultTier.ID)
+	}
+	registeredUser, err := sqliteStore.RegisterUserWithCurrentMode(
+		requestContext,
+		"explicit-default-registration",
+		"hash",
+		"",
+		RegistrationModeFree,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if registeredUser.TierID != updatedDefaultTier.ID {
+		t.Fatalf("registered user tier_id = %s, want explicit default %s", registeredUser.TierID, updatedDefaultTier.ID)
+	}
+
+	removeDefault := false
+	if _, err := sqliteStore.UpdateTier(requestContext, updatedDefaultTier.ID, TierUpdates{IsDefault: &removeDefault}); !errors.Is(err, ErrDefaultTierProtected) {
+		t.Fatalf("expected direct default removal to be rejected, got %v", err)
+	}
+	if err := sqliteStore.DeleteTier(requestContext, updatedDefaultTier.ID); !errors.Is(err, ErrDefaultTierProtected) {
+		t.Fatalf("expected default tier deletion to be rejected, got %v", err)
+	}
+	if _, err := sqliteStore.db.ExecContext(requestContext,
+		`UPDATE tiers SET is_default = 1 WHERE id = ?`, initialDefaultTier.ID,
+	); err == nil {
+		t.Fatal("expected database uniqueness constraint to reject two default tiers")
+	}
+}
+
+func TestCreateTierRestoresMissingDefaultAndCanReplaceExistingDefault(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+
+	if _, err := sqliteStore.db.ExecContext(requestContext, `UPDATE tiers SET is_default = 0 WHERE is_default = 1`); err != nil {
+		t.Fatal(err)
+	}
+	automaticDefaultTier, err := sqliteStore.CreateTier(requestContext, "automatic-default", 20, 5, 50, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !automaticDefaultTier.IsDefault {
+		t.Fatalf("first tier created without an existing default was not promoted: %+v", automaticDefaultTier)
+	}
+
+	explicitDefaultTier, err := sqliteStore.CreateTier(requestContext, "explicit-default", 21, 6, 60, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !explicitDefaultTier.IsDefault {
+		t.Fatalf("explicitly selected default tier was not marked default: %+v", explicitDefaultTier)
+	}
+	refreshedAutomaticTier, err := sqliteStore.GetTierByID(requestContext, automaticDefaultTier.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshedAutomaticTier.IsDefault {
+		t.Fatalf("replaced default tier remained marked as default: %+v", refreshedAutomaticTier)
 	}
 }
 
@@ -1479,6 +1579,7 @@ func TestListTiersPageContinuesBeyondFirstHundredWithoutGaps(t *testing.T) {
 			100+tierNumber,
 			tierNumber,
 			tierNumber*100,
+			false,
 		)
 		if err != nil {
 			t.Fatalf("create pagination tier %d: %v", tierNumber, err)

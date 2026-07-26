@@ -34,16 +34,19 @@ func (TestStore) ReserveSuccessCall(context.Context, string, int) (SuccessQuotaR
 func (TestStore) ReleaseSuccessCall(context.Context, SuccessQuotaReservation) error { return nil }
 
 func (TestStore) GetTierByID(context.Context, string) (*Tier, error) { return nil, ErrTierNotFound }
+func (TestStore) GetDefaultTier(context.Context) (*Tier, error)      { return nil, ErrTierNotFound }
 func (TestStore) GetTiersByIDs(context.Context, []string) (map[string]*Tier, error) {
 	return map[string]*Tier{}, nil
 }
 func (TestStore) ListTiersPage(context.Context, *TierCursor, int) (*TierPage, error) {
 	return &TierPage{}, nil
 }
-func (TestStore) CreateTier(context.Context, string, int, int, int) (*Tier, error) { return nil, nil }
-func (TestStore) UpdateTier(context.Context, string, TierUpdates) (*Tier, error)   { return nil, nil }
-func (TestStore) DeleteTier(context.Context, string) error                         { return nil }
-func (TestStore) CountUsersByTier(context.Context, string) (int64, error)          { return 0, nil }
+func (TestStore) CreateTier(context.Context, string, int, int, int, bool) (*Tier, error) {
+	return nil, nil
+}
+func (TestStore) UpdateTier(context.Context, string, TierUpdates) (*Tier, error) { return nil, nil }
+func (TestStore) DeleteTier(context.Context, string) error                       { return nil }
+func (TestStore) CountUsersByTier(context.Context, string) (int64, error)        { return 0, nil }
 
 func (TestStore) CreateKey(context.Context, string, string, int) (*APIKey, string, error) {
 	return nil, "", nil

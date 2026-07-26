@@ -36,6 +36,16 @@ func (handler *Handler) adminListTiers(writer http.ResponseWriter, request *http
 		userCount, _ := handler.Store.CountUsersByTier(request.Context(), tier.ID)
 		response.Tiers = append(response.Tiers, toTierResponse(tier, userCount))
 	}
+	defaultTier, defaultTierErr := handler.Store.GetDefaultTier(request.Context())
+	if defaultTierErr == nil {
+		defaultTierUserCount, _ := handler.Store.CountUsersByTier(request.Context(), defaultTier.ID)
+		defaultTierResponse := toTierResponse(defaultTier, defaultTierUserCount)
+		response.DefaultTier = &defaultTierResponse
+	} else if !errors.Is(defaultTierErr, store.ErrTierNotFound) {
+		log.Printf("admin load default tier failed error_type=%T", defaultTierErr)
+		writeError(writer, http.StatusInternalServerError, "failed to load default tier")
+		return
+	}
 	response.AssignedUserCount, _ = handler.Store.CountUsers(request.Context())
 	writeJSON(writer, http.StatusOK, response)
 }
@@ -50,7 +60,14 @@ func (handler *Handler) adminCreateTier(writer http.ResponseWriter, request *htt
 		writeError(writer, http.StatusBadRequest, "tier name is required")
 		return
 	}
-	tier, err := handler.Store.CreateTier(request.Context(), name, createRequest.Level, createRequest.RPM, createRequest.SuccessLimit)
+	tier, err := handler.Store.CreateTier(
+		request.Context(),
+		name,
+		createRequest.Level,
+		createRequest.RPM,
+		createRequest.SuccessLimit,
+		createRequest.IsDefault,
+	)
 	if err != nil {
 		if errors.Is(err, store.ErrTierNameTaken) {
 			writeError(writer, http.StatusConflict, "tier name already taken")
@@ -75,6 +92,7 @@ func (handler *Handler) adminUpdateTier(writer http.ResponseWriter, request *htt
 		Level:        updateRequest.Level,
 		RPM:          updateRequest.RPM,
 		SuccessLimit: updateRequest.SuccessLimit,
+		IsDefault:    updateRequest.IsDefault,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrTierNotFound) {
@@ -83,6 +101,10 @@ func (handler *Handler) adminUpdateTier(writer http.ResponseWriter, request *htt
 		}
 		if errors.Is(err, store.ErrTierNameTaken) {
 			writeError(writer, http.StatusConflict, "tier name already taken")
+			return
+		}
+		if errors.Is(err, store.ErrDefaultTierProtected) {
+			writeError(writer, http.StatusConflict, "set another tier as default before removing the current default")
 			return
 		}
 		log.Printf("admin update tier %s failed error_type=%T", tierID, err)
@@ -103,6 +125,10 @@ func (handler *Handler) adminDeleteTier(writer http.ResponseWriter, request *htt
 		}
 		if errors.Is(err, store.ErrTierInUse) {
 			writeError(writer, http.StatusConflict, "tier is in use; reassign users first")
+			return
+		}
+		if errors.Is(err, store.ErrDefaultTierProtected) {
+			writeError(writer, http.StatusConflict, "set another tier as default before deleting this tier")
 			return
 		}
 		log.Printf("admin delete tier %s failed error_type=%T", tierID, err)

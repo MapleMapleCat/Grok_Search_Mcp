@@ -7,16 +7,17 @@ import (
 	"strings"
 )
 
-const tierColumns = `id, name, level, rpm, success_limit, created_at, updated_at`
+const tierColumns = `id, name, level, rpm, success_limit, is_default, created_at, updated_at`
 
 func scanTier(row interface {
 	Scan(dest ...any) error
 }) (*Tier, error) {
 	var t Tier
+	var isDefault int
 	var createdAt, updatedAt string
 	err := row.Scan(
 		&t.ID, &t.Name, &t.Level, &t.RPM, &t.SuccessLimit,
-		&createdAt, &updatedAt,
+		&isDefault, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -27,6 +28,7 @@ func scanTier(row interface {
 	if t.UpdatedAt, err = parseTime(updatedAt); err != nil {
 		return nil, err
 	}
+	t.IsDefault = isDefault != 0
 	return &t, nil
 }
 
@@ -38,6 +40,17 @@ func (s *SQLiteStore) GetTierByID(ctx context.Context, id string) (*Tier, error)
 		return nil, ErrTierNotFound
 	}
 	return t, err
+}
+
+// GetDefaultTier returns the explicitly selected tier for newly created users.
+func (s *SQLiteStore) GetDefaultTier(ctx context.Context) (*Tier, error) {
+	row := s.readDB.QueryRowContext(ctx,
+		`SELECT `+tierColumns+` FROM tiers WHERE is_default = 1 LIMIT 1`)
+	tier, err := scanTier(row)
+	if err == sql.ErrNoRows {
+		return nil, ErrTierNotFound
+	}
+	return tier, err
 }
 
 // GetTiersByIDs loads all matching tiers in one query. Missing IDs are omitted
@@ -136,7 +149,7 @@ func (s *SQLiteStore) ListTiersPage(ctx context.Context, cursor *TierCursor, lim
 	return page, nil
 }
 
-func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, successLimit int) (*Tier, error) {
+func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, successLimit int, isDefault bool) (*Tier, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("tier name is required")
@@ -155,10 +168,29 @@ func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, s
 		return nil, err
 	}
 	now := formatTime(nowUTC())
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO tiers (id, name, level, rpm, success_limit, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, name, level, rpm, successLimit, now, now,
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	var defaultTierCount int
+	if err := transaction.QueryRowContext(ctx, `SELECT COUNT(*) FROM tiers WHERE is_default = 1`).Scan(&defaultTierCount); err != nil {
+		return nil, err
+	}
+	shouldBecomeDefault := isDefault || defaultTierCount == 0
+	if shouldBecomeDefault && defaultTierCount > 0 {
+		if _, err := transaction.ExecContext(ctx,
+			`UPDATE tiers SET is_default = 0, updated_at = ? WHERE is_default = 1`, now,
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	_, err = transaction.ExecContext(ctx,
+		`INSERT INTO tiers (id, name, level, rpm, success_limit, is_default, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, name, level, rpm, successLimit, boolAsInteger(shouldBecomeDefault), now, now,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -166,11 +198,24 @@ func (s *SQLiteStore) CreateTier(ctx context.Context, name string, level, rpm, s
 		}
 		return nil, fmt.Errorf("insert tier: %w", err)
 	}
+	if err := transaction.Commit(); err != nil {
+		return nil, err
+	}
 	return s.GetTierByID(ctx, id)
 }
 
 func (s *SQLiteStore) UpdateTier(ctx context.Context, id string, updates TierUpdates) (*Tier, error) {
-	if _, err := s.GetTierByID(ctx, id); err != nil {
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	existingTier, err := scanTier(transaction.QueryRowContext(ctx, `SELECT `+tierColumns+` FROM tiers WHERE id = ?`, id))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrTierNotFound
+		}
 		return nil, err
 	}
 	var sets []string
@@ -204,31 +249,72 @@ func (s *SQLiteStore) UpdateTier(ctx context.Context, id string, updates TierUpd
 		sets = append(sets, "success_limit = ?")
 		args = append(args, *updates.SuccessLimit)
 	}
+	if updates.IsDefault != nil {
+		if !*updates.IsDefault && existingTier.IsDefault {
+			return nil, ErrDefaultTierProtected
+		}
+		if *updates.IsDefault && !existingTier.IsDefault {
+			now := formatTime(nowUTC())
+			if _, err := transaction.ExecContext(ctx,
+				`UPDATE tiers SET is_default = 0, updated_at = ? WHERE is_default = 1 AND id <> ?`,
+				now, id,
+			); err != nil {
+				return nil, err
+			}
+			sets = append(sets, "is_default = 1")
+		}
+	}
 	if len(sets) == 0 {
-		return s.GetTierByID(ctx, id)
+		if err := transaction.Commit(); err != nil {
+			return nil, err
+		}
+		return existingTier, nil
 	}
 	sets = append(sets, "updated_at = ?")
 	args = append(args, formatTime(nowUTC()))
 	args = append(args, id)
 	q := `UPDATE tiers SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
-	if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+	if _, err := transaction.ExecContext(ctx, q, args...); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrTierNameTaken
 		}
 		return nil, err
 	}
-	return s.GetTierByID(ctx, id)
+	updatedTier, err := scanTier(transaction.QueryRowContext(ctx, `SELECT `+tierColumns+` FROM tiers WHERE id = ?`, id))
+	if err != nil {
+		return nil, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return nil, err
+	}
+	return updatedTier, nil
 }
 
 func (s *SQLiteStore) DeleteTier(ctx context.Context, id string) error {
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	tier, err := scanTier(transaction.QueryRowContext(ctx, `SELECT `+tierColumns+` FROM tiers WHERE id = ?`, id))
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return ErrTierNotFound
+		}
+		return err
+	}
+	if tier.IsDefault {
+		return ErrDefaultTierProtected
+	}
 	var n int64
-	if err := s.db.QueryRowContext(ctx, countUsersByTierQuery, id).Scan(&n); err != nil {
+	if err := transaction.QueryRowContext(ctx, countUsersByTierQuery, id).Scan(&n); err != nil {
 		return err
 	}
 	if n > 0 {
 		return ErrTierInUse
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM tiers WHERE id = ?`, id)
+	res, err := transaction.ExecContext(ctx, `DELETE FROM tiers WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -236,7 +322,7 @@ func (s *SQLiteStore) DeleteTier(ctx context.Context, id string) error {
 	if affected == 0 {
 		return ErrTierNotFound
 	}
-	return nil
+	return transaction.Commit()
 }
 
 const countUsersByTierQuery = `SELECT COUNT(*) FROM users WHERE tier_id = ?`

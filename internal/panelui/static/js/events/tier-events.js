@@ -43,7 +43,8 @@ export function createTierEvents({
       name: String(formData.name || "").trim(),
       level: Number(formData.level),
       rpm: Number(formData.rpm),
-      success_limit: Number(formData.success_limit)
+      success_limit: Number(formData.success_limit),
+      is_default: Boolean(formElement.elements.is_default.checked)
     };
     const tierIdentifier = formElement.dataset.id;
     modalController.setModalBusy(true);
@@ -52,16 +53,27 @@ export function createTierEvents({
       const tier = isEdit
         ? await updateTier(tierIdentifier, tierPayload)
         : await createTier(tierPayload);
+
+      const existingTiers = state.data.tiers || [];
+      const normalizedExistingTiers = tier.is_default
+        ? existingTiers.map((existingTier) => ({ ...existingTier, is_default: false }))
+        : existingTiers;
       if (isEdit) {
-        state.data.tiers = replaceItemByIdentifier(state.data.tiers, tier);
+        state.data.tiers = replaceItemByIdentifier(normalizedExistingTiers, tier);
       } else {
-        state.data.tiers = [...(state.data.tiers || []), tier]
+        state.data.tiers = [...normalizedExistingTiers, tier]
           .sort(compareTiers)
           .slice(0, COLLECTION_PAGE_SIZE);
       }
+      if (tier.is_default) {
+        state.data.defaultTier = tier;
+      }
       modalController.closeModal();
       renderApplication();
-      showToast(isEdit ? "方案已更新" : "方案已创建", "新的配额方案已可以分配给用户。", "success");
+      const successMessage = tier.is_default
+        ? "该方案现为新用户的默认配额方案。"
+        : "新的配额方案已可以分配给用户。";
+      showToast(isEdit ? "方案已更新" : "方案已创建", successMessage, "success");
     } catch (error) {
       handleModalMutationError(error, modalController, handleSessionError);
     }
@@ -73,7 +85,7 @@ export function createTierEvents({
       confirmAction: "deleteTier",
       identifier: tierIdentifier,
       title: "删除配额方案",
-      message: `将永久删除“${tier?.name || "该方案"}”。仍有用户使用的方案无法删除。`,
+      message: `将永久删除“${tier?.name || "该方案"}”。默认方案或仍有用户使用的方案无法删除。`,
       confirmLabel: "删除方案"
     });
   }

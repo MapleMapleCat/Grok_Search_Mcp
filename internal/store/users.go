@@ -52,7 +52,7 @@ func scanUser(row interface {
 	return &u, nil
 }
 
-// CreateUser 插入新用户；用户名冲突返回 ErrUsernameTaken。限额由默认 tier0 决定，不再随用户保存。
+// CreateUser 插入新用户；用户名冲突返回 ErrUsernameTaken。限额由显式默认 tier 决定，不再随用户保存。
 func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash string, role UserRole) (*User, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -412,11 +412,11 @@ func nowUTC() time.Time {
 	return time.Now().UTC()
 }
 
-// defaultTierID 返回默认 tier0 的 ID；若 tier 表尚未初始化则 fail-closed。
+// defaultTierID 返回显式默认 tier 的 ID；若未配置默认 tier 则 fail-closed。
 func (s *SQLiteStore) defaultTierID(ctx context.Context) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM tiers WHERE name = ? COLLATE NOCASE LIMIT 1`, DefaultTierName,
+		`SELECT id FROM tiers WHERE is_default = 1 LIMIT 1`,
 	).Scan(&id)
 	if err == sql.ErrNoRows {
 		return "", ErrTierNotFound

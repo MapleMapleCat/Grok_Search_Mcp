@@ -13,12 +13,12 @@ export function renderTiersPage(state) {
   const assignedUserCount = state.pagination.tiers.assignedUserCount
     || tiers.reduce((totalUserCount, tier) => totalUserCount + getNonNegativeNumber(tier.user_count), 0);
   const totalTierCount = state.pagination.tiers.totalCount || tiers.length;
-  const initialTier = tiers.find((tier) => isInitialTier(tier));
+  const defaultTier = state.data.defaultTier || tiers.find((tier) => isDefaultTier(tier));
 
   return `
     <div class="tiers-page">
       ${renderPageHeading("配额方案", "为不同用户群体设置清晰、统一且可复用的调用上限。", createButton)}
-      ${renderTierOverview(totalTierCount, assignedUserCount, initialTier)}
+      ${renderTierOverview(totalTierCount, assignedUserCount, defaultTier)}
       ${tiers.length === 0 ? renderEmptyTiers(createButton) : `
         <div class="tier-catalog-heading">
           <div>
@@ -36,7 +36,7 @@ export function renderTiersPage(state) {
   `;
 }
 
-function renderTierOverview(tierCount, assignedUserCount, initialTier) {
+function renderTierOverview(tierCount, assignedUserCount, defaultTier) {
   return `
     <section class="tier-overview" aria-label="配额方案概览">
       <div class="tier-overview-copy">
@@ -56,9 +56,9 @@ function renderTierOverview(tierCount, assignedUserCount, initialTier) {
           <small>位用户已纳入管理</small>
         </div>
         <div class="tier-overview-stat">
-          <span>起始方案</span>
-          <strong class="is-textual">${initialTier ? escapeHTML(initialTier.name) : "未设置"}</strong>
-          <small>${initialTier ? "基础配额策略" : "尚未设置基础策略"}</small>
+          <span>新用户默认</span>
+          <strong class="is-textual">${defaultTier ? escapeHTML(defaultTier.name) : "未设置"}</strong>
+          <small>${defaultTier ? "注册与新建用户自动分配" : "请设置一个默认方案"}</small>
         </div>
       </div>
     </section>
@@ -66,21 +66,21 @@ function renderTierOverview(tierCount, assignedUserCount, initialTier) {
 }
 
 function renderTierCard(tier) {
-  const tierIsInitial = isInitialTier(tier);
+  const tierIsDefault = isDefaultTier(tier);
   const assignedUserCount = getNonNegativeNumber(tier.user_count);
   const tierHasAssignedUsers = assignedUserCount > 0;
   const tierIdentifier = escapeHTML(tier.id);
   const tierLevel = getNonNegativeNumber(tier.level);
 
   return `
-    <article class="tier-card ${tierIsInitial ? "is-initial" : ""}">
+    <article class="tier-card ${tierIsDefault ? "is-default" : ""}">
       <header class="tier-card-header">
         <div class="tier-identity">
-          <div class="tier-symbol">${renderIcon(tierIsInitial ? "spark" : "layers")}</div>
+          <div class="tier-symbol">${renderIcon(tierIsDefault ? "spark" : "layers")}</div>
           <div class="tier-title-group">
             <div class="tier-card-meta">
               <span>Level ${escapeHTML(formatNumber(tierLevel))}</span>
-              ${tierIsInitial ? '<span class="tier-initial-note"><i></i> 起始方案</span>' : ""}
+              ${tierIsDefault ? '<span class="tier-default-note"><i></i> 默认方案</span>' : ""}
             </div>
             <h3>${escapeHTML(tier.name)}</h3>
           </div>
@@ -100,10 +100,10 @@ function renderTierCard(tier) {
           <div class="tier-assignment-icon">${renderIcon("users")}</div>
           <div>
             <strong>${escapeHTML(formatNumber(assignedUserCount))} 位用户</strong>
-            <span>${tierHasAssignedUsers ? "修改限额将同步影响这些用户" : "尚未分配，可随时调整或删除"}</span>
+            <span>${renderAssignmentDescription(tierIsDefault, tierHasAssignedUsers)}</span>
           </div>
         </div>
-        <button class="tier-delete-button" type="button" data-action="confirm-delete-tier" data-id="${tierIdentifier}" ${tierHasAssignedUsers ? 'disabled title="已有用户使用此方案，无法删除"' : 'title="删除配额方案"'}>
+        <button class="tier-delete-button" type="button" data-action="confirm-delete-tier" data-id="${tierIdentifier}" ${renderDeleteButtonState(tierIsDefault, tierHasAssignedUsers)}>
           ${renderIcon("trash")}<span>删除</span>
         </button>
       </footer>
@@ -149,8 +149,28 @@ function renderTiersLoading(createButton) {
   `;
 }
 
-function isInitialTier(tier) {
-  return String(tier.name).toLowerCase() === "tier0";
+function isDefaultTier(tier) {
+  return Boolean(tier?.is_default);
+}
+
+function renderDeleteButtonState(tierIsDefault, tierHasAssignedUsers) {
+  if (tierIsDefault) {
+    return 'disabled title="请先将其他方案设为默认方案"';
+  }
+  if (tierHasAssignedUsers) {
+    return 'disabled title="已有用户使用此方案，无法删除"';
+  }
+  return 'title="删除配额方案"';
+}
+
+function renderAssignmentDescription(tierIsDefault, tierHasAssignedUsers) {
+  if (tierHasAssignedUsers) {
+    return "修改限额将同步影响这些用户";
+  }
+  if (tierIsDefault) {
+    return "新用户会自动使用此方案";
+  }
+  return "尚未分配，可随时调整或删除";
 }
 
 function getNonNegativeNumber(value) {

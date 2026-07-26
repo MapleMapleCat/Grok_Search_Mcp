@@ -28,6 +28,10 @@ var ErrTierNameTaken = errors.New("tier name already taken")
 // ErrTierInUse 表示等级仍被用户引用，不能删除。
 var ErrTierInUse = errors.New("tier in use")
 
+// ErrDefaultTierProtected 表示默认等级不能被直接删除或取消默认状态。
+// 管理员必须先将另一个等级设为默认等级。
+var ErrDefaultTierProtected = errors.New("default tier must be replaced before it can be removed")
+
 // ErrTierNotAssignable 表示 tier_id 为空或不存在，不能分配给用户。
 // 任意已存在的 tier 均可分配（不再限制 name 必须为 tier0~tier6）。
 var ErrTierNotAssignable = errors.New("tier_id must reference an existing tier")
@@ -57,9 +61,6 @@ var ErrInviteCodeLimitTooLow = errors.New("invite code registration limit is low
 // ErrUsageRecordNotFound is returned when a usage record does not exist or is
 // outside the caller's authorized scope.
 var ErrUsageRecordNotFound = errors.New("usage record not found")
-
-// DefaultTierName 是新建用户默认分配的等级名称。
-const DefaultTierName = "tier0"
 
 // RegistrationMode 控制公开注册入口如何放行新用户。
 type RegistrationMode = settings.RegistrationMode
@@ -125,13 +126,15 @@ func (reservation SuccessQuotaReservation) IsValid() bool {
 	return err == nil && parsedPeriod.Format(successQuotaPeriodLayout) == reservation.Period
 }
 
-// Tier 表示用户等级预设（预置 tier0~tier6，也可自定义），是用户限额（rpm/success_limit）的唯一来源。
+// Tier 表示用户配额预设，是用户限额（rpm/success_limit）的唯一来源。
+// IsDefault 明确标记新用户使用的默认方案，不依赖名称或展示顺序。
 type Tier struct {
 	ID           string
 	Name         string
 	Level        int
 	RPM          int
 	SuccessLimit int
+	IsDefault    bool
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -350,6 +353,7 @@ type TierUpdates struct {
 	Level        *int
 	RPM          *int
 	SuccessLimit *int
+	IsDefault    *bool
 }
 
 // InviteCodeUpdates 用于管理员 PATCH 邀请码；nil 表示不修改对应字段。
@@ -362,7 +366,7 @@ type InviteCodeUpdates struct {
 type Store interface {
 	Close() error
 
-	// CreateUser 建用户；限额不再随用户保存，统一由默认 tier0 决定。
+	// CreateUser 建用户；限额不再随用户保存，统一由显式默认 tier 决定。
 	CreateUser(ctx context.Context, username, passwordHash string, role UserRole) (*User, error)
 	// RegisterUserWithCurrentMode 在同一事务内读取当前注册模式并按该模式创建用户。
 	RegisterUserWithCurrentMode(ctx context.Context, username, passwordHash, rawInviteCode string, fallbackMode RegistrationMode) (*User, error)
@@ -379,9 +383,10 @@ type Store interface {
 	ReleaseSuccessCall(ctx context.Context, reservation SuccessQuotaReservation) error
 
 	GetTierByID(ctx context.Context, id string) (*Tier, error)
+	GetDefaultTier(ctx context.Context) (*Tier, error)
 	GetTiersByIDs(ctx context.Context, ids []string) (map[string]*Tier, error)
 	ListTiersPage(ctx context.Context, cursor *TierCursor, limit int) (*TierPage, error)
-	CreateTier(ctx context.Context, name string, level, rpm, successLimit int) (*Tier, error)
+	CreateTier(ctx context.Context, name string, level, rpm, successLimit int, isDefault bool) (*Tier, error)
 	UpdateTier(ctx context.Context, id string, updates TierUpdates) (*Tier, error)
 	DeleteTier(ctx context.Context, id string) error
 	CountUsersByTier(ctx context.Context, tierID string) (int64, error)
