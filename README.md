@@ -580,7 +580,7 @@ Administrators can create, disable, and delete invite codes and set their regist
 
 Each user belongs to a tier. All of a user's API keys share that tier's RPM and monthly successful-call allowance. Only actual `tools/call` requests are metered; initialization, ping, and tool-list requests are not.
 
-An explicit default-tier flag determines the initial tier for self-registered users and users created by administrators. The default no longer depends on the name `tier0`. Any tier can be selected as the default in the administration panel. Changing it affects only users created afterward; existing assignments are left unchanged. A default tier cannot be unset or deleted until another tier replaces it.
+An explicit default-tier flag determines the initial tier for self-registered users and users created by administrators. The default no longer depends on the name `tier0`. Any tier can be selected as the default in the administration panel. Changing it affects only users created afterward; existing assignments are left unchanged. Deleting a non-default tier atomically moves all of its users to the default tier selected at deletion time before removing the old tier; users keep their successful-call usage for the current month. A default tier cannot be unset or deleted until another tier replaces it.
 
 Tiers no longer contain a redundant `level` field. A tier does not imply a permission rank; it only defines an RPM and monthly successful-call allowance. The administration panel lists tiers in stable creation order.
 

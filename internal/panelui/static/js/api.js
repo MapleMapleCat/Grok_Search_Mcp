@@ -211,7 +211,7 @@ function translateBackendError(message, status) {
     "cannot disable current user": "不能禁用当前登录账户。",
     "cannot downgrade current user": "不能降低当前登录账户的角色。",
     "cannot remove last enabled admin": "系统必须保留至少一位启用中的管理员。",
-    "tier is in use; reassign users first": "该配额方案仍有用户使用，请先重新分配用户。",
+    "no default tier configured": "当前未配置默认配额方案，无法迁移用户。请先设置默认方案后重试。",
     "tier name already taken": "该配额方案名称已存在。",
     "registration_limit cannot be lower than current usage": "注册上限不能低于当前已使用次数。",
     "failed to list upstream models": "无法从上游获取模型列表。",

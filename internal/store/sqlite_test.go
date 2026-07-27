@@ -1427,7 +1427,7 @@ func TestUpdateUserTokenVersionSemantics(t *testing.T) {
 	}
 }
 
-func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
+func TestTierLifecycleValidationAndAssignedUserMigration(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 
@@ -1450,16 +1450,57 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 		t.Fatalf("unexpected updated tier: %+v", updatedTier)
 	}
 
-	user, err := s.CreateUser(ctx, "tier-user", "hash", RoleUser)
+	assignedTier := requireTierByName(t, s, "tier1")
+	firstUser, err := s.CreateUser(ctx, "tier-user-one", "hash", RoleUser)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inUseTier := requireTierByName(t, s, "tier1")
-	if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &inUseTier.ID}); err != nil {
+	secondUser, err := s.CreateUser(ctx, "tier-user-two", "hash", RoleUser)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteTier(ctx, inUseTier.ID); !errors.Is(err, ErrTierInUse) {
-		t.Fatalf("expected in-use tier delete to fail, got %v", err)
+	for _, user := range []*User{firstUser, secondUser} {
+		if _, err := s.UpdateUser(ctx, user.ID, UserUpdates{TierID: &assignedTier.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE users SET success_calls = 17, success_period = ? WHERE id = ?`,
+		currentSuccessQuotaPeriod(), firstUser.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	defaultTier := requireTierByName(t, s, "tier2")
+	setAsDefault := true
+	defaultTier, err = s.UpdateTier(ctx, defaultTier.ID, TierUpdates{IsDefault: &setAsDefault})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteTier(ctx, assignedTier.ID); err != nil {
+		t.Fatalf("delete assigned non-default tier: %v", err)
+	}
+	if _, err := s.GetTierByID(ctx, assignedTier.ID); !errors.Is(err, ErrTierNotFound) {
+		t.Fatalf("expected migrated tier to be deleted, got %v", err)
+	}
+	for _, user := range []*User{firstUser, secondUser} {
+		migratedUser, err := s.GetUserByID(ctx, user.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if migratedUser.TierID != defaultTier.ID {
+			t.Fatalf("user %s tier_id = %s, want default tier %s", user.ID, migratedUser.TierID, defaultTier.ID)
+		}
+		if migratedUser.TokenVersion != user.TokenVersion {
+			t.Fatalf("tier migration changed user %s token_version: got %d want %d", user.ID, migratedUser.TokenVersion, user.TokenVersion)
+		}
+	}
+	migratedFirstUser, err := s.GetUserByID(ctx, firstUser.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migratedFirstUser.SuccessCalls != 17 || migratedFirstUser.SuccessPeriod != currentSuccessQuotaPeriod() {
+		t.Fatalf("tier migration reset success quota usage: calls=%d period=%q", migratedFirstUser.SuccessCalls, migratedFirstUser.SuccessPeriod)
 	}
 
 	unusedTier, err := s.CreateTier(ctx, "unused", 0, 0, false)
@@ -1471,6 +1512,40 @@ func TestTierLifecycleValidationAndInUseProtection(t *testing.T) {
 	}
 	if _, err := s.GetTierByID(ctx, unusedTier.ID); !errors.Is(err, ErrTierNotFound) {
 		t.Fatalf("expected deleted tier to be missing, got %v", err)
+	}
+}
+
+func TestDeleteTierFailsClosedWithoutDefaultTier(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+
+	assignedTier, err := sqliteStore.CreateTier(requestContext, "assigned-without-default", 15, 150, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := sqliteStore.CreateUser(requestContext, "missing-default-tier-user", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqliteStore.UpdateUser(requestContext, user.ID, UserUpdates{TierID: &assignedTier.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqliteStore.db.ExecContext(requestContext, `UPDATE tiers SET is_default = 0 WHERE is_default = 1`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sqliteStore.DeleteTier(requestContext, assignedTier.ID); !errors.Is(err, ErrDefaultTierMissing) {
+		t.Fatalf("expected missing default tier error, got %v", err)
+	}
+	if _, err := sqliteStore.GetTierByID(requestContext, assignedTier.ID); err != nil {
+		t.Fatalf("tier was deleted despite missing migration target: %v", err)
+	}
+	unchangedUser, err := sqliteStore.GetUserByID(requestContext, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchangedUser.TierID != assignedTier.ID {
+		t.Fatalf("user tier changed despite rolled-back deletion: got %s want %s", unchangedUser.TierID, assignedTier.ID)
 	}
 }
 

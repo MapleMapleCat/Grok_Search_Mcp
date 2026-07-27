@@ -73,7 +73,8 @@ export function createApplicationEvents({
     state,
     modalController,
     renderApplication,
-    handleSessionError
+    handleSessionError,
+    loadCurrentPage
   });
   const inviteEvents = createInviteEvents({
     state,

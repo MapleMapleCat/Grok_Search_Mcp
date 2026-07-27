@@ -25,12 +25,12 @@ var ErrTierNotFound = errors.New("tier not found")
 // ErrTierNameTaken 表示等级名称已存在。
 var ErrTierNameTaken = errors.New("tier name already taken")
 
-// ErrTierInUse 表示等级仍被用户引用，不能删除。
-var ErrTierInUse = errors.New("tier in use")
-
 // ErrDefaultTierProtected 表示默认等级不能被直接删除或取消默认状态。
 // 管理员必须先将另一个等级设为默认等级。
 var ErrDefaultTierProtected = errors.New("default tier must be replaced before it can be removed")
+
+// ErrDefaultTierMissing 表示系统没有可接收用户迁移的默认等级。
+var ErrDefaultTierMissing = errors.New("no default tier configured")
 
 // ErrTierNotAssignable 表示 tier_id 为空或不存在，不能分配给用户。
 // 任意已存在的 tier 均可分配（不再限制 name 必须为 tier0~tier6）。

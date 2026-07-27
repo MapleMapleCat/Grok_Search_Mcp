@@ -20,6 +20,16 @@ type adminTierStore struct {
 	createdDefault bool
 	updatedTierID  string
 	updatedFields  store.TierUpdates
+	deletedTierID  string
+	deleteTierErr  error
+}
+
+type tierAuthCacheInvalidator struct {
+	invalidationCount int
+}
+
+func (invalidator *tierAuthCacheInvalidator) InvalidateAll() {
+	invalidator.invalidationCount++
 }
 
 func (testStore *adminTierStore) ListTiersPage(context.Context, *store.TierCursor, int) (*store.TierPage, error) {
@@ -65,6 +75,11 @@ func (testStore *adminTierStore) UpdateTier(_ context.Context, tierID string, up
 	testStore.updatedTierID = tierID
 	testStore.updatedFields = updates
 	return &store.Tier{ID: tierID, Name: "updated", IsDefault: updates.IsDefault != nil && *updates.IsDefault}, nil
+}
+
+func (testStore *adminTierStore) DeleteTier(_ context.Context, tierID string) error {
+	testStore.deletedTierID = tierID
+	return testStore.deleteTierErr
 }
 
 func TestAdminListTiersReturnsExplicitDefaultOutsideCurrentPage(t *testing.T) {
@@ -139,4 +154,58 @@ func TestAdminTierMutationsForwardExplicitDefaultSelection(t *testing.T) {
 			t.Fatalf("update request did not forward default selection: id=%q updates=%+v", testStore.updatedTierID, testStore.updatedFields)
 		}
 	})
+}
+
+func TestAdminDeleteTierAllowsMigrationAndMapsProtectedStates(t *testing.T) {
+	testCases := []struct {
+		name                  string
+		storeError            error
+		expectedStatus        int
+		expectedResponseText  string
+		expectedInvalidations int
+	}{
+		{
+			name:                  "assigned non-default tier deletion succeeds",
+			expectedStatus:        http.StatusNoContent,
+			expectedInvalidations: 1,
+		},
+		{
+			name:                 "default tier remains protected",
+			storeError:           store.ErrDefaultTierProtected,
+			expectedStatus:       http.StatusConflict,
+			expectedResponseText: "set another tier as default before deleting this tier",
+		},
+		{
+			name:                 "missing migration target is reported",
+			storeError:           store.ErrDefaultTierMissing,
+			expectedStatus:       http.StatusConflict,
+			expectedResponseText: "no default tier configured",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testStore := &adminTierStore{deleteTierErr: testCase.storeError}
+			authCache := &tierAuthCacheInvalidator{}
+			handler := &Handler{Store: testStore, AuthCache: authCache}
+			request := httptest.NewRequest(http.MethodDelete, "/panel/v1/admin/tiers/tier-to-delete", nil)
+			request.SetPathValue("id", "tier-to-delete")
+			responseRecorder := httptest.NewRecorder()
+
+			handler.adminDeleteTier(responseRecorder, request)
+
+			if responseRecorder.Code != testCase.expectedStatus {
+				t.Fatalf("admin delete tier returned status %d: %s", responseRecorder.Code, responseRecorder.Body.String())
+			}
+			if testStore.deletedTierID != "tier-to-delete" {
+				t.Fatalf("delete request used tier ID %q", testStore.deletedTierID)
+			}
+			if testCase.expectedResponseText != "" && !strings.Contains(responseRecorder.Body.String(), testCase.expectedResponseText) {
+				t.Fatalf("response %q does not contain %q", responseRecorder.Body.String(), testCase.expectedResponseText)
+			}
+			if authCache.invalidationCount != testCase.expectedInvalidations {
+				t.Fatalf("auth cache invalidations = %d, want %d", authCache.invalidationCount, testCase.expectedInvalidations)
+			}
+		})
+	}
 }

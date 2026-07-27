@@ -121,12 +121,12 @@ func (handler *Handler) adminDeleteTier(writer http.ResponseWriter, request *htt
 			writeError(writer, http.StatusNotFound, "tier not found")
 			return
 		}
-		if errors.Is(err, store.ErrTierInUse) {
-			writeError(writer, http.StatusConflict, "tier is in use; reassign users first")
-			return
-		}
 		if errors.Is(err, store.ErrDefaultTierProtected) {
 			writeError(writer, http.StatusConflict, "set another tier as default before deleting this tier")
+			return
+		}
+		if errors.Is(err, store.ErrDefaultTierMissing) {
+			writeError(writer, http.StatusConflict, "no default tier configured")
 			return
 		}
 		log.Printf("admin delete tier %s failed error_type=%T", tierID, err)

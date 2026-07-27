@@ -14,7 +14,9 @@ export function createTierEvents({
   state,
   modalController,
   renderApplication,
-  handleSessionError
+  handleSessionError,
+  loadCurrentPage = async () => true,
+  deleteTierRequest = deleteTier
 }) {
   function openCreateModal() {
     modalController.openModal({ type: "createTier", busy: false, error: "" });
@@ -80,18 +82,53 @@ export function createTierEvents({
 
   function openDeleteConfirmation(tierIdentifier) {
     const tier = findItemByIdentifier(state.data.tiers, tierIdentifier);
+    if (!tier) {
+      showToast("方案不存在", "请刷新页面后重试。", "error");
+      return;
+    }
+    if (tier.is_default) {
+      showToast("默认方案不可删除", "请先将其他方案设为默认方案。", "error");
+      return;
+    }
+
+    const assignedUserCount = getNonNegativeNumber(tier.user_count);
+    const defaultTierName = state.data.defaultTier?.name || "当前默认方案";
+    const migrationNotice = assignedUserCount > 0
+      ? `该方案的 ${assignedUserCount} 位用户将自动迁移到“${defaultTierName}”，且当月已使用额度不会重置。`
+      : "该方案当前没有已分配用户。";
     openConfirmationModal(modalController, {
       confirmAction: "deleteTier",
       identifier: tierIdentifier,
       title: "删除配额方案",
-      message: `将永久删除“${tier?.name || "该方案"}”。默认方案或仍有用户使用的方案无法删除。`,
+      message: `将永久删除“${tier.name}”。${migrationNotice}`,
       confirmLabel: "删除方案"
     });
   }
 
   async function deleteConfirmed(tierIdentifier) {
-    await deleteTier(tierIdentifier);
+    const deletedTier = findItemByIdentifier(state.data.tiers, tierIdentifier);
+    await deleteTierRequest(tierIdentifier);
+
+    const migratedUserCount = getNonNegativeNumber(deletedTier?.user_count);
     state.data.tiers = removeItemByIdentifier(state.data.tiers, tierIdentifier);
+    if (state.data.defaultTier && migratedUserCount > 0) {
+      const updatedDefaultTier = {
+        ...state.data.defaultTier,
+        user_count: getNonNegativeNumber(state.data.defaultTier.user_count) + migratedUserCount
+      };
+      state.data.defaultTier = updatedDefaultTier;
+      state.data.tiers = (state.data.tiers || []).map((tier) => (
+        tier.id === updatedDefaultTier.id ? { ...tier, user_count: updatedDefaultTier.user_count } : tier
+      ));
+    }
+    if (state.pagination?.tiers) {
+      state.pagination.tiers.totalCount = Math.max(
+        0,
+        getNonNegativeNumber(state.pagination.tiers.totalCount) - 1
+      );
+    }
+    state.data.users = null;
+    await loadCurrentPage({ refreshing: true });
   }
 
   return {
@@ -102,4 +139,9 @@ export function createTierEvents({
     openDeleteConfirmation,
     deleteConfirmed
   };
+}
+
+function getNonNegativeNumber(value) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : 0;
 }

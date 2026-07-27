@@ -296,13 +296,25 @@ func (s *SQLiteStore) DeleteTier(ctx context.Context, id string) error {
 	if tier.IsDefault {
 		return ErrDefaultTierProtected
 	}
-	var n int64
-	if err := transaction.QueryRowContext(ctx, countUsersByTierQuery, id).Scan(&n); err != nil {
+
+	var defaultTierID string
+	if err := transaction.QueryRowContext(ctx,
+		`SELECT id FROM tiers WHERE is_default = 1 LIMIT 1`,
+	).Scan(&defaultTierID); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrDefaultTierMissing
+		}
 		return err
 	}
-	if n > 0 {
-		return ErrTierInUse
+
+	updatedAt := formatTime(nowUTC())
+	if _, err := transaction.ExecContext(ctx,
+		`UPDATE users SET tier_id = ?, updated_at = ? WHERE tier_id = ?`,
+		defaultTierID, updatedAt, id,
+	); err != nil {
+		return err
 	}
+
 	res, err := transaction.ExecContext(ctx, `DELETE FROM tiers WHERE id = ?`, id)
 	if err != nil {
 		return err

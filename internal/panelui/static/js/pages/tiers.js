@@ -102,7 +102,7 @@ function renderTierCard(tier) {
             <span>${renderAssignmentDescription(tierIsDefault, tierHasAssignedUsers)}</span>
           </div>
         </div>
-        <button class="tier-delete-button" type="button" data-action="confirm-delete-tier" data-id="${tierIdentifier}" ${renderDeleteButtonState(tierIsDefault, tierHasAssignedUsers)}>
+        <button class="tier-delete-button" type="button" data-action="confirm-delete-tier" data-id="${tierIdentifier}" ${renderDeleteButtonState(tierIsDefault)}>
           ${renderIcon("trash")}<span>删除</span>
         </button>
       </footer>
@@ -152,19 +152,18 @@ function isDefaultTier(tier) {
   return Boolean(tier?.is_default);
 }
 
-function renderDeleteButtonState(tierIsDefault, tierHasAssignedUsers) {
+function renderDeleteButtonState(tierIsDefault) {
   if (tierIsDefault) {
     return 'disabled title="请先将其他方案设为默认方案"';
   }
-  if (tierHasAssignedUsers) {
-    return 'disabled title="已有用户使用此方案，无法删除"';
-  }
-  return 'title="删除配额方案"';
+  return 'title="删除配额方案；已分配用户将自动迁移到当前默认方案"';
 }
 
 function renderAssignmentDescription(tierIsDefault, tierHasAssignedUsers) {
   if (tierHasAssignedUsers) {
-    return "修改限额将同步影响这些用户";
+    return tierIsDefault
+      ? "修改限额将同步影响这些用户"
+      : "删除方案时，这些用户将迁移到默认方案";
   }
   if (tierIsDefault) {
     return "新用户会自动使用此方案";
