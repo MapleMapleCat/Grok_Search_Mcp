@@ -576,7 +576,7 @@ the persisted value remains authoritative:
 | `invite` | A valid, enabled, non-exhausted invite code is required. |
 | `disabled` | Public registration is disabled. |
 
-Administrators can create, disable, and delete invite codes and set their registration limits.
+Administrators can create, copy, disable, and delete invite codes and set their registration limits. Redemption remains hash-based, while newly created codes are also stored as AES-256-GCM ciphertext for explicit administrator reveal. Invite codes created before recoverable storage was introduced remain valid for registration but cannot be copied again; replace those codes when recovery is required.
 
 Each user belongs to a tier. All of a user's API keys share that tier's RPM and monthly successful-call allowance. Only actual `tools/call` requests are metered; initialization, ping, and tool-list requests are not.
 
@@ -653,6 +653,14 @@ Administrator routes under `/panel/v1/admin/` manage users, tiers, server settin
 Authorization: Bearer <panel JWT>
 ```
 
+Invite-code administration includes an explicit secret-reveal route used by the panel copy action:
+
+```text
+POST /panel/v1/admin/invite-codes/{id}/reveal
+```
+
+List and update responses contain only invite metadata and the visible prefix; they never include the complete code.
+
 ## Docker deployment
 
 To build and run the current source checkout with the supplied Compose file:
@@ -716,7 +724,7 @@ put it in the untracked `.env` or an external secret manager instead.
 - Keep the plaintext application port loopback- or network-internally bound; the supplied Compose and `docker run` examples publish it on host loopback only.
 - Add reverse-proxy rate limits for `/mcp`, panel login, and panel registration.
 - Keep debug mode disabled unless troubleshooting. Debug context may retain request or response content even though authentication headers are redacted.
-- MCP client API keys authenticate through an irreversible hash and are also stored as AES-256-GCM ciphertext for authorized panel reveal/copy. Protect database backups and `GROK_JWT_SECRET` as access to recoverable client credentials.
+- MCP client API keys and newly created invite codes authenticate through irreversible hashes and are also stored as AES-256-GCM ciphertext for authorized panel reveal/copy. Protect database backups and `GROK_JWT_SECRET` as access to recoverable credentials.
 
 ## Development and testing
 

@@ -82,7 +82,8 @@ export function createApplicationEvents({
     renderApplication,
     renderModalRegion,
     handleSessionError,
-    loadCurrentPage
+    loadCurrentPage,
+    copyValue
   });
   const settingsEvents = createSettingsEvents({
     state,
@@ -156,6 +157,10 @@ export function createApplicationEvents({
       actionElement.dataset.id
     ),
     "open-create-invite": () => inviteEvents.openCreateModal(),
+    "copy-invite": (actionElement) => inviteEvents.copyInviteCode(
+      actionElement.dataset.id,
+      actionElement
+    ),
     "toggle-invite": (actionElement) => inviteEvents.toggleEnabled(actionElement.dataset.id),
     "view-invite-redemptions": (actionElement) => inviteEvents.openRedemptions(
       actionElement.dataset.id

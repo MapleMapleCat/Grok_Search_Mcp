@@ -207,6 +207,7 @@ function translateBackendError(message, status) {
     "user not found": "未找到指定用户。",
     "tier not found": "未找到指定配额方案。",
     "invite code not found": "未找到指定邀请码。",
+    "invite code secret is unavailable": "该邀请码创建时间较早，未保存可恢复密文，请删除后重新生成。",
     "cannot delete current user": "不能删除当前登录账户。",
     "cannot disable current user": "不能禁用当前登录账户。",
     "cannot downgrade current user": "不能降低当前登录账户的角色。",
@@ -438,6 +439,13 @@ export function fetchInviteCodeRedemptions(inviteIdentifier, options = {}) {
 
 export function createInviteCode(inviteCodeData) {
   return panelAPI.request("/panel/v1/admin/invite-codes", { method: "POST", body: inviteCodeData });
+}
+
+export function revealInviteCode(inviteIdentifier) {
+  return panelAPI.request(
+    `/panel/v1/admin/invite-codes/${encodeURIComponent(inviteIdentifier)}/reveal`,
+    { method: "POST" }
+  );
 }
 
 export function updateInviteCode(inviteIdentifier, inviteCodeData) {

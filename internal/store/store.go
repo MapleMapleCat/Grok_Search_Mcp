@@ -46,6 +46,10 @@ var ErrAPIKeyLimit = errors.New("API key limit reached")
 // ErrInviteCodeNotFound 表示按 ID 未找到邀请码。
 var ErrInviteCodeNotFound = errors.New("invite code not found")
 
+// ErrInviteCodeSecretUnavailable indicates that an invite code predates
+// recoverable encrypted storage and therefore cannot be copied again.
+var ErrInviteCodeSecretUnavailable = errors.New("invite code secret is unavailable")
+
 // ErrInviteCodeInvalid 表示注册时提供的邀请码不存在或格式无效。
 var ErrInviteCodeInvalid = errors.New("invalid invite code")
 
@@ -156,8 +160,8 @@ type APIKey struct {
 	keyEncryptionVersion int
 }
 
-// InviteCode represents invite metadata. CodeHash is authoritative for
-// redemption; raw invite material is returned only by CreateInviteCode.
+// InviteCode represents invite metadata. CodeHash remains authoritative for
+// redemption; recoverable material is stored only as authenticated ciphertext.
 type InviteCode struct {
 	ID                string
 	CodeHash          string
@@ -168,6 +172,10 @@ type InviteCode struct {
 	CreatedByUserID   string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+
+	codeCiphertext        string
+	codeNonce             string
+	codeEncryptionVersion int
 }
 
 // InviteCodeRedemption records the account created by one successful invite
@@ -404,6 +412,7 @@ type Store interface {
 	ListInviteCodesPage(ctx context.Context, cursor *TimeIDCursor, limit int) (*InviteCodePage, error)
 	ListInviteCodeRedemptionsPage(ctx context.Context, inviteCodeID string, cursor *TimeIDCursor, limit int) (*InviteCodeRedemptionPage, error)
 	CreateInviteCode(ctx context.Context, createdByUserID string, registrationLimit int) (*InviteCode, string, error)
+	RevealInviteCode(ctx context.Context, id string) (string, error)
 	UpdateInviteCode(ctx context.Context, id string, updates InviteCodeUpdates) (*InviteCode, error)
 	DeleteInviteCode(ctx context.Context, id string) error
 

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/hmac"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -10,7 +11,11 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/keyhash"
 )
 
-const inviteCodeColumns = `id, code_hash, code_prefix, registration_limit, registration_count, enabled, created_by_user_id, created_at, updated_at`
+const inviteCodeColumns = `id, code_hash, code_prefix, code_ciphertext, code_nonce, code_encryption_version, registration_limit, registration_count, enabled, created_by_user_id, created_at, updated_at`
+
+func inviteCodeRecordIdentity(inviteCodeID string) string {
+	return "invite-code:" + inviteCodeID
+}
 
 func scanInviteCode(row interface {
 	Scan(dest ...any) error
@@ -25,6 +30,9 @@ func scanInviteCode(row interface {
 		&inviteCode.ID,
 		&inviteCode.CodeHash,
 		&inviteCode.CodePrefix,
+		&inviteCode.codeCiphertext,
+		&inviteCode.codeNonce,
+		&inviteCode.codeEncryptionVersion,
 		&inviteCode.RegistrationLimit,
 		&inviteCode.RegistrationCount,
 		&enabled,
@@ -215,15 +223,28 @@ func (s *SQLiteStore) CreateInviteCode(ctx context.Context, createdByUserID stri
 	if len(codePrefix) > 12 {
 		codePrefix = codePrefix[:12]
 	}
+	ciphertext, nonce, encryptionVersion, err := s.secretCipher.Encrypt(
+		rawInviteCode,
+		inviteCodeRecordIdentity(inviteCodeID),
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("encrypt invite code: %w", err)
+	}
 	now := formatTime(time.Now().UTC())
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO invite_codes (id, code, code_hash, code_prefix, registration_limit, registration_count, enabled, created_by_user_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?, ?)`,
+		`INSERT INTO invite_codes (
+			id, code, code_hash, code_prefix, code_ciphertext, code_nonce,
+			code_encryption_version, registration_limit, registration_count,
+			enabled, created_by_user_id, created_at, updated_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)`,
 		inviteCodeID,
 		"",
 		keyhash.HashAPIKey(rawInviteCode),
 		codePrefix,
+		ciphertext,
+		nonce,
+		encryptionVersion,
 		registrationLimit,
 		createdByUserID,
 		now,
@@ -238,6 +259,32 @@ func (s *SQLiteStore) CreateInviteCode(ctx context.Context, createdByUserID stri
 		return nil, "", err
 	}
 	return inviteCode, rawInviteCode, nil
+}
+
+// RevealInviteCode decrypts an invite code for an explicit administrator
+// action. Registration continues to use CodeHash as its authoritative value.
+func (s *SQLiteStore) RevealInviteCode(ctx context.Context, id string) (string, error) {
+	inviteCode, err := s.getInviteCodeByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if inviteCode.codeCiphertext == "" || inviteCode.codeNonce == "" || inviteCode.codeEncryptionVersion == 0 {
+		return "", ErrInviteCodeSecretUnavailable
+	}
+
+	rawInviteCode, err := s.secretCipher.Decrypt(
+		inviteCode.codeCiphertext,
+		inviteCode.codeNonce,
+		inviteCodeRecordIdentity(inviteCode.ID),
+		inviteCode.codeEncryptionVersion,
+	)
+	if err != nil {
+		return "", fmt.Errorf("decrypt invite code: %w", err)
+	}
+	if !hmac.Equal([]byte(keyhash.HashAPIKey(rawInviteCode)), []byte(inviteCode.CodeHash)) {
+		return "", fmt.Errorf("decrypted invite code does not match stored hash")
+	}
+	return rawInviteCode, nil
 }
 
 func (s *SQLiteStore) UpdateInviteCode(ctx context.Context, id string, updates InviteCodeUpdates) (*InviteCode, error) {

@@ -106,6 +106,7 @@ func (Store) ListInviteCodeRedemptionsPage(context.Context, string, *store.TimeI
 func (Store) CreateInviteCode(context.Context, string, int) (*store.InviteCode, string, error) {
 	return nil, "", nil
 }
+func (Store) RevealInviteCode(context.Context, string) (string, error) { return "", nil }
 func (Store) UpdateInviteCode(context.Context, string, store.InviteCodeUpdates) (*store.InviteCode, error) {
 	return nil, nil
 }

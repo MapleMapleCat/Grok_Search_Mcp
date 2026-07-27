@@ -1,4 +1,4 @@
-// Package keycrypt encrypts recoverable API key material at rest.
+// Package keycrypt encrypts recoverable application secrets at rest.
 package keycrypt
 
 import (
@@ -15,7 +15,7 @@ import (
 
 const encryptionVersion = 1
 
-// Cipher encrypts API keys with an application-specific key derived from the
+// Cipher encrypts persisted secrets with an application-specific key derived from the
 // panel JWT secret. Key separation prevents direct reuse of the JWT signing key.
 type Cipher struct {
 	aead cipher.AEAD
@@ -47,41 +47,41 @@ func New(applicationSecret string) (*Cipher, error) {
 // record identity through authenticated additional data.
 func (c *Cipher) Encrypt(plaintext, recordIdentity string) (ciphertext string, nonce string, version int, err error) {
 	if c == nil || c.aead == nil {
-		return "", "", 0, fmt.Errorf("API key encryption is not configured")
+		return "", "", 0, fmt.Errorf("secret encryption is not configured")
 	}
 
 	nonceBytes := make([]byte, c.aead.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonceBytes); err != nil {
-		return "", "", 0, fmt.Errorf("generate API key encryption nonce: %w", err)
+		return "", "", 0, fmt.Errorf("generate secret encryption nonce: %w", err)
 	}
 	ciphertextBytes := c.aead.Seal(nil, nonceBytes, []byte(plaintext), []byte(recordIdentity))
 	return base64.RawStdEncoding.EncodeToString(ciphertextBytes), base64.RawStdEncoding.EncodeToString(nonceBytes), encryptionVersion, nil
 }
 
-// Decrypt authenticates and decrypts a stored API key.
+// Decrypt authenticates and decrypts a stored secret.
 func (c *Cipher) Decrypt(ciphertext, nonce, recordIdentity string, version int) (string, error) {
 	if c == nil || c.aead == nil {
-		return "", fmt.Errorf("API key encryption is not configured")
+		return "", fmt.Errorf("secret encryption is not configured")
 	}
 	if version != encryptionVersion {
-		return "", fmt.Errorf("unsupported API key encryption version %d", version)
+		return "", fmt.Errorf("unsupported secret encryption version %d", version)
 	}
 
 	ciphertextBytes, err := base64.RawStdEncoding.DecodeString(ciphertext)
 	if err != nil {
-		return "", fmt.Errorf("decode API key ciphertext: %w", err)
+		return "", fmt.Errorf("decode secret ciphertext: %w", err)
 	}
 	nonceBytes, err := base64.RawStdEncoding.DecodeString(nonce)
 	if err != nil {
-		return "", fmt.Errorf("decode API key nonce: %w", err)
+		return "", fmt.Errorf("decode secret nonce: %w", err)
 	}
 	if len(nonceBytes) != c.aead.NonceSize() {
-		return "", fmt.Errorf("invalid API key nonce length")
+		return "", fmt.Errorf("invalid secret nonce length")
 	}
 
 	plaintextBytes, err := c.aead.Open(nil, nonceBytes, ciphertextBytes, []byte(recordIdentity))
 	if err != nil {
-		return "", fmt.Errorf("decrypt API key: %w", err)
+		return "", fmt.Errorf("decrypt secret: %w", err)
 	}
 	return string(plaintextBytes), nil
 }

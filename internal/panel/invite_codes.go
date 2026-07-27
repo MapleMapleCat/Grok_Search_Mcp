@@ -87,10 +87,37 @@ func (h *Handler) adminCreateInviteCode(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "failed to create invite code")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, CreateInviteCodeResponse{
 		InviteCode: toInviteCodeResponse(inviteCode),
 		Code:       rawInviteCode,
 	})
+}
+
+func (h *Handler) adminRevealInviteCode(w http.ResponseWriter, r *http.Request) {
+	inviteCodeID := strings.TrimSpace(r.PathValue("id"))
+	if inviteCodeID == "" {
+		writeError(w, http.StatusBadRequest, "invite code id is required")
+		return
+	}
+
+	rawInviteCode, err := h.Store.RevealInviteCode(r.Context(), inviteCodeID)
+	if err != nil {
+		if errors.Is(err, store.ErrInviteCodeNotFound) {
+			writeError(w, http.StatusNotFound, "invite code not found")
+			return
+		}
+		if errors.Is(err, store.ErrInviteCodeSecretUnavailable) {
+			writeError(w, http.StatusConflict, "invite code secret is unavailable")
+			return
+		}
+		log.Printf("admin reveal invite code %q failed error_type=%T", inviteCodeID, err)
+		writeError(w, http.StatusInternalServerError, "failed to reveal invite code")
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, RevealInviteCodeResponse{Code: rawInviteCode})
 }
 
 func (h *Handler) adminUpdateInviteCode(w http.ResponseWriter, r *http.Request) {

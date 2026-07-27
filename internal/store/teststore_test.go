@@ -88,6 +88,7 @@ func (TestStore) ListInviteCodeRedemptionsPage(context.Context, string, *TimeIDC
 func (TestStore) CreateInviteCode(context.Context, string, int) (*InviteCode, string, error) {
 	return nil, "", nil
 }
+func (TestStore) RevealInviteCode(context.Context, string) (string, error) { return "", nil }
 func (TestStore) UpdateInviteCode(context.Context, string, InviteCodeUpdates) (*InviteCode, error) {
 	return nil, nil
 }

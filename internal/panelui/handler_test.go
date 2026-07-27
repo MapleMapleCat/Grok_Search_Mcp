@@ -222,7 +222,7 @@ func TestHandlerServesAccountSecurityLifecycleControls(t *testing.T) {
 	}
 }
 
-func TestHandlerServesOneTimeInviteCodeUIContract(t *testing.T) {
+func TestHandlerServesRecoverableInviteCodeUIContract(t *testing.T) {
 	testCases := []struct {
 		path             string
 		expectedContent  []string
@@ -231,19 +231,20 @@ func TestHandlerServesOneTimeInviteCodeUIContract(t *testing.T) {
 		{
 			path: "/panel/js/pages/invite-codes.js",
 			expectedContent: []string{
-				"完整邀请码仅在创建成功后显示一次",
-				"列表仅保留前缀和使用状态",
+				"列表仅显示前缀",
+				"copy-invite",
+				"复制完整邀请码",
 			},
 			forbiddenContent: []string{
 				"inviteCode.code ||",
-				"复制邀请码",
+				"data-value=\"${escapeHTML(inviteCode.code)}\"",
 			},
 		},
 		{
 			path: "/panel/js/components/modal.js",
 			expectedContent: []string{
-				"完整邀请码只显示一次",
-				"完整邀请码将无法再次获取",
+				"完整邀请码会加密保存",
+				"管理员仍可在邀请码列表中按需复制",
 			},
 		},
 	}

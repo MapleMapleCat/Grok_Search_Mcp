@@ -662,6 +662,178 @@ func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T)
 	}
 }
 
+func TestInviteCodeEncryptedAtRestAndRevealableAfterReopen(t *testing.T) {
+	const encryptionSecret = "test-invite-code-encryption-secret-at-least-32-bytes"
+	databasePath := filepath.Join(t.TempDir(), "encrypted-invite-code.db")
+	requestContext := context.Background()
+
+	sqliteStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		_ = sqliteStore.Close()
+		t.Fatal(err)
+	}
+	creator, err := sqliteStore.CreateUser(requestContext, "encrypted-invite-admin", "hash", RoleAdmin)
+	if err != nil {
+		_ = sqliteStore.Close()
+		t.Fatal(err)
+	}
+	inviteCode, rawInviteCode, err := sqliteStore.CreateInviteCode(requestContext, creator.ID, 3)
+	if err != nil {
+		_ = sqliteStore.Close()
+		t.Fatal(err)
+	}
+
+	var legacyCode string
+	var storedHash string
+	var ciphertext string
+	var nonce string
+	var encryptionVersion int
+	if err := sqliteStore.db.QueryRowContext(requestContext, `
+		SELECT code, code_hash, code_ciphertext, code_nonce, code_encryption_version
+		FROM invite_codes WHERE id = ?`, inviteCode.ID,
+	).Scan(&legacyCode, &storedHash, &ciphertext, &nonce, &encryptionVersion); err != nil {
+		_ = sqliteStore.Close()
+		t.Fatal(err)
+	}
+	if legacyCode != "" {
+		_ = sqliteStore.Close()
+		t.Fatalf("legacy invite code column = %q, want empty", legacyCode)
+	}
+	if storedHash != keyhash.HashAPIKey(rawInviteCode) {
+		_ = sqliteStore.Close()
+		t.Fatalf("stored invite hash = %q, want hash of raw invite", storedHash)
+	}
+	if ciphertext == "" || ciphertext == rawInviteCode || nonce == "" || encryptionVersion == 0 {
+		_ = sqliteStore.Close()
+		t.Fatalf("invalid encrypted invite fields: ciphertext=%q nonce=%q version=%d", ciphertext, nonce, encryptionVersion)
+	}
+
+	revealedInviteCode, err := sqliteStore.RevealInviteCode(requestContext, inviteCode.ID)
+	if err != nil {
+		_ = sqliteStore.Close()
+		t.Fatal(err)
+	}
+	if revealedInviteCode != rawInviteCode {
+		_ = sqliteStore.Close()
+		t.Fatalf("revealed invite code = %q, want original value", revealedInviteCode)
+	}
+	if err := sqliteStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopenedStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopenedStore.Close()
+	if err := reopenedStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		t.Fatal(err)
+	}
+	revealedAfterReopen, err := reopenedStore.RevealInviteCode(requestContext, inviteCode.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revealedAfterReopen != rawInviteCode {
+		t.Fatalf("revealed invite after reopen = %q, want original value", revealedAfterReopen)
+	}
+
+	if _, err := reopenedStore.db.ExecContext(requestContext, `
+		UPDATE invite_codes
+		SET code_ciphertext = '', code_nonce = '', code_encryption_version = 0
+		WHERE id = ?`, inviteCode.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopenedStore.RevealInviteCode(requestContext, inviteCode.ID); !errors.Is(err, ErrInviteCodeSecretUnavailable) {
+		t.Fatalf("RevealInviteCode legacy error = %v, want %v", err, ErrInviteCodeSecretUnavailable)
+	}
+	inviteExists, err := reopenedStore.InviteCodeExists(requestContext, rawInviteCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inviteExists {
+		t.Fatal("hash-only legacy invite should remain valid for registration checks")
+	}
+}
+
+func TestInviteCodeCiphertextMigrationPreservesHashOnlyRows(t *testing.T) {
+	const encryptionSecret = "test-invite-migration-secret-at-least-32-bytes"
+	databasePath := filepath.Join(t.TempDir(), "invite-before-ciphertext.db")
+	requestContext := context.Background()
+
+	currentStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := currentStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		_ = currentStore.Close()
+		t.Fatal(err)
+	}
+	creator, err := currentStore.CreateUser(requestContext, "pre-ciphertext-admin", "hash", RoleAdmin)
+	if err != nil {
+		_ = currentStore.Close()
+		t.Fatal(err)
+	}
+	inviteCode, rawInviteCode, err := currentStore.CreateInviteCode(requestContext, creator.ID, 2)
+	if err != nil {
+		_ = currentStore.Close()
+		t.Fatal(err)
+	}
+	if err := currentStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rawDatabase, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, columnName := range []string{"code_ciphertext", "code_nonce", "code_encryption_version"} {
+		if _, err := rawDatabase.Exec(`ALTER TABLE invite_codes DROP COLUMN ` + columnName); err != nil {
+			_ = rawDatabase.Close()
+			t.Fatalf("drop invite column %s: %v", columnName, err)
+		}
+	}
+	if _, err := rawDatabase.Exec(`DELETE FROM schema_migrations WHERE version = '012_invite_code_ciphertext'`); err != nil {
+		_ = rawDatabase.Close()
+		t.Fatal(err)
+	}
+	if err := rawDatabase.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migratedStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migratedStore.Close()
+	if err := migratedStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := migratedStore.RevealInviteCode(requestContext, inviteCode.ID); !errors.Is(err, ErrInviteCodeSecretUnavailable) {
+		t.Fatalf("RevealInviteCode migrated legacy error = %v, want %v", err, ErrInviteCodeSecretUnavailable)
+	}
+	inviteExists, err := migratedStore.InviteCodeExists(requestContext, rawInviteCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inviteExists {
+		t.Fatal("ciphertext migration changed the authoritative invite hash")
+	}
+	if _, err := migratedStore.RegisterUserWithCurrentMode(
+		requestContext,
+		"post-ciphertext-migration-user",
+		"hash",
+		rawInviteCode,
+		RegistrationModeInvite,
+	); err != nil {
+		t.Fatalf("redeem hash-only invite after ciphertext migration: %v", err)
+	}
+}
+
 func TestServerSettingsRevisionMigrationBackfillsExistingRow(t *testing.T) {
 	const encryptionSecret = "test-server-settings-migration-secret-at-least-32-bytes"
 	databasePath := filepath.Join(t.TempDir(), "settings-before-revision.db")
@@ -742,6 +914,10 @@ func TestInviteCodePlaintextMigrationClearsLegacyValueAndPreservesRedemption(t *
 
 	legacyStore, err := OpenSQLite(databasePath)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacyStore.ConfigureAPIKeyEncryption("legacy-invite-migration-secret-at-least-32-bytes"); err != nil {
+		_ = legacyStore.Close()
 		t.Fatal(err)
 	}
 	creator, err := legacyStore.CreateUser(requestContext, "legacy-invite-admin", "hash", RoleAdmin)

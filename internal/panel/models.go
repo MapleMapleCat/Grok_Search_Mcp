@@ -247,6 +247,10 @@ type CreateInviteCodeResponse struct {
 	Code       string             `json:"code"`
 }
 
+type RevealInviteCodeResponse struct {
+	Code string `json:"code"`
+}
+
 type UpdateInviteCodeRequest struct {
 	RegistrationLimit *int  `json:"registration_limit,omitempty"`
 	Enabled           *bool `json:"enabled,omitempty"`

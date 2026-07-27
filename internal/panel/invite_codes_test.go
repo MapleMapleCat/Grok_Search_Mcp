@@ -129,12 +129,15 @@ func TestAdminListInviteCodeRedemptionsRejectsCursorFromAnotherCollection(t *tes
 	}
 }
 
-func TestInviteCodeHTTPResponsesRevealRawCodeOnlyOnCreate(t *testing.T) {
+func TestInviteCodeHTTPResponsesRevealRawCodeOnlyOnCreateAndExplicitReveal(t *testing.T) {
 	sqliteStore, err := store.OpenSQLite(filepath.Join(t.TempDir(), "invite-responses.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sqliteStore.Close()
+	if err := sqliteStore.ConfigureAPIKeyEncryption("invite-response-encryption-secret-at-least-32-bytes"); err != nil {
+		t.Fatal(err)
+	}
 
 	administrator, err := sqliteStore.CreateUser(t.Context(), "invite-response-admin", "hash", store.RoleAdmin)
 	if err != nil {
@@ -194,6 +197,83 @@ func TestInviteCodeHTTPResponsesRevealRawCodeOnlyOnCreate(t *testing.T) {
 	}
 	assertRawInviteAbsent(t, updateResponseRecorder.Body.Bytes(), createResponse.Code)
 	assertJSONFieldAbsent(t, updateResponseRecorder.Body.Bytes(), []string{"code"})
+
+	revealRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/panel/v1/admin/invite-codes/"+createResponse.InviteCode.ID+"/reveal",
+		nil,
+	)
+	revealRequest.SetPathValue("id", createResponse.InviteCode.ID)
+	revealResponseRecorder := httptest.NewRecorder()
+	handler.adminRevealInviteCode(revealResponseRecorder, revealRequest)
+
+	if revealResponseRecorder.Code != http.StatusOK {
+		t.Fatalf("reveal status = %d, want %d: %s", revealResponseRecorder.Code, http.StatusOK, revealResponseRecorder.Body.String())
+	}
+	if revealResponseRecorder.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("reveal Cache-Control = %q, want no-store", revealResponseRecorder.Header().Get("Cache-Control"))
+	}
+	var revealResponse RevealInviteCodeResponse
+	if err := json.Unmarshal(revealResponseRecorder.Body.Bytes(), &revealResponse); err != nil {
+		t.Fatal(err)
+	}
+	if revealResponse.Code != createResponse.Code {
+		t.Fatalf("revealed invite code = %q, want created code", revealResponse.Code)
+	}
+}
+
+type inviteCodeRevealStore struct {
+	testsupport.Store
+	rawInviteCode string
+	err           error
+}
+
+func (testStore inviteCodeRevealStore) RevealInviteCode(context.Context, string) (string, error) {
+	return testStore.rawInviteCode, testStore.err
+}
+
+func TestAdminRevealInviteCodeMapsUnavailableAndMissingSecrets(t *testing.T) {
+	testCases := []struct {
+		name               string
+		storeError         error
+		expectedStatusCode int
+		expectedError      string
+	}{
+		{
+			name:               "missing invite",
+			storeError:         store.ErrInviteCodeNotFound,
+			expectedStatusCode: http.StatusNotFound,
+			expectedError:      "invite code not found",
+		},
+		{
+			name:               "legacy hash-only invite",
+			storeError:         store.ErrInviteCodeSecretUnavailable,
+			expectedStatusCode: http.StatusConflict,
+			expectedError:      "invite code secret is unavailable",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			handler := &Handler{Store: inviteCodeRevealStore{err: testCase.storeError}}
+			request := httptest.NewRequest(http.MethodPost, "/panel/v1/admin/invite-codes/invite-one/reveal", nil)
+			request.SetPathValue("id", "invite-one")
+			responseRecorder := httptest.NewRecorder()
+
+			handler.adminRevealInviteCode(responseRecorder, request)
+
+			if responseRecorder.Code != testCase.expectedStatusCode {
+				t.Fatalf("status = %d, want %d: %s", responseRecorder.Code, testCase.expectedStatusCode, responseRecorder.Body.String())
+			}
+			var errorResponse map[string]any
+			if err := json.Unmarshal(responseRecorder.Body.Bytes(), &errorResponse); err != nil {
+				t.Fatal(err)
+			}
+			if errorResponse["error"] != testCase.expectedError {
+				t.Fatalf("error = %v, want %q", errorResponse["error"], testCase.expectedError)
+			}
+		})
+	}
 }
 
 func assertRawInviteAbsent(t *testing.T, responseBody []byte, rawInviteCode string) {

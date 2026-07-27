@@ -2,6 +2,7 @@ import {
   createInviteCode,
   deleteInviteCode,
   fetchInviteCodeRedemptions,
+  revealInviteCode,
   updateInviteCode
 } from "../api.js";
 import { showToast } from "../components/toast.js";
@@ -27,7 +28,9 @@ export function createInviteEvents({
   renderApplication,
   renderModalRegion,
   handleSessionError,
-  loadCurrentPage
+  loadCurrentPage,
+  copyValue,
+  revealInviteCodeRequest = revealInviteCode
 }) {
   async function reloadInviteCollectionFromFirstPage() {
     const previousInviteCodes = state.data.invites;
@@ -90,6 +93,25 @@ export function createInviteEvents({
       if (!handleSessionError(error)) {
         showToast("操作失败", getErrorMessage(error), "error");
       }
+    }
+  }
+
+  async function copyInviteCode(inviteIdentifier, actionElement) {
+    if (!inviteIdentifier) {
+      showToast("无法复制邀请码", "邀请码标识缺失，请刷新页面后重试。", "error");
+      return;
+    }
+
+    actionElement.disabled = true;
+    try {
+      const revealResponse = await revealInviteCodeRequest(inviteIdentifier);
+      await copyValue(String(revealResponse?.code || ""));
+    } catch (error) {
+      if (!handleSessionError(error)) {
+        showToast("无法复制邀请码", getErrorMessage(error), "error");
+      }
+    } finally {
+      actionElement.disabled = false;
     }
   }
 
@@ -232,6 +254,7 @@ export function createInviteEvents({
   return {
     openCreateModal,
     submitCreate,
+    copyInviteCode,
     toggleEnabled,
     openRedemptions,
     changeRedemptionsPage,
