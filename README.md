@@ -105,7 +105,8 @@ Startup configuration is split into two layers:
 - `.env` is the user-owned basic configuration and contains the CPA upstream
   address/port plus credentials required for a first deployment;
 - `advanced.env` contains the remaining settings with safe defaults and
-  normally needs no changes for the first deployment.
+  normally needs no changes for the first deployment. See the
+  [advanced configuration guide](./ADVANCE_README.md#english) for details.
 
 Linux release archives include `.env.example` and `advanced.env`, so the same
 flow works with a prebuilt binary. The Compose file remains available only in a
@@ -173,78 +174,6 @@ Default endpoints:
 | MCP | `http://127.0.0.1:8080/mcp` |
 | Administration panel | `http://127.0.0.1:8080/panel/` |
 | Panel REST API | `http://127.0.0.1:8080/panel/v1/` |
-
-### Usage retention and SQLite maintenance
-
-Usage data is retained at progressively lower resolutions so long-running
-installations do not keep every request forever:
-
-| Environment variable | Default | Purpose |
-|---|---:|---|
-| `GROK_USAGE_RAW_RETENTION_DAYS` | `7` | Keeps per-request records and debug payloads before compacting them into hourly history. |
-| `GROK_USAGE_HOURLY_RETENTION_DAYS` | `90` | Keeps hourly history before compacting it into daily history. |
-| `GROK_USAGE_DAILY_RETENTION_DAYS` | `730` | Deletes daily history older than this window. |
-| `GROK_USAGE_MAINTENANCE_INTERVAL` | `1h` | Runs retention, rollup, cleanup, and WAL checkpoint work. |
-
-The hourly retention must exceed the raw retention, and the daily retention
-must exceed the hourly retention. Historical totals and traffic charts combine
-raw, hourly, and daily data; the recent-record list and individual debug details
-are available only while the corresponding raw record is retained.
-
-The main database and `<GROK_DB_PATH>.debug.sqlite` both use WAL mode. For a
-live backup, use SQLite's online backup facilities for both database files. Do
-not copy only the main `.db` file while the service is running. If using a
-filesystem copy, stop the service first and copy both databases together with
-any WAL/SHM sidecars. Scheduled maintenance checkpoints WAL files but does not
-run `VACUUM`; use `VACUUM` or `VACUUM INTO` only as an explicit, infrequent
-operator action when file-level space reclamation is required.
-
-The primary SQLite database intentionally keeps a single write connection;
-adding writers would increase lock competition rather than remove SQLite's
-single-writer constraint. Connections use a 5-second `busy_timeout`. The
-background usage writer combines up to 32 records, or records arriving within
-10ms, into one transaction. Scheduled maintenance uses `PASSIVE` checkpoints
-so active readers are not blocked by a periodic `TRUNCATE` checkpoint. Store
-both SQLite databases on local SSD storage, not NFS, SMB, or a high-latency
-network block volume.
-
-Operational metrics are disabled by default. An administrator must first enable
-**Database operational metrics** in **Server Settings**. When disabled, the
-endpoint below returns HTTP `404`.
-
-Administrators can query live operational metrics:
-
-```bash
-curl -sS "http://127.0.0.1:8080/panel/v1/admin/operations/metrics" \
-  -H "Authorization: Bearer ${login_token}" | jq
-```
-
-This admin-only endpoint reports connection-pool utilization and wait time for
-the primary, read, and debug databases; quota reserve/release latency and
-errors; SQLite busy/locked counts; usage batch, queue-depth, oldest-record,
-write/queue latency, failure, and drop metrics; and maintenance plus WAL
-checkpoint latency/frame counters. It also reports the bounded source-IP
-registry's current/capacity values and dedicated-admission, expiration,
-fallback-request, and fallback-rejection counters. The same response reports
-panel-auth protector capacity, admission, expiry,
-fallback, fallback-rejection, and login-failure capacity-rejection counters,
-grouped by public auth endpoint without exposing IP addresses or usernames. At
-minimum, alert on:
-
-- sustained growth in `primary_write_pool.wait_count` or `wait_duration_ms`;
-- any continuously increasing `busy_or_locked_errors` value;
-- a usage queue that remains near capacity, increasing
-  `oldest_queued_age_ms`, or dropped records;
-- sustained quota reserve/release average or maximum latency growth;
-- repeated checkpoint busy frames or increasing checkpoint duration;
-- sustained source-IP registry saturation or increasing fallback rejections;
-- sustained panel-auth endpoint fallback traffic, fallback rejections, or
-  login-failure capacity rejections.
-
-If these signals remain elevated on local SSD storage after batching, the
-workload has exceeded the intended embedded SQLite write envelope. High-write-
-QPS deployments should migrate to PostgreSQL/MySQL or move quota accounting to
-an external atomic counter instead of increasing SQLite write connections.
 
 ### 3. Sign in and create an MCP client key
 
@@ -398,170 +327,11 @@ Accepts no arguments. It reads CPA `GET /v1/models`, trims and deduplicates IDs,
 
 `citations`, `sources`, and `usage` may be omitted when the upstream response does not provide them. JSON-RPC batch requests and duplicate or case-colliding `method`, `params`, or `params.name` routing fields are intentionally rejected before quota reservation and usage accounting.
 
-## Configuration
+## Advanced configuration
 
-### Startup environment
-
-| Variable | Default | Description |
-|---|---|---|
-| `GROK_JWT_SECRET` | None | Required HS256 panel signing secret; must be at least 32 bytes. Always supplied through the environment. |
-| `CPA_API_KEY` | None | Required for a new database. Existing persisted server settings may provide it on later starts. |
-| `CPA_BASE_URL` | `http://127.0.0.1:8317` | CPA root URL. |
-| `GROK_UPSTREAM_PROTOCOL` | `responses` | Search protocol: `responses`, `chat_completions`, or `anthropic_messages`. |
-| `GROK_MODEL` | `grok-4.5` | Default Grok model. |
-| `GROK_HTTP_TIMEOUT` | `120` | Per-phase timeout in seconds for upstream connection establishment, TLS handshake, and response headers. It does not limit an active SSE response body; caller cancellation defines the total search lifetime. |
-| `GROK_HTTP_ADDR` | `:8080` | HTTP listen address. Requires restart to change. |
-| `GROK_DB_PATH` | `./grok-search-mcp.db` | SQLite database path. Requires restart to change. |
-| `GROK_BOOTSTRAP_CREDENTIALS_PATH` | `<GROK_DB_PATH>.bootstrap-admin` | Startup-only path for the `0600` bootstrap administrator JSON credential file. Existing files must be regular, non-symlink files with exact restrictive permissions. |
-| `GROK_CLIENT_IP_MODE` | `direct` | Startup-only client identity mode: `direct` uses `RemoteAddr` and ignores forwarding headers; `trusted_proxy` authenticates the immediate peer before accepting forwarding headers. |
-| `GROK_TRUSTED_PROXY_CIDRS` | Empty | Comma-separated IPv4/IPv6 prefixes for trusted immediate proxy peers. Required, parsed, and validated only in `trusted_proxy` mode; ignored in `direct` mode. |
-| `GROK_INITIAL_REGISTRATION_MODE` | `disabled` | Initial registration policy: `disabled`, `invite`, or `free`. Used only when no persisted server-settings row exists. |
-| `GROK_MAX_API_KEYS_PER_USER` | `20` | Startup-only per-user API-key row limit; accepted range 1-1,000. Disabled keys count and deletion frees capacity. |
-| `GROK_AUTH_PASSWORD_MAX_CONCURRENT` | `4` | Startup-only process-wide bcrypt work limit for login, registration, and password changes; accepted range 1-64. |
-| `GROK_AUTH_KEY_MISS_MAX_CONCURRENT` | `32` | Startup-only concurrent SQLite resolution limit for distinct API-key cache misses; same-key misses are coalesced; accepted range 1-1,024. |
-| `GROK_USAGE_RAW_RETENTION_DAYS` | `7` | Raw usage and debug-detail retention before hourly compaction. |
-| `GROK_USAGE_HOURLY_RETENTION_DAYS` | `90` | Hourly usage retention before daily compaction. |
-| `GROK_USAGE_DAILY_RETENTION_DAYS` | `730` | Daily aggregate retention before deletion. |
-| `GROK_USAGE_MAINTENANCE_INTERVAL` | `1h` | Interval for rollup, cleanup, and WAL checkpoint maintenance. |
-| `GROK_SEARCH_MCP_IP_RPM` | `300` | Source-IP RPM applied before MCP API-key authentication to every request using the identity selected by `GROK_CLIENT_IP_MODE`. |
-| `GROK_SEARCH_MCP_IP_MAX_ENTRIES_PER_SHARD` | `2048` | Maximum dedicated source-IP token buckets retained in each of the 64 registry shards. The default process-wide bound is 131,072 entries; accepted values are 1-65,536. Requires restart to change. |
-| `GROK_SEARCH_MCP_IP_FALLBACK_BUCKETS_PER_SHARD` | `16` | Fixed shared buckets used by new IPs when their shard remains full after expired-entry cleanup; accepted values are 1-1,024. Requires restart to change. |
-| `GROK_SEARCH_MCP_GLOBAL_SEARCH_CONCURRENCY` | `16` | Environment default for the process-wide in-flight streaming search limit. The persisted panel setting takes precedence after initialization. |
-| `GROK_SEARCH_MCP_USER_SEARCH_CONCURRENCY` | `4` | Environment default for the per-user limit; must not exceed the global limit. The persisted panel setting takes precedence after initialization. |
-| `GROK_AUTH_USER_RPM_MAX_ENTRIES` | `16,384` | Startup-only maximum dedicated authenticated-user RPM entries; accepted range 1-65,536. Overflow identities use fixed shared fallback buckets. |
-| `GROK_AUTH_USER_RPM_FALLBACK_BUCKETS` | `64` | Startup-only number of shared authenticated-user RPM fallback buckets; accepted range 1-1,024. |
-| `GROK_SEARCH_MCP_DEBUG` | `false` | Accepts `1`, `true`, or `yes`. May capture debug request/response context in usage records. |
-| `GROK_PROXY_URL` | Empty | Explicit upstream HTTP(S) proxy URL. |
-| `GROK_PROXY_ENABLED` | `false` | Explicit proxy switch. Set this to `true` together with `GROK_PROXY_URL`; the URL alone does not enable the project-specific proxy. |
-| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | Go defaults | Used by the standard transport when an explicit proxy is not enabled. |
-
-The former `GROK_MCP_IP_RPM`, `GROK_MCP_GLOBAL_SEARCH_CONCURRENCY`,
-`GROK_MCP_USER_SEARCH_CONCURRENCY`, and `GROK_MCP_DEBUG` names remain accepted
-as compatibility aliases. When both names are configured, the corresponding
-`GROK_SEARCH_MCP_*` variable takes precedence.
-
-When either search concurrency limit is exhausted, the server rejects the request immediately with HTTP `503` and `Retry-After: 1` instead of queueing another long-lived HTTP/SSE request. Search responses expose semaphore acquisition time in `X-Grok-Search-Queue-Time-Ms`.
-
-### Client-IP trust modes
-
-Application-level IP protection always requires a valid client identity. The same startup-only resolver is injected into:
-
-- the `/mcp` token bucket that runs before API-key authentication;
-- the panel login and registration endpoint token buckets;
-- the panel username/IP failed-login lockout.
-
-The two modes behave as follows:
-
-| Mode / request state | IP-protection behavior |
-|---|---|
-| `direct` (default) | Uses the canonical IP from the connection's `RemoteAddr` for every request and completely ignores `X-Real-IP` and `X-Forwarded-For`, including malformed or spoofed values. A missing, malformed, or zoned `RemoteAddr` is rejected with HTTP `400`. |
-| `trusted_proxy`, immediate peer outside `GROK_TRUSTED_PROXY_CIDRS` | Rejects with HTTP `403` without accepting any forwarded identity. |
-| `trusted_proxy`, trusted peer with no forwarding header | Rejects with HTTP `400`; there is no headerless bypass. |
-| `trusted_proxy`, trusted peer with malformed, duplicated, oversized, excessive-hop, or conflicting forwarding headers | Rejects with HTTP `400`. |
-| `trusted_proxy`, trusted peer with valid forwarding headers | Uses `X-Real-IP` when present; otherwise uses the first `X-Forwarded-For` IP. If both are present, their canonical client addresses must agree. |
-
-`GROK_TRUSTED_PROXY_CIDRS` accepts at most 256 comma-separated canonical IPv4
-or IPv6 prefixes in trusted-proxy mode, where the list is mandatory. Direct
-mode does not parse or validate this variable because it ignores all proxy
-identity configuration. Trust applies only to the immediate TCP peer; the
-trusted proxy remains responsible for removing client-supplied forwarding
-headers and rebuilding them from its own connection metadata.
-
-The `/mcp` source-IP registry is capacity bounded. Existing IPs keep their
-dedicated token bucket until the normal idle TTL expires; they are never
-evicted merely to admit a new identity. When a shard is full, the limiter first
-removes expired entries. If it remains full, new IPs are mapped with a
-process-randomized hash onto fixed shared fallback buckets and no per-IP map
-entry is allocated. Multiple fallback identities can therefore share rate
-state and may jointly receive `429` responses during saturation. The opt-in
-admin operational-metrics endpoint exposes registry capacity, current entries,
-fallback requests/rejections, admissions, and expirations without exposing IP
-addresses.
-
-The public panel authentication protector is also capacity bounded with fixed,
-process-local budgets: 4,096 dedicated login IP buckets, 2,048 registration IP
-buckets, 2,048 registration-challenge IP buckets, and 8,192 normalized
-username/IP login-failure entries. Each endpoint has its own capacity domain
-and 16 fixed fallback buckets. When an endpoint is full, expired entries are
-reclaimed first; if it remains full, new IPs share fallback rate state without
-creating map entries. Live dedicated buckets are never evicted merely to admit
-new identities.
-
-Login-failure state has no shared fallback because collisions could lock out
-unrelated users. When its table remains full after expired-entry cleanup, a new
-username/IP pair receives a generic `429` before user lookup or bcrypt. Existing
-failure counts, active lockouts, and in-flight attempts are retained. These
-budgets are fixed security limits rather than environment or panel settings.
-The admin operational-metrics endpoint reports only aggregate capacity and
-saturation counters. All panel-auth protector state and cumulative counters are
-process-local and reset when the service restarts.
-
-> [!IMPORTANT]
-> Enable `trusted_proxy` only after identifying the CIDR of the proxy as seen by `grok-search-mcp`, which may be a container bridge or load-balancer subnet rather than the proxy's public address. A wrong CIDR fails closed with `403`. Keep proxy-layer rate limits enabled for `/mcp`, `/panel/v1/auth/login`, and `/panel/v1/auth/register`.
-
-The proxy must overwrite `X-Real-IP` and rebuild `X-Forwarded-For` from the connection source. Because the application selects the first valid `X-Forwarded-For` entry, do not preserve an untrusted client-provided chain.
-
-Example Nginx forwarding configuration:
-
-```nginx
-location / {
-    proxy_pass http://grok-search-mcp:8080;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $remote_addr;
-}
-```
-
-Pair that proxy with startup settings such as:
-
-```dotenv
-GROK_CLIENT_IP_MODE=trusted_proxy
-GROK_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128
-```
-
-Compose publishes `0.0.0.0:8080:8080`, so virtual machines, LAN clients, and
-container-network clients can reach the service through the host. For an
-internet-facing deployment, restrict external access with a firewall and a
-trusted HTTPS reverse proxy.
-
-### Persistence and live updates
-
-On startup, environment variables provide the initial runtime defaults. `GROK_INITIAL_REGISTRATION_MODE` supplies registration policy only when SQLite has no server-settings row; its safe default is `disabled`. If SQLite already contains server settings, the complete persisted runtime settings object takes precedence, including registration mode, and restarting with a different initial value does not overwrite the administrator's choice. Listener address, database path, JWT secret, client-IP trust mode/CIDRs, IP RPM/registry capacity, and retention/maintenance settings remain environment-only. Administrators can update the following values from **Server Settings** without restarting:
-
-- CPA base URL and API key
-- Upstream search protocol
-- Default model and timeout
-- Explicit proxy URL and enabled state
-- Registration mode
-- Debug mode
-- Process-wide and per-user streaming search concurrency limits
-- Operational metrics collection
-
-Settings updates are persisted before the running process applies them. The panel exposes separate persisted and confirmed-live settings versions. If persistence succeeds but live application fails, the saved values remain durable, the panel shows **saved but not applied** instead of a generic save failure, and the settings form reloads the persisted values. While the versions differ, upstream health is reported as unknown to avoid probing with mixed configuration state. A service restart loads the persisted revision and restores the versions to a synchronized state after startup succeeds.
-
-The listen address, database path, JWT secret, client-IP mode/trusted CIDRs,
-source-IP RPM, registry capacity, and fallback-bucket count remain startup-only
-settings.
-
-> [!WARNING]
-> The CPA API key is persisted in SQLite. Protect and back up the database as sensitive data. The panel only returns a masked preview of this key.
-
-### Upstream protocol mapping
-
-| Setting | Endpoint | Search mapping |
-|---|---|---|
-| `responses` | `POST /v1/responses` | CPA Responses built-ins (`web_search` / `x_search`); this remains the backward-compatible default and provides search-round progress events. |
-| `chat_completions` | `POST /v1/chat/completions` | xAI-compatible `search_parameters`, with `web` or `x` sources and streamed Chat Completions chunks. Short status-only responses such as “searching...” are continued with bounded follow-up requests so MCP callers receive a final answer or an explicit error. |
-| `anthropic_messages` | `POST /v1/messages` | Anthropic server-side `web_search_20250305` with Messages SSE events. Web searches preserve configured domain filters; X searches use the same server tool restricted to `x.com` and add an instruction to return direct X post URLs. |
-
-Protocol support ultimately depends on the selected CPA version, provider, and model capabilities. Responses is the safest compatibility choice for existing Grok/CPA deployments. Image-search options are Responses-specific; other protocols ignore them when no equivalent wire option exists.
-
-The protocols can expose different metadata even when their answer text is equivalent:
-
-- Responses normally provides the richest search-round progress and structured citation data.
-- Chat Completions emits progress only when CPA includes compatible nonstandard search events. Standard Chat chunks may contain only final text and usage.
-- Anthropic Messages may include source URLs in the answer text without emitting structured citation blocks, depending on CPA's provider translation.
-- `usage` is normalized across all protocols when the upstream response includes token counts.
+Advanced startup parameters, usage retention, SQLite operations, client-IP
+trust modes, persisted settings, and upstream protocol mappings are documented
+in the [advanced configuration guide](./ADVANCE_README.md#english).
 
 ## Users, registration, tiers, and quotas
 
@@ -724,7 +494,8 @@ put it in the untracked `.env` or an external secret manager instead.
 - Keep the plaintext application port loopback- or network-internally bound; the supplied Compose and `docker run` examples publish it on host loopback only.
 - Add reverse-proxy rate limits for `/mcp`, panel login, and panel registration.
 - Keep debug mode disabled unless troubleshooting. Debug context may retain request or response content even though authentication headers are redacted.
-- MCP client API keys and newly created invite codes authenticate through irreversible hashes and are also stored as AES-256-GCM ciphertext for authorized panel reveal/copy. Protect database backups and `GROK_JWT_SECRET` as access to recoverable credentials.
+- MCP client API keys and newly created invite codes authenticate through irreversible hashes. Recoverable values are also stored as AES-256-GCM ciphertext bound to the corresponding record identity for authorized panel reveal/copy. Protect database backups and `GROK_JWT_SECRET` as access to recoverable credentials.
+- If `GROK_JWT_SECRET` changes, or a legacy hash-only database is upgraded, API keys whose ciphertext cannot be decrypted are rotated automatically. Clients must copy the replacement keys from the panel and update their configuration.
 
 ## Development and testing
 

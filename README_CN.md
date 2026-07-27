@@ -105,7 +105,7 @@ go build \
 - `.env` 是用户自己的基础配置，保存 CPA 上游地址/端口和首次部署必须填写的
   凭证；
 - `advanced.env` 提供其余具有安全默认值的高级配置，首次部署无需修改；参数说明见
-  [高级配置文档](./ADVANCE_README.md)。
+  [高级配置文档](./ADVANCE_README.md#简体中文)。
 
 Linux 发布压缩包包含 `.env.example` 和 `advanced.env`，因此使用预编译二进制时
 也可以直接采用相同流程。Compose 文件仍只随源码仓库提供。
@@ -316,7 +316,7 @@ claude mcp add --transport http grok-search-mcp http://127.0.0.1:8080/mcp \
 ## 高级配置
 
 高级启动参数、Usage 数据保留、SQLite 运维、客户端 IP 信任模式、持久化设置和
-上游协议映射已移至 [高级配置说明](./ADVANCE_README.md)。
+上游协议映射已移至 [高级配置说明](./ADVANCE_README.md#简体中文)。
 
 ## 用户、注册、Tier 与配额
 
