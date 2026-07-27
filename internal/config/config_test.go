@@ -115,6 +115,23 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsSOCKS5ProxyConfiguration(t *testing.T) {
+	panelEnv(t)
+	setEnv(t, "GROK_PROXY_URL", " socks5://proxy-user:proxy-password@127.0.0.1:1080 ")
+	setEnv(t, "GROK_PROXY_ENABLED", "true")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !cfg.ProxyEnabled {
+		t.Fatal("expected explicit proxy to be enabled")
+	}
+	if cfg.ProxyURL != "socks5://proxy-user:proxy-password@127.0.0.1:1080" {
+		t.Fatalf("unexpected proxy URL: %q", cfg.ProxyURL)
+	}
+}
+
 func TestLoadTrustedProxyNetworkConfiguration(t *testing.T) {
 	panelEnv(t)
 	setEnv(t, "GROK_CLIENT_IP_MODE", " trusted_proxy ")
@@ -649,6 +666,36 @@ func TestParseBoolEnvUnset(t *testing.T) {
 	_ = os.Unsetenv("GROK_SEARCH_MCP_DEBUG")
 	if parseBoolEnv("GROK_SEARCH_MCP_DEBUG") {
 		t.Fatalf("expected false for unset env")
+	}
+}
+
+func TestValidateProxyURLSupportsHTTPAndSOCKS5Schemes(t *testing.T) {
+	testCases := []struct {
+		name          string
+		proxyURL      string
+		expectedError string
+	}{
+		{name: "HTTP", proxyURL: "http://127.0.0.1:7890"},
+		{name: "HTTPS", proxyURL: "https://proxy.example.test:8443"},
+		{name: "SOCKS5", proxyURL: "socks5://127.0.0.1:1080"},
+		{name: "SOCKS5 with proxy DNS", proxyURL: "socks5h://proxy.example.test:1080"},
+		{name: "unsupported scheme", proxyURL: "ftp://proxy.example.test:21", expectedError: "must use http, https, socks5, or socks5h"},
+		{name: "missing host", proxyURL: "socks5://", expectedError: "must be a valid proxy URL"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := validateProxyURL("GROK_PROXY_URL", testCase.proxyURL)
+			if testCase.expectedError == "" {
+				if err != nil {
+					t.Fatalf("validateProxyURL failed: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), testCase.expectedError) {
+				t.Fatalf("expected error containing %q, got %v", testCase.expectedError, err)
+			}
+		})
 	}
 }
 

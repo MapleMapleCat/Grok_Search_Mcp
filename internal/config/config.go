@@ -468,7 +468,7 @@ func normalizeServerSettings(settings ServerSettings, requireAPIKey bool) (Serve
 		if settings.ProxyURL == "" {
 			return settings, fmt.Errorf("GROK_PROXY_URL is required when proxy is enabled")
 		}
-		if err := validateHTTPURL("GROK_PROXY_URL", settings.ProxyURL); err != nil {
+		if err := validateProxyURL("GROK_PROXY_URL", settings.ProxyURL); err != nil {
 			return settings, err
 		}
 	}
@@ -528,6 +528,20 @@ func validateHTTPURL(name, rawURL string) error {
 		return fmt.Errorf("%s must use http or https", name)
 	}
 	return nil
+}
+
+func validateProxyURL(name, rawURL string) error {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return fmt.Errorf("%s must be a valid proxy URL", name)
+	}
+
+	switch strings.ToLower(parsedURL.Scheme) {
+	case "http", "https", "socks5", "socks5h":
+		return nil
+	default:
+		return fmt.Errorf("%s must use http, https, socks5, or socks5h", name)
+	}
 }
 
 func envOrDefault(key, fallback string) string {

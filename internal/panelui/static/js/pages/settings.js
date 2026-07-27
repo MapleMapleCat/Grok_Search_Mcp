@@ -66,10 +66,10 @@ export function renderSettingsPage(state) {
           </div>
         </section>
         <section class="settings-section">
-          <div class="settings-section-copy"><h3>网络代理</h3><p>在上游网络需要代理时启用。代理地址支持 HTTP 或 HTTPS。</p></div>
+          <div class="settings-section-copy"><h3>网络代理</h3><p>在上游网络需要代理时启用。代理地址支持 HTTP、HTTPS、SOCKS5 或 SOCKS5H。</p></div>
           <div>
             <label class="switch-row"><span class="switch-copy"><strong>启用显式代理</strong><span>关闭时使用默认网络路径</span></span><span class="switch"><input name="proxy_enabled" type="checkbox" ${settings.proxy_enabled ? "checked" : ""}><span class="switch-track"></span></span></label>
-            <label class="field-group"><span class="field-label">代理 URL</span><input class="text-input" name="proxy_url" type="url" value="${escapeHTML(settings.proxy_url || "")}" placeholder="http://127.0.0.1:7890"></label>
+            <label class="field-group"><span class="field-label">代理 URL</span><input class="text-input" name="proxy_url" type="url" value="${escapeHTML(settings.proxy_url || "")}" placeholder="socks5://127.0.0.1:1080"></label>
           </div>
         </section>
         <section class="settings-section">

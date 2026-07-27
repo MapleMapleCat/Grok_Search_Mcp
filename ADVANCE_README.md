@@ -97,7 +97,7 @@ quota 计数迁移到具备原子操作的外部计数器，而不是继续增�
 | `GROK_AUTH_USER_RPM_MAX_ENTRIES` | `16,384` | 已鉴权用户 RPM 专用状态的启动时容量上限，范围 1-65,536；溢出身份使用固定共享降级桶。 |
 | `GROK_AUTH_USER_RPM_FALLBACK_BUCKETS` | `64` | 已鉴权用户 RPM 共享降级桶数量，范围 1-1,024。 |
 | `GROK_SEARCH_MCP_DEBUG` | `false` | `1`、`true` 或 `yes` 启用；可能在用量记录中捕获调试上下文。 |
-| `GROK_PROXY_URL` | 空 | 显式上游 HTTP(S) 代理。 |
+| `GROK_PROXY_URL` | 空 | 显式上游代理，支持 `http://`、`https://`、`socks5://` 和 `socks5h://`。所有支持的代理类型都可在 URL userinfo 中携带用户名与密码。 |
 | `GROK_PROXY_ENABLED` | `false` | 显式代理开关；必须与 `GROK_PROXY_URL` 一起设置为 `true`，仅设置 URL 不会启用项目显式代理。 |
 | `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` | Go 默认行为 | 未启用显式代理时由标准 HTTP Transport 使用。 |
 

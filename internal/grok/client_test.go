@@ -15,24 +15,38 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/logx"
 )
 
-func TestNewHTTPClientWithProxyUsesExplicitProxy(t *testing.T) {
-	client, err := newHTTPClientWithProxy(time.Second, " http://127.0.0.1:7890 ", true)
-	if err != nil {
-		t.Fatalf("newHTTPClientWithProxy failed: %v", err)
+func TestNewHTTPClientWithProxyUsesSupportedExplicitProxyURLs(t *testing.T) {
+	testCases := []struct {
+		name     string
+		proxyURL string
+	}{
+		{name: "HTTP", proxyURL: "http://127.0.0.1:7890"},
+		{name: "HTTPS", proxyURL: "https://proxy.example.test:8443"},
+		{name: "SOCKS5", proxyURL: "socks5://127.0.0.1:1080"},
+		{name: "SOCKS5 with proxy DNS", proxyURL: "socks5h://127.0.0.1:1080"},
 	}
 
-	transport, ok := client.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("expected *http.Transport, got %T", client.Transport)
-	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			client, err := newHTTPClientWithProxy(time.Second, " "+testCase.proxyURL+" ", true)
+			if err != nil {
+				t.Fatalf("newHTTPClientWithProxy failed: %v", err)
+			}
 
-	request := &http.Request{URL: mustParseURL(t, "https://api.example.test/v1/responses")}
-	actualProxyURL, err := transport.Proxy(request)
-	if err != nil {
-		t.Fatalf("resolve proxy: %v", err)
-	}
-	if actualProxyURL == nil || actualProxyURL.String() != "http://127.0.0.1:7890" {
-		t.Fatalf("expected explicit proxy URL, got %v", actualProxyURL)
+			transport, ok := client.Transport.(*http.Transport)
+			if !ok {
+				t.Fatalf("expected *http.Transport, got %T", client.Transport)
+			}
+
+			request := &http.Request{URL: mustParseURL(t, "https://api.example.test/v1/responses")}
+			actualProxyURL, err := transport.Proxy(request)
+			if err != nil {
+				t.Fatalf("resolve proxy: %v", err)
+			}
+			if actualProxyURL == nil || actualProxyURL.String() != testCase.proxyURL {
+				t.Fatalf("expected explicit proxy URL %q, got %v", testCase.proxyURL, actualProxyURL)
+			}
+		})
 	}
 }
 
