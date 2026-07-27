@@ -41,7 +41,7 @@ function renderTierOverview(tierCount, assignedUserCount, defaultTier) {
     <section class="tier-overview" aria-label="配额方案概览">
       <div class="tier-overview-copy">
         <span class="tier-overview-kicker">${renderIcon("spark")} Quota control</span>
-        <h2>让每一档服务能力，都有明确边界。</h2>
+        <h2>为不同用户设置调用限额</h2>
         <p>集中维护请求速率与月度成功调用额度。方案变更会直接作用于正在使用它的用户，无需逐个调整。</p>
       </div>
       <div class="tier-overview-stats">
