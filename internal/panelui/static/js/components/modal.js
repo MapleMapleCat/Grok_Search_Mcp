@@ -1,4 +1,5 @@
 import { escapeHTML, formatDateTime, formatNumber, formatPercent, getSuccessRate } from "../utils.js";
+import { renderCustomSelect } from "./custom-select.js";
 import { renderIcon } from "./icons.js";
 import { renderInviteRedemptionsModal } from "./invite-redemptions-modal.js";
 import { renderMetricCard } from "./metric-card.js";
@@ -302,17 +303,42 @@ function renderEditUserModal(modal, tiers, currentUser) {
   const user = modal.data || {};
   const isCurrentUser = user.id === currentUser?.id;
   const currentTierAvailable = isCurrentTierAvailable(tiers, user.tier_id);
-  const unavailableTierOption = currentTierAvailable
-    ? ""
-    : '<option value="" selected disabled>当前配额方案不可用</option>';
+  const roleSelect = renderCustomSelect({
+    id: "edit-user-role-select",
+    name: "role",
+    value: user.role,
+    ariaLabel: "角色",
+    disabled: isCurrentUser,
+    options: [
+      { value: "user", label: "用户" },
+      { value: "admin", label: "管理员" }
+    ]
+  });
+  const tierOptions = [
+    ...(!currentTierAvailable
+      ? [{ value: "", label: "当前配额方案不可用", disabled: true }]
+      : []),
+    ...tiers.map((tier) => ({
+      value: tier.id,
+      label: `${tier.name}${tier.is_default ? "（默认）" : ""}`
+    }))
+  ];
+  const tierSelect = renderCustomSelect({
+    id: "edit-user-tier-select",
+    name: "tier_id",
+    value: currentTierAvailable ? user.tier_id : "",
+    ariaLabel: "配额方案",
+    required: true,
+    options: tierOptions
+  });
   const unavailableTierAlert = currentTierAvailable
     ? ""
     : `<div class="inline-alert">${renderIcon("alert")}<span>当前配额方案已不存在或无法加载，请先选择新的配额方案。</span></div>`;
   const body = `
     <form class="stack-form" id="edit-user-form" data-form="edit-user" data-id="${escapeHTML(user.id)}">
       <div class="form-grid">
-        <label class="field-group"><span class="field-label">角色</span><select class="select-input" name="role" ${isCurrentUser ? "disabled" : ""}><option value="user" ${user.role === "user" ? "selected" : ""}>用户</option><option value="admin" ${user.role === "admin" ? "selected" : ""}>管理员</option></select></label>
-        <label class="field-group"><span class="field-label">配额方案</span><select class="select-input" name="tier_id" required>${unavailableTierOption}${tiers.map((tier) => `<option value="${escapeHTML(tier.id)}" ${tier.id === user.tier_id ? "selected" : ""}>${escapeHTML(tier.name)}${tier.is_default ? "（默认）" : ""}</option>`).join("")}</select></label>
+        <div class="field-group"><span class="field-label">角色</span>${roleSelect}</div>
+        <div class="field-group"><span class="field-label">配额方案</span>${tierSelect}</div>
       </div>
       <label class="switch-row"><span class="switch-copy"><strong>启用账户</strong><span>禁用后用户的面板与 MCP 访问都会失效</span></span><span class="switch"><input name="enabled" type="checkbox" ${user.enabled ? "checked" : ""} ${isCurrentUser ? "disabled" : ""}><span class="switch-track"></span></span></label>
       <label class="switch-row"><span class="switch-copy"><strong>吊销全部会话</strong><span>保存后立即使该用户的所有现有 JWT 失效</span></span><span class="switch"><input name="revoke_tokens" type="checkbox"><span class="switch-track"></span></span></label>

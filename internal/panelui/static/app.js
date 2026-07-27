@@ -15,6 +15,7 @@ import {
   panelAPI
 } from "./js/api.js";
 import { renderAuthView } from "./js/components/forms.js";
+import { configureCustomSelects } from "./js/components/custom-select.js";
 import { renderModal } from "./js/components/modal.js";
 import { configureToastRegion, showToast } from "./js/components/toast.js";
 import { createApplicationEvents } from "./js/events.js";
@@ -61,6 +62,7 @@ function renderModalRegion() {
 
 async function initializeApplication() {
   configureToastRegion(toastRegionElement);
+  configureCustomSelects();
   createApplicationEvents({
     applicationElement,
     modalRegionElement,

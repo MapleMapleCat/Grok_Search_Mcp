@@ -8,11 +8,24 @@
   white-space: nowrap;
 }
 
-.pagination-page-size .select-input {
+.pagination-page-size .custom-select {
   width: auto;
   min-width: 82px;
+}
+
+.pagination-page-size .custom-select-trigger {
   height: 34px;
   padding: 0 28px 0 10px;
+  font-size: 11px;
+}
+
+.pagination-page-size .custom-select-chevron {
+  position: absolute;
+  right: 12px;
+}
+
+.pagination-page-size .custom-select-menu {
+  min-width: 100%;
   font-size: 11px;
 }
 

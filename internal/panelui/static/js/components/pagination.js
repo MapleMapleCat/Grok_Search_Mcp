@@ -1,15 +1,28 @@
 import { escapeHTML, formatNumber } from "../utils.js";
 import { COLLECTION_PAGE_SIZE_OPTIONS } from "../pagination-config.js";
+import { renderCustomSelect } from "./custom-select.js";
 
 export function renderCollectionPageSizeSelector(collectionName, pagination) {
   const selectedPageSize = Number(pagination?.pageSize || 50);
+  const pageSizeSelect = renderCustomSelect({
+    id: `${collectionName}-page-size-select`,
+    value: selectedPageSize,
+    ariaLabel: "每页显示条数",
+    compact: true,
+    dataAttributes: {
+      action: "change-list-page-size",
+      list: collectionName
+    },
+    options: COLLECTION_PAGE_SIZE_OPTIONS.map((pageSize) => ({
+      value: pageSize,
+      label: `${pageSize} 条`
+    }))
+  });
   return `
-    <label class="pagination-page-size">
+    <div class="pagination-page-size">
       <span>每页</span>
-      <select class="select-input" data-action="change-list-page-size" data-list="${escapeHTML(collectionName)}" aria-label="每页显示条数">
-        ${COLLECTION_PAGE_SIZE_OPTIONS.map((pageSize) => `<option value="${pageSize}" ${selectedPageSize === pageSize ? "selected" : ""}>${pageSize} 条</option>`).join("")}
-      </select>
-    </label>
+      ${pageSizeSelect}
+    </div>
   `;
 }
 

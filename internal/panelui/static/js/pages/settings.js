@@ -1,4 +1,5 @@
 import { escapeHTML, formatDateTime } from "../utils.js";
+import { renderCustomSelect } from "../components/custom-select.js";
 import { renderIcon } from "../components/icons.js";
 import { renderPageHeading } from "../components/loading.js";
 
@@ -26,6 +27,39 @@ export function renderSettingsPage(state) {
   const modelChoices = settings.model && !knownModels.has(settings.model)
     ? [{ id: settings.model }, ...modelOptions]
     : modelOptions;
+  const upstreamProtocolSelect = renderCustomSelect({
+    id: "settings-upstream-protocol-select",
+    name: "upstream_protocol",
+    value: upstreamProtocol,
+    ariaLabel: "上游协议",
+    required: true,
+    options: [
+      { value: "responses", label: "OpenAI Responses（/v1/responses）" },
+      { value: "chat_completions", label: "OpenAI Chat Completions（/v1/chat/completions）" },
+      { value: "anthropic_messages", label: "Anthropic Messages（/v1/messages）" }
+    ]
+  });
+  const modelSelect = modelChoices.length > 0
+    ? renderCustomSelect({
+      id: "settings-model-select",
+      name: "model",
+      value: settings.model,
+      ariaLabel: "默认模型",
+      required: true,
+      options: modelChoices.map((model) => ({ value: model.id, label: model.id }))
+    })
+    : `<input class="text-input" name="model" type="text" value="${escapeHTML(settings.model || "")}" placeholder="grok-4.5" required>`;
+  const registrationModeSelect = renderCustomSelect({
+    id: "settings-registration-mode-select",
+    name: "registration_mode",
+    value: settings.registration_mode,
+    ariaLabel: "注册模式",
+    options: [
+      { value: "free", label: "自由注册" },
+      { value: "invite", label: "邀请注册" },
+      { value: "disabled", label: "关闭注册" }
+    ]
+  });
 
   return `
     ${renderPageHeading("服务设置", "热更新上游连接、搜索并发、默认模型、代理、注册策略与运维观测。")}
@@ -40,11 +74,7 @@ export function renderSettingsPage(state) {
         <section class="settings-section">
           <div class="settings-section-copy"><h3>上游连接</h3><p>配置 CPA 服务地址、访问凭证与请求协议。留空 API Key 将保留当前值。</p></div>
           <div class="form-grid">
-            <label class="field-group is-full"><span class="field-label">上游协议</span><select class="select-input" name="upstream_protocol" required>
-              <option value="responses" ${upstreamProtocol === "responses" ? "selected" : ""}>OpenAI Responses（/v1/responses）</option>
-              <option value="chat_completions" ${upstreamProtocol === "chat_completions" ? "selected" : ""}>OpenAI Chat Completions（/v1/chat/completions）</option>
-              <option value="anthropic_messages" ${upstreamProtocol === "anthropic_messages" ? "selected" : ""}>Anthropic Messages（/v1/messages）</option>
-            </select><span class="field-hint">协议切换会立即应用到同一套 CPA 连接配置。</span></label>
+            <div class="field-group is-full"><span class="field-label">上游协议</span>${upstreamProtocolSelect}<span class="field-hint">协议切换会立即应用到同一套 CPA 连接配置。</span></div>
             <label class="field-group is-full"><span class="field-label">CPA Base URL</span><input class="text-input" name="cpa_base_url" type="url" value="${escapeHTML(settings.cpa_base_url || "")}" placeholder="http://127.0.0.1:8317" required></label>
             <label class="field-group is-full"><span class="field-label"><span>CPA API Key</span><span class="field-hint">${settings.cpa_api_key_set ? `已配置 ${escapeHTML(settings.cpa_api_key_preview || "")}` : "尚未配置"}</span></span><input class="text-input" name="cpa_api_key" type="password" autocomplete="new-password" placeholder="留空以保留现有密钥"></label>
           </div>
@@ -52,9 +82,7 @@ export function renderSettingsPage(state) {
         <section class="settings-section">
           <div class="settings-section-copy"><h3>模型与超时</h3><p>设置连接、TLS 握手和响应头各阶段超时；已建立的 SSE 流不受该值限制。</p></div>
           <div class="form-grid form-grid-align-fields">
-            <label class="field-group"><span class="field-label"><span>默认模型</span><button class="button button-ghost button-sm" type="button" data-action="load-models">拉取模型</button></span>
-              ${modelChoices.length > 0 ? `<select class="select-input" name="model" required>${modelChoices.map((model) => `<option value="${escapeHTML(model.id)}" ${model.id === settings.model ? "selected" : ""}>${escapeHTML(model.id)}</option>`).join("")}</select>` : `<input class="text-input" name="model" type="text" value="${escapeHTML(settings.model || "")}" placeholder="grok-4.5" required>`}
-            </label>
+            <div class="field-group"><span class="field-label"><span>默认模型</span><button class="button button-ghost button-sm" type="button" data-action="load-models">拉取模型</button></span>${modelSelect}</div>
             <label class="field-group"><span class="field-label">连接/TLS/响应头超时（秒）</span><input class="text-input" name="timeout_seconds" type="number" min="1" step="1" value="${escapeHTML(settings.timeout_seconds || 120)}" required></label>
           </div>
         </section>
@@ -75,11 +103,7 @@ export function renderSettingsPage(state) {
         <section class="settings-section">
           <div class="settings-section-copy"><h3>访问策略与运维观测</h3><p>控制公开注册入口、调试日志与数据库运行指标。调试模式可能记录更多请求信息。</p></div>
           <div class="form-grid">
-            <label class="field-group"><span class="field-label">注册模式</span><select class="select-input" name="registration_mode">
-              <option value="free" ${settings.registration_mode === "free" ? "selected" : ""}>自由注册</option>
-              <option value="invite" ${settings.registration_mode === "invite" ? "selected" : ""}>邀请注册</option>
-              <option value="disabled" ${settings.registration_mode === "disabled" ? "selected" : ""}>关闭注册</option>
-            </select></label>
+            <div class="field-group"><span class="field-label">注册模式</span>${registrationModeSelect}</div>
             <label class="switch-row"><span class="switch-copy"><strong>调试模式</strong><span>输出扩展诊断信息</span></span><span class="switch"><input name="debug" type="checkbox" ${settings.debug ? "checked" : ""}><span class="switch-track"></span></span></label>
             <label class="switch-row"><span class="switch-copy"><strong>启用数据库运行指标</strong><span>开启后显示 SQLite、Usage 队列与 WAL 性能指标</span></span><span class="switch"><input name="operations_metrics_enabled" type="checkbox" ${settings.operations_metrics_enabled ? "checked" : ""}><span class="switch-track"></span></span></label>
           </div>
