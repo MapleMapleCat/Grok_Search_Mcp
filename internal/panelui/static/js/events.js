@@ -110,18 +110,33 @@ export function createApplicationEvents({
     handleSessionError
   });
 
+  function setSidebarOpen(sidebarOpen) {
+    state.sidebarOpen = sidebarOpen;
+
+    const applicationShellElement = applicationElement.querySelector(".app-shell");
+    if (!applicationShellElement) {
+      return;
+    }
+
+    applicationShellElement.classList.toggle("is-sidebar-open", sidebarOpen);
+
+    const menuButtonElement = applicationShellElement.querySelector('[data-action="toggle-sidebar"]');
+    if (!menuButtonElement) {
+      return;
+    }
+
+    const menuButtonLabel = sidebarOpen ? "关闭导航菜单" : "打开导航菜单";
+    menuButtonElement.setAttribute("aria-expanded", String(sidebarOpen));
+    menuButtonElement.setAttribute("aria-label", menuButtonLabel);
+    menuButtonElement.setAttribute("title", menuButtonLabel);
+  }
+
   const applicationActionHandlers = {
     "switch-auth": (actionElement) => authEvents.switchAuthMode(actionElement.dataset.mode),
     "toggle-password": (actionElement) => authEvents.togglePasswordVisibility(actionElement),
     navigate: (actionElement) => navigationEvents.navigateToPage(actionElement.dataset.page),
-    "toggle-sidebar": () => {
-      state.sidebarOpen = !state.sidebarOpen;
-      renderApplication();
-    },
-    "close-sidebar": () => {
-      state.sidebarOpen = false;
-      renderApplication();
-    },
+    "toggle-sidebar": () => setSidebarOpen(!state.sidebarOpen),
+    "close-sidebar": () => setSidebarOpen(false),
     logout: () => authEvents.logout(),
     "refresh-page": () => navigationEvents.refreshCurrentPage(),
     "change-list-page": (actionElement) => navigationEvents.changeListPage(
@@ -311,6 +326,8 @@ export function createApplicationEvents({
   function handleGlobalKeydown(event) {
     if (event.key === "Escape" && state.modal && !state.modal.busy) {
       modalController.closeModal();
+    } else if (event.key === "Escape" && state.sidebarOpen) {
+      setSidebarOpen(false);
     }
   }
 

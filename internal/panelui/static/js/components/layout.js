@@ -3,6 +3,18 @@ import { renderIcon } from "./icons.js";
 
 export function renderShell(state, currentMetadata, currentPageHTML) {
   const isAdmin = state.user?.role === "admin";
+  const refreshButtonLabel = state.refreshing ? "正在刷新当前页面" : "刷新当前页面";
+  const refreshButtonHTML = currentMetadata.dataMode === "static" ? "" : `
+    <button
+      class="icon-button ${state.refreshing ? "is-spinning" : ""}"
+      type="button"
+      data-action="refresh-page"
+      aria-label="${refreshButtonLabel}"
+      title="${refreshButtonLabel}"
+      ${state.refreshing ? "disabled" : ""}
+    >${renderIcon("refresh")}</button>
+  `;
+
   return `
     <div class="app-shell ${state.sidebarOpen ? "is-sidebar-open" : ""}">
       <button class="sidebar-backdrop" type="button" data-action="close-sidebar" aria-label="关闭导航"></button>
@@ -10,11 +22,19 @@ export function renderShell(state, currentMetadata, currentPageHTML) {
       <div class="main-shell">
         <header class="topbar">
           <div class="topbar-left">
-            <button class="icon-button mobile-menu-button" type="button" data-action="toggle-sidebar" aria-label="打开导航">${renderIcon("menu")}</button>
+            <button
+              class="icon-button mobile-menu-button"
+              type="button"
+              data-action="toggle-sidebar"
+              aria-controls="primary-navigation"
+              aria-expanded="${state.sidebarOpen ? "true" : "false"}"
+              aria-label="${state.sidebarOpen ? "关闭导航菜单" : "打开导航菜单"}"
+              title="${state.sidebarOpen ? "关闭导航菜单" : "打开导航菜单"}"
+            >${renderIcon("menu")}</button>
             <span class="breadcrumb">${escapeHTML(currentMetadata.section)} / <strong>${escapeHTML(currentMetadata.title)}</strong></span>
           </div>
           <div class="topbar-actions">
-            <button class="icon-button ${state.refreshing ? "is-spinning" : ""}" type="button" data-action="refresh-page" aria-label="刷新当前页面" ${state.refreshing ? "disabled" : ""}>${renderIcon("refresh")}</button>
+            ${refreshButtonHTML}
           </div>
         </header>
         <main class="page-wrap page-enter">
@@ -34,7 +54,7 @@ function renderSidebar(state, isAdmin) {
   `;
 
   return `
-    <aside class="sidebar">
+    <aside class="sidebar" id="primary-navigation">
       <div class="brand-lockup">
         <span class="brand-symbol" aria-hidden="true"></span>
         <span>Grok Search MCP<small>Control plane</small></span>

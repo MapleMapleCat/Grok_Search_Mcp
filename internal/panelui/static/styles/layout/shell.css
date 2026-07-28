@@ -154,6 +154,13 @@
   display: none;
 }
 
+.icon-button.mobile-menu-button[aria-expanded="true"] {
+  border-color: var(--surface-dark);
+  background: var(--surface-dark);
+  color: #fff;
+  transform: none;
+}
+
 .breadcrumb {
   color: var(--ink-faint);
   font-size: 12px;
@@ -207,7 +214,7 @@
 }
 
 @media (max-width: 820px) {
-.app-shell {
+  .app-shell {
     display: block;
   }
 
@@ -246,7 +253,6 @@
   .mobile-menu-button {
     display: inline-grid;
   }
-
 }
 
 @media (max-width: 640px) {
