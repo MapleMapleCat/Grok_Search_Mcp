@@ -15,7 +15,7 @@ func resolveSearchModel(requestModel, defaultModel string) (string, error) {
 		model = defaultModel
 	}
 	if err := config.ValidateModel(model); err != nil {
-		return "", err
+		return "", newSearchRequestError("unsupported model (must contain 'grok'); omit model to use the server default")
 	}
 	return model, nil
 }
@@ -23,31 +23,31 @@ func resolveSearchModel(requestModel, defaultModel string) (string, error) {
 // validateSearchRequest 校验查询、工具类型，以及 web_search 域名过滤参数的互斥与数量上限。
 func validateSearchRequest(req SearchRequest) (SearchRequest, error) {
 	if strings.TrimSpace(req.Query) == "" {
-		return req, fmt.Errorf("query must not be empty")
+		return req, newSearchRequestError("query must not be empty")
 	}
 	if req.ToolType != ToolTypeWebSearch && req.ToolType != ToolTypeXSearch {
-		return req, fmt.Errorf("unsupported tool type: %q", req.ToolType)
+		return req, newSearchRequestError(fmt.Sprintf("unsupported tool type: %q", req.ToolType))
 	}
 	if req.ToolType != ToolTypeWebSearch {
 		return req, nil
 	}
 	if len(req.AllowedDomains) > 0 && len(req.ExcludedDomains) > 0 {
-		return req, fmt.Errorf("allowed_domains and excluded_domains cannot be used together")
+		return req, newSearchRequestError("allowed_domains and excluded_domains cannot be used together")
 	}
 	if len(req.AllowedDomains) > 5 {
-		return req, fmt.Errorf("allowed_domains supports at most 5 entries")
+		return req, newSearchRequestError("allowed_domains supports at most 5 entries")
 	}
 	if len(req.ExcludedDomains) > 5 {
-		return req, fmt.Errorf("excluded_domains supports at most 5 entries")
+		return req, newSearchRequestError("excluded_domains supports at most 5 entries")
 	}
 
 	allowedDomains, err := normalizeDomainFilters("allowed_domains", req.AllowedDomains)
 	if err != nil {
-		return req, err
+		return req, newSearchRequestError(err.Error())
 	}
 	excludedDomains, err := normalizeDomainFilters("excluded_domains", req.ExcludedDomains)
 	if err != nil {
-		return req, err
+		return req, newSearchRequestError(err.Error())
 	}
 	req.AllowedDomains = allowedDomains
 	req.ExcludedDomains = excludedDomains

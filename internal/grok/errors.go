@@ -15,6 +15,34 @@ const (
 	UpstreamErrorCategoryTransport    UpstreamErrorCategory = "transport"
 )
 
+// SearchRequestError contains a client-safe validation message for a search
+// request. Keeping this error typed lets protocol boundaries expose actionable
+// parameter feedback without forwarding arbitrary internal errors.
+type SearchRequestError struct {
+	message string
+}
+
+func (requestError *SearchRequestError) Error() string {
+	if requestError == nil {
+		return "search request is invalid"
+	}
+	return requestError.message
+}
+
+func newSearchRequestError(message string) error {
+	return &SearchRequestError{message: message}
+}
+
+// SearchRequestErrorMessage returns a validation message that is safe to show
+// to an MCP client.
+func SearchRequestErrorMessage(err error) (string, bool) {
+	var requestError *SearchRequestError
+	if !errors.As(err, &requestError) {
+		return "", false
+	}
+	return requestError.Error(), true
+}
+
 // UpstreamError carries bounded operational metadata without retaining an
 // upstream body, SSE payload, request URL, or credential in its error string.
 type UpstreamError struct {

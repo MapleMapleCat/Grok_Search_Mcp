@@ -25,20 +25,8 @@ func TestServerInstructionsDocumentSearchToolUsage(t *testing.T) {
 		webSearchToolName,
 		xSearchToolName,
 		listModelsToolName,
-		"query is required",
-		"model is optional",
-		"grok keyword",
-		"imagine",
-		"video",
-		"allowed_domains",
-		"excluded_domains",
-		"Do not provide allowed_domains and excluded_domains together",
-		"at most 5 domains",
-		"enable_image_understanding",
-		"enable_image_search",
-		"answer, citations, sources, and usage",
-		"isError=true",
-		"progressToken",
+		"Omit model to use the server default",
+		"Tool errors are recoverable MCP results",
 	}
 
 	for _, wantedSnippet := range wantedSnippets {
@@ -50,39 +38,55 @@ func TestServerInstructionsDocumentSearchToolUsage(t *testing.T) {
 
 func TestNewSearchToolMetadata(t *testing.T) {
 	testCases := []struct {
-		name        string
-		title       string
-		description string
+		name            string
+		title           string
+		description     string
+		constructTool   func() *mcp.Tool
+		expectedFields  []string
+		forbiddenFields []string
 	}{
 		{
-			name:        webSearchToolName,
-			title:       webSearchToolTitle,
-			description: webSearchToolDescription,
+			name:           webSearchToolName,
+			title:          webSearchToolTitle,
+			description:    webSearchToolDescription,
+			constructTool:  newWebSearchTool,
+			expectedFields: []string{"query", "model", "allowed_domains", "excluded_domains", "enable_image_understanding", "enable_image_search"},
 		},
 		{
-			name:        xSearchToolName,
-			title:       xSearchToolTitle,
-			description: xSearchToolDescription,
+			name:            xSearchToolName,
+			title:           xSearchToolTitle,
+			description:     xSearchToolDescription,
+			constructTool:   newXSearchTool,
+			expectedFields:  []string{"query", "model"},
+			forbiddenFields: []string{"allowed_domains", "excluded_domains", "enable_image_understanding", "enable_image_search"},
 		},
 	}
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			tool := newSearchTool(testCase.name, testCase.title, testCase.description)
+			tool := testCase.constructTool()
 			if tool.Name != testCase.name {
 				t.Fatalf("Name = %q, want %q", tool.Name, testCase.name)
 			}
 			if tool.Title != testCase.title {
 				t.Fatalf("Title = %q, want %q", tool.Title, testCase.title)
 			}
-			if !strings.Contains(tool.Description, "query is required") {
-				t.Fatalf("Description must mention query requirement; description=%q", tool.Description)
+			if tool.Description != testCase.description {
+				t.Fatalf("Description = %q, want %q", tool.Description, testCase.description)
 			}
-			if testCase.name == webSearchToolName && !strings.Contains(tool.Description, "allowed_domains and excluded_domains are mutually exclusive") {
-				t.Fatalf("web search description must mention domain filter exclusivity; description=%q", tool.Description)
+			schema, ok := tool.InputSchema.(*jsonschema.Schema)
+			if !ok {
+				t.Fatalf("InputSchema type = %T, want *jsonschema.Schema", tool.InputSchema)
 			}
-			if testCase.name == xSearchToolName && !strings.Contains(tool.Description, "accepts only query and model") {
-				t.Fatalf("x search description must mention its smaller input schema; description=%q", tool.Description)
+			for _, propertyName := range testCase.expectedFields {
+				if schema.Properties[propertyName] == nil {
+					t.Fatalf("input schema missing %q", propertyName)
+				}
+			}
+			for _, propertyName := range testCase.forbiddenFields {
+				if schema.Properties[propertyName] != nil {
+					t.Fatalf("input schema must not expose %q", propertyName)
+				}
 			}
 			if tool.Annotations == nil {
 				t.Fatalf("Annotations must be set")
@@ -105,8 +109,8 @@ func TestNewListModelsToolMetadata(t *testing.T) {
 	if tool.Title != listModelsToolTitle {
 		t.Fatalf("Title = %q, want %q", tool.Title, listModelsToolTitle)
 	}
-	if !strings.Contains(tool.Description, "grok keyword") || !strings.Contains(tool.Description, "imagine or video") {
-		t.Fatalf("Description must mention Grok keyword filtering; description=%q", tool.Description)
+	if tool.Description != listModelsToolDescription {
+		t.Fatalf("Description = %q, want %q", tool.Description, listModelsToolDescription)
 	}
 	if tool.Annotations == nil {
 		t.Fatalf("Annotations must be set")
@@ -119,13 +123,8 @@ func TestNewListModelsToolMetadata(t *testing.T) {
 	}
 }
 
-// TestWebSearchInputSchema 锁住 L1 修复：query 的 required 由 json tag（无 omitempty）自动推断，
-// jsonschema tag 仅作 description，不能带 "required," 前缀污染描述文本。
 func TestWebSearchInputSchema(t *testing.T) {
-	schema, err := jsonschema.For[WebSearchInput](nil)
-	if err != nil {
-		t.Fatalf("generate schema: %v", err)
-	}
+	schema := newWebSearchInputSchema()
 
 	required := false
 	for _, r := range schema.Required {
@@ -137,12 +136,17 @@ func TestWebSearchInputSchema(t *testing.T) {
 		t.Fatalf("query must be required; required=%v", schema.Required)
 	}
 
-	prop := schema.Properties["query"]
-	if prop == nil {
+	queryProperty := schema.Properties["query"]
+	if queryProperty == nil {
 		t.Fatalf("query property missing from schema")
 	}
-	if prop.Description != "Search query text" {
-		t.Fatalf("query description = %q, want %q", prop.Description, "Search query text")
+	if queryProperty.MinLength == nil || *queryProperty.MinLength != 1 {
+		t.Fatalf("query minLength = %v, want 1", queryProperty.MinLength)
+	}
+
+	modelProperty := schema.Properties["model"]
+	if modelProperty == nil || modelProperty.Pattern != `[gG][rR][oO][kK]` {
+		t.Fatalf("model pattern = %q, want case-insensitive grok pattern", modelProperty.Pattern)
 	}
 
 	webSearchProperties := []string{
@@ -152,18 +156,25 @@ func TestWebSearchInputSchema(t *testing.T) {
 		"enable_image_search",
 	}
 	for _, propertyName := range webSearchProperties {
-		if schema.Properties[propertyName] == nil {
+		property := schema.Properties[propertyName]
+		if property == nil {
 			t.Fatalf("web search schema missing %q", propertyName)
 		}
 	}
 
+	for _, propertyName := range []string{"allowed_domains", "excluded_domains"} {
+		property := schema.Properties[propertyName]
+		if property.MaxItems == nil || *property.MaxItems != 5 {
+			t.Fatalf("%s maxItems = %v, want 5", propertyName, property.MaxItems)
+		}
+	}
+	if schema.Not == nil || len(schema.Not.Required) != 2 || schema.Not.Required[0] != "allowed_domains" || schema.Not.Required[1] != "excluded_domains" {
+		t.Fatalf("schema must reject simultaneous domain filters; not=%+v", schema.Not)
+	}
 }
 
 func TestXSearchInputSchemaOmitsWebOnlyFields(t *testing.T) {
-	schema, err := jsonschema.For[XSearchInput](nil)
-	if err != nil {
-		t.Fatalf("generate schema: %v", err)
-	}
+	schema := newXSearchInputSchema()
 
 	required := false
 	for _, requiredPropertyName := range schema.Required {
@@ -414,10 +425,71 @@ func TestRunSearchMapsValidationAndUpstreamErrorsToMCPToolErrors(t *testing.T) {
 		if output.Answer != "" {
 			t.Fatalf("expected empty output on validation error, got %+v", output)
 		}
-		if got := toolErrorText(t, toolResult); got != "query is required" {
-			t.Fatalf("tool error text = %q, want %q", got, "query is required")
+		if got := toolErrorText(t, toolResult); got != "query must be non-empty" {
+			t.Fatalf("tool error text = %q, want %q", got, "query must be non-empty")
 		}
 	})
+
+	validationCases := []struct {
+		name            string
+		request         grok.SearchRequest
+		expectedMessage string
+	}{
+		{
+			name: "mutually exclusive domain filters",
+			request: grok.SearchRequest{
+				Query:           "domain conflict",
+				ToolType:        grok.ToolTypeWebSearch,
+				AllowedDomains:  []string{"example.com"},
+				ExcludedDomains: []string{"other.example"},
+			},
+			expectedMessage: "allowed_domains and excluded_domains cannot be used together",
+		},
+		{
+			name: "domain URL",
+			request: grok.SearchRequest{
+				Query:          "domain URL",
+				ToolType:       grok.ToolTypeWebSearch,
+				AllowedDomains: []string{"https://example.com"},
+			},
+			expectedMessage: "allowed_domains entry 0 is invalid: scheme is not allowed",
+		},
+		{
+			name: "unsupported model",
+			request: grok.SearchRequest{
+				Query:    "model override",
+				ToolType: grok.ToolTypeWebSearch,
+				Model:    "gpt-4",
+			},
+			expectedMessage: "unsupported model (must contain 'grok'); omit model to use the server default",
+		},
+	}
+
+	for _, validationCase := range validationCases {
+		t.Run(validationCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+				t.Fatalf("parameter validation should not call upstream, got %s %s", request.Method, request.URL.Path)
+			}))
+			defer server.Close()
+
+			toolResult, output, err := runSearch(
+				context.Background(),
+				nil,
+				newMCPTestClient(t, server.URL),
+				logx.NewWithDebugState("mcp-test", logx.NewDebugState(false)),
+				validationCase.request,
+			)
+			if err != nil {
+				t.Fatalf("runSearch returned Go error: %v", err)
+			}
+			if output.Answer != "" {
+				t.Fatalf("expected empty output on validation error, got %+v", output)
+			}
+			if got := toolErrorText(t, toolResult); got != validationCase.expectedMessage {
+				t.Fatalf("tool error text = %q, want %q", got, validationCase.expectedMessage)
+			}
+		})
+	}
 
 	t.Run("upstream HTTP status", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
