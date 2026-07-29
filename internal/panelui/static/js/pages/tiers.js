@@ -17,7 +17,7 @@ export function renderTiersPage(state) {
 
   return `
     <div class="tiers-page">
-      ${renderPageHeading("配额方案", "为不同用户群体设置清晰、统一且可复用的调用上限。", createButton)}
+      ${renderPageHeading("配额方案", "", createButton)}
       ${renderTierOverview(totalTierCount, assignedUserCount, defaultTier)}
       ${tiers.length === 0 ? renderEmptyTiers(createButton) : `
         <div class="tier-catalog-heading">
@@ -133,7 +133,7 @@ function renderEmptyTiers(createButton) {
 function renderTiersLoading(createButton) {
   return `
     <div class="tiers-page">
-      ${renderPageHeading("配额方案", "正在同步配额策略与用户分配情况。", createButton)}
+      ${renderPageHeading("配额方案", "", createButton)}
       <div class="skeleton tier-overview-skeleton"></div>
       <div class="tier-catalog-heading">
         <div>

@@ -10,7 +10,7 @@ export function renderPageHeading(title, description, actions = "") {
     <div class="page-heading">
       <div>
         <h1>${escapeHTML(title)}</h1>
-        <p>${escapeHTML(description)}</p>
+        ${description ? `<p>${escapeHTML(description)}</p>` : ""}
       </div>
       ${actions ? `<div class="heading-actions">${actions}</div>` : ""}
     </div>
