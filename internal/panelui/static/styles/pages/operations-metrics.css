@@ -53,6 +53,10 @@
   box-shadow: var(--shadow-sm);
 }
 
+.operations-card.is-wide {
+  grid-column: 1 / -1;
+}
+
 .operations-table th,
 .operations-table td {
   padding-right: 13px;
@@ -151,6 +155,10 @@
 @media (max-width: 960px) {
   .operations-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .operations-card.is-wide {
+    grid-column: auto;
   }
 }
 

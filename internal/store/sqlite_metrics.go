@@ -31,6 +31,9 @@ type SQLiteConnectionPoolMetrics struct {
 	IdleConnections        int     `json:"idle_connections"`
 	WaitCount              int64   `json:"wait_count"`
 	WaitDurationMs         float64 `json:"wait_duration_ms"`
+	MaxIdleClosed          int64   `json:"max_idle_closed"`
+	MaxIdleTimeClosed      int64   `json:"max_idle_time_closed"`
+	MaxLifetimeClosed      int64   `json:"max_lifetime_closed"`
 }
 
 // SQLiteCheckpointMetrics records checkpoint latency and the most recent WAL
@@ -266,6 +269,9 @@ func sqliteConnectionPoolMetrics(database *sql.DB) SQLiteConnectionPoolMetrics {
 		IdleConnections:        statistics.Idle,
 		WaitCount:              statistics.WaitCount,
 		WaitDurationMs:         float64(statistics.WaitDuration) / float64(time.Millisecond),
+		MaxIdleClosed:          statistics.MaxIdleClosed,
+		MaxIdleTimeClosed:      statistics.MaxIdleTimeClosed,
+		MaxLifetimeClosed:      statistics.MaxLifetimeClosed,
 	}
 }
 

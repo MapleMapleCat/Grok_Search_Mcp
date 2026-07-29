@@ -36,8 +36,10 @@ SQLite 主库有意保持单写连接，避免通过增加连接数制造更多�
 记录合并为一个事务；定时维护使用非阻塞读者的 `PASSIVE` checkpoint。生产环境
 必须把数据库放在本地 SSD 上，不应放在 NFS、SMB 或高延迟网络块存储上。
 
+### 运行指标
+
 运行指标默认关闭。管理员需要先在 **服务设置** 中启用
-**数据库运行指标**；关闭时，以下接口返回 HTTP `404`。
+**运行指标**；关闭时，以下接口返回 HTTP `404`。
 
 管理员可以查询实时运行指标：
 
@@ -46,15 +48,24 @@ curl -sS "http://127.0.0.1:8080/panel/v1/admin/operations/metrics" \
   -H "Authorization: Bearer ${login_token}" | jq
 ```
 
-该接口仅允许管理员访问，包含：主写库、读库和 debug 库的连接池状态与等待时间；
-quota reserve/release 延迟和错误；SQLite busy/locked 次数；usage 批次、队列深度、
-最老排队记录年龄、写入/排队延迟和丢弃量；维护及主库/debug 库 WAL checkpoint
-延迟与 frame 计数；以及有界来源 IP 注册表的当前/最大条目数、独立条目接纳、
-过期清理、降级请求和降级拒绝计数。同一接口还会按公开认证 endpoint 汇总面板
-认证保护器的容量、接纳、过期清理、降级请求/拒绝和登录失败容量拒绝计数，
-不会暴露 IP 地址或用户名。建议至少为以下情况配置告警：
+该接口仅允许管理员访问，包含：进程运行时间、Go 版本与平台、CPU/GOMAXPROCS、
+goroutine 和 CGO 调用数；当前/累计内存分配、堆/栈/运行时元数据、对象数、GC
+目标、次数、暂停和 CPU 占比；主写库、读库和 debug 库的连接池状态、等待时间及
+连接回收原因；quota reserve/release 延迟和错误；SQLite busy/locked 次数；usage
+批次、队列深度、最老排队记录年龄、写入/排队延迟和丢弃量；维护及主库/debug 库
+WAL checkpoint 延迟与 frame 计数；以及有界来源 IP 和已认证用户注册表的容量、
+接纳、过期清理、降级请求和降级拒绝计数。同一接口还会按公开认证 endpoint 汇总
+面板认证保护器的容量、接纳、过期清理、降级请求/拒绝、登录失败状态和 bcrypt
+并发准入，不会暴露 IP 地址或用户名。
 
+该响应是当前进程的即时快照，其中请求、错误、分配、GC、等待和拒绝等字段通常是
+进程启动后的累计计数；服务重启后会重置。接口不是持久化时间序列或 Prometheus
+exporter，应由外部监控按固定周期采集并计算变化率。建议至少为以下情况配置告警：
+
+- goroutine、堆使用量或存活对象数持续增长且长时间不回落；
+- GC CPU 占比或单次/累计暂停增长异常；
 - `primary_write_pool.wait_count` 或 `wait_duration_ms` 持续快速增长；
+- `max_idle_closed`、`max_idle_time_closed` 或 `max_lifetime_closed` 异常快速增长；
 - `busy_or_locked_errors` 非零并持续增长；
 - usage 队列长期接近容量、`oldest_queued_age_ms` 增长或出现丢弃；
 - quota reserve/release 最大或平均延迟持续升高；
@@ -257,8 +268,10 @@ so active readers are not blocked by a periodic `TRUNCATE` checkpoint. Store
 both SQLite databases on local SSD storage, not NFS, SMB, or a high-latency
 network block volume.
 
+### Operational metrics
+
 Operational metrics are disabled by default. An administrator must first enable
-**Database operational metrics** in **Server Settings**. When disabled, the
+**Operational metrics** in **Server Settings**. When disabled, the
 endpoint below returns HTTP `404`.
 
 Administrators can query live operational metrics:
@@ -268,18 +281,31 @@ curl -sS "http://127.0.0.1:8080/panel/v1/admin/operations/metrics" \
   -H "Authorization: Bearer ${login_token}" | jq
 ```
 
-This admin-only endpoint reports connection-pool utilization and wait time for
-the primary, read, and debug databases; quota reserve/release latency and
-errors; SQLite busy/locked counts; usage batch, queue-depth, oldest-record,
-write/queue latency, failure, and drop metrics; and maintenance plus WAL
-checkpoint latency/frame counters. It also reports the bounded source-IP
-registry's current/capacity values and dedicated-admission, expiration,
-fallback-request, and fallback-rejection counters. The same response reports
-panel-auth protector capacity, admission, expiry, fallback, fallback-rejection,
-and login-failure capacity-rejection counters, grouped by public auth endpoint
-without exposing IP addresses or usernames. At minimum, alert on:
+This admin-only endpoint reports process uptime, Go version and platform,
+CPU/GOMAXPROCS, goroutines, and CGO calls; current and cumulative allocation,
+heap, stack, runtime metadata, object, GC target/count/pause, and GC CPU values;
+connection-pool utilization, wait time, and connection-close reasons for the
+primary, read, and debug databases; quota reserve/release latency and errors;
+SQLite busy/locked counts; usage batch, queue-depth, oldest-record, write/queue
+latency, failure, and drop metrics; and maintenance plus WAL checkpoint
+latency/frame counters. It also reports capacity, admission, expiry, fallback
+request, and fallback rejection counters for the bounded source-IP and
+authenticated-user registries. The same response reports panel-auth protector
+capacity, admission, expiry, fallback traffic, login-failure state, and bcrypt
+work admission grouped by public auth endpoint without exposing IP addresses
+or usernames.
 
+The response is an instantaneous snapshot of the current process. Request,
+error, allocation, GC, wait, and rejection fields are generally cumulative
+since process startup and reset on restart. This endpoint is not a persistent
+time series or Prometheus exporter; poll it externally at a fixed interval to
+calculate rates. At minimum, alert on:
+
+- sustained goroutine, heap-use, or live-object growth that does not subside;
+- abnormal GC CPU fraction or individual/cumulative pause growth;
 - sustained growth in `primary_write_pool.wait_count` or `wait_duration_ms`;
+- unexpectedly rapid growth in `max_idle_closed`, `max_idle_time_closed`, or
+  `max_lifetime_closed`;
 - any continuously increasing `busy_or_locked_errors` value;
 - a usage queue that remains near capacity, increasing
   `oldest_queued_age_ms`, or dropped records;

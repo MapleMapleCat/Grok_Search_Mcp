@@ -134,6 +134,11 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 	assertIPLimiterMetricsJSONFields(t, responseBody)
 	assertUserLimiterMetricsJSONFields(t, responseBody)
 	assertAuthProtectorMetricsJSONFields(t, responseBody)
+	assertRuntimeMetricsJSONFields(t, responseBody)
+	assertSQLiteConnectionPoolMetricsJSONFields(t, responseBody)
+	if payload.Runtime.GoVersion == "" || payload.Runtime.Goroutines < 1 || payload.Runtime.CPUCount < 1 {
+		t.Fatalf("runtime metrics are incomplete: %+v", payload.Runtime)
+	}
 	if payload.SQLite.PrimaryWritePool.MaximumOpenConnections != 1 {
 		t.Fatalf("primary write pool metrics = %+v", payload.SQLite.PrimaryWritePool)
 	}
@@ -149,6 +154,78 @@ func TestAdminOperationalMetricsReturnsSQLiteAndWriterSnapshots(t *testing.T) {
 	if ipLimiterMetrics.callCount != 1 {
 		t.Fatalf("IP limiter metrics call count = %d, want 1", ipLimiterMetrics.callCount)
 	}
+}
+
+func assertRuntimeMetricsJSONFields(t *testing.T, responseBody []byte) {
+	t.Helper()
+
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(responseBody, &rawPayload); err != nil {
+		t.Fatal(err)
+	}
+	assertRawMetricFields(t, rawPayload["runtime"], []string{
+		"uptime_ms",
+		"go_version",
+		"go_os",
+		"go_arch",
+		"cpu_count",
+		"gomaxprocs",
+		"goroutines",
+		"cgo_calls",
+		"memory",
+	})
+
+	var rawRuntimeMetrics map[string]json.RawMessage
+	if err := json.Unmarshal(rawPayload["runtime"], &rawRuntimeMetrics); err != nil {
+		t.Fatal(err)
+	}
+	assertRawMetricFields(t, rawRuntimeMetrics["memory"], []string{
+		"allocated_bytes",
+		"total_allocated_bytes",
+		"system_bytes",
+		"malloc_count",
+		"free_count",
+		"heap_allocated_bytes",
+		"heap_system_bytes",
+		"heap_idle_bytes",
+		"heap_in_use_bytes",
+		"heap_released_bytes",
+		"heap_object_count",
+		"stack_in_use_bytes",
+		"stack_system_bytes",
+		"metadata_in_use_bytes",
+		"next_gc_bytes",
+		"last_garbage_collection_at",
+		"garbage_collection_count",
+		"forced_garbage_collection_count",
+		"garbage_collection_pause_total_ms",
+		"last_garbage_collection_pause_ms",
+		"garbage_collection_cpu_fraction",
+	})
+}
+
+func assertSQLiteConnectionPoolMetricsJSONFields(t *testing.T, responseBody []byte) {
+	t.Helper()
+
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(responseBody, &rawPayload); err != nil {
+		t.Fatal(err)
+	}
+	var rawSQLiteMetrics map[string]json.RawMessage
+	if err := json.Unmarshal(rawPayload["sqlite"], &rawSQLiteMetrics); err != nil {
+		t.Fatal(err)
+	}
+	assertRawMetricFields(t, rawSQLiteMetrics["primary_write_pool"], []string{
+		"maximum_open_connections",
+		"open_connections",
+		"in_use_connections",
+		"idle_connections",
+		"wait_count",
+		"wait_duration_ms",
+		"max_idle_closed",
+		"max_idle_time_closed",
+		"max_lifetime_closed",
+	})
 }
 
 func assertAuthProtectorMetricsJSONFields(t *testing.T, responseBody []byte) {

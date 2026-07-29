@@ -11,6 +11,7 @@ import (
 
 type operationalMetricsResponse struct {
 	CapturedAt    time.Time                            `json:"captured_at"`
+	Runtime       runtimeMetricsSnapshot               `json:"runtime"`
 	SQLite        store.SQLiteMetricsSnapshot          `json:"sqlite"`
 	UsageWriter   store.AsyncUsageWriterStats          `json:"usage_writer"`
 	IPLimiter     ratelimit.IPLimiterMetricsSnapshot   `json:"ip_limiter"`
@@ -39,8 +40,10 @@ func (handler *Handler) adminOperationalMetrics(writer http.ResponseWriter, requ
 		return
 	}
 
+	capturedAt := time.Now().UTC()
 	writeJSON(writer, http.StatusOK, operationalMetricsResponse{
-		CapturedAt:    time.Now().UTC(),
+		CapturedAt:    capturedAt,
+		Runtime:       collectRuntimeMetrics(capturedAt),
 		SQLite:        handler.SQLiteMetrics.SQLiteMetrics(),
 		UsageWriter:   handler.UsageWriterMetrics.Stats(),
 		IPLimiter:     handler.IPLimiterMetrics.Metrics(),

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -17,6 +18,40 @@ func TestSQLiteMetricsAreDisabledByDefault(t *testing.T) {
 	metrics := sqliteStore.SQLiteMetrics()
 	if !reflect.DeepEqual(metrics, SQLiteMetricsSnapshot{}) {
 		t.Fatalf("metrics collected while disabled: %+v", metrics)
+	}
+}
+
+func TestSQLiteConnectionPoolMetricsExposeAllDatabaseStatsCounters(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	sqliteStore.SetMetricsEnabled(true)
+
+	serializedMetrics, err := json.Marshal(sqliteStore.SQLiteMetrics().PrimaryWritePool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(serializedMetrics, &fields); err != nil {
+		t.Fatal(err)
+	}
+	expectedFieldNames := []string{
+		"maximum_open_connections",
+		"open_connections",
+		"in_use_connections",
+		"idle_connections",
+		"wait_count",
+		"wait_duration_ms",
+		"max_idle_closed",
+		"max_idle_time_closed",
+		"max_lifetime_closed",
+	}
+	for _, expectedFieldName := range expectedFieldNames {
+		if _, exists := fields[expectedFieldName]; !exists {
+			t.Fatalf("connection pool metric %q is missing from %s", expectedFieldName, serializedMetrics)
+		}
+		delete(fields, expectedFieldName)
+	}
+	if len(fields) != 0 {
+		t.Fatalf("unexpected connection pool fields: %+v", fields)
 	}
 }
 
