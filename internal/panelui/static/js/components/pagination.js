@@ -38,7 +38,7 @@ export function renderCollectionPagination(collectionName, pagination, currentIt
   const totalLabel = totalCount > 0 ? ` · 共 ${formatNumber(totalCount)} 条` : "";
   return `
     <footer class="collection-pagination" aria-label="列表分页">
-      <span>第 ${escapeHTML(formatNumber(currentPage))} 页 · 本页 ${escapeHTML(formatNumber(currentItemCount))} 条${escapeHTML(totalLabel)}</span>
+      <span>第 ${escapeHTML(formatNumber(currentPage))} 页 · 本页 <span data-pagination-current-count>${escapeHTML(formatNumber(currentItemCount))}</span> 条${escapeHTML(totalLabel)}</span>
       <div class="collection-pagination-actions">
         <button class="button button-secondary button-sm" type="button" data-action="change-list-page" data-list="${escapeHTML(collectionName)}" data-direction="previous" ${previousPageAvailable ? "" : "disabled"}>上一页</button>
         <button class="button button-secondary button-sm" type="button" data-action="change-list-page" data-list="${escapeHTML(collectionName)}" data-direction="next" ${nextPageAvailable ? "" : "disabled"}>下一页</button>

@@ -1,10 +1,12 @@
 import { deleteAdminUser, updateAdminUser } from "../api.js";
 import { showToast } from "../components/toast.js";
 import { findItemByIdentifier, removeItemByIdentifier, replaceItemByIdentifier } from "../state.js";
+import { formatNumber, normalizeSearchValue } from "../utils.js";
 import { handleModalMutationError, openConfirmationModal } from "./event-helpers.js";
 
 export function createUserEvents({
   state,
+  applicationElement,
   modalController,
   renderApplication,
   handleSessionError
@@ -48,6 +50,46 @@ export function createUserEvents({
 
   function updateSearchFilter(searchValue) {
     state.filters.userSearch = searchValue;
+
+    const searchResultsElement = applicationElement?.querySelector("[data-user-search-results]");
+    if (!searchResultsElement) {
+      return;
+    }
+
+    const normalizedSearch = normalizeSearchValue(searchValue);
+    const userRowElements = searchResultsElement.querySelectorAll("[data-user-search-username]");
+    let matchingUserCount = 0;
+
+    for (const userRowElement of userRowElements) {
+      const normalizedUsername = String(userRowElement.dataset.userSearchUsername || "");
+      const normalizedUserIdentifier = String(userRowElement.dataset.userSearchId || "");
+      const userMatchesSearch = !normalizedSearch
+        || normalizedUsername.includes(normalizedSearch)
+        || normalizedUserIdentifier.includes(normalizedSearch);
+      userRowElement.hidden = !userMatchesSearch;
+      if (userMatchesSearch) {
+        matchingUserCount += 1;
+      }
+    }
+
+    const hasMatchingUsers = matchingUserCount > 0;
+    const emptyStateElement = searchResultsElement.querySelector("[data-user-search-empty]");
+    const userTableElement = searchResultsElement.querySelector("[data-user-search-table]");
+    const paginationElement = searchResultsElement.querySelector("[data-user-search-pagination]");
+    const paginationCountElement = paginationElement?.querySelector("[data-pagination-current-count]");
+
+    if (emptyStateElement) {
+      emptyStateElement.hidden = hasMatchingUsers;
+    }
+    if (userTableElement) {
+      userTableElement.hidden = !hasMatchingUsers;
+    }
+    if (paginationElement) {
+      paginationElement.hidden = !hasMatchingUsers;
+    }
+    if (paginationCountElement) {
+      paginationCountElement.textContent = formatNumber(matchingUserCount);
+    }
   }
 
   function openDeleteConfirmation(userIdentifier) {

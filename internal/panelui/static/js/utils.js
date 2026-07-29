@@ -117,6 +117,10 @@ export function getInitials(username) {
   return normalizedUsername.slice(0, 2).toUpperCase();
 }
 
+export function normalizeSearchValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 export function getUsagePeriodSince(period) {
   const currentTime = new Date();
   const periodToMilliseconds = {

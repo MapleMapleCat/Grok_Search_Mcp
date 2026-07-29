@@ -59,6 +59,7 @@ export function createApplicationEvents({
   });
   const userEvents = createUserEvents({
     state,
+    applicationElement,
     modalController,
     renderApplication,
     handleSessionError
@@ -295,15 +296,7 @@ export function createApplicationEvents({
       return;
     }
 
-    const selectionStart = event.target.selectionStart ?? event.target.value.length;
-    const selectionEnd = event.target.selectionEnd ?? selectionStart;
-    const selectionDirection = event.target.selectionDirection || "none";
     userEvents.updateSearchFilter(event.target.value);
-    renderApplication();
-
-    const replacementInput = applicationElement.querySelector('[data-filter="user-search"]');
-    replacementInput?.focus();
-    replacementInput?.setSelectionRange(selectionStart, selectionEnd, selectionDirection);
   }
 
   async function handleFormSubmit(event) {
