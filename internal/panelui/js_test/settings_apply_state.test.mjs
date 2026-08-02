@@ -79,6 +79,9 @@ test("login form renders Turnstile only when enabled", () => {
   });
   assert.match(enabledMarkup, /data-turnstile-container/);
   assert.match(enabledMarkup, /name="turnstile_token"/);
+  assert.match(enabledMarkup, /data-action="retry-turnstile"/);
+  assert.match(enabledMarkup, /正在加载人机验证组件/);
+  assert.match(enabledMarkup, /auth-submit" type="submit" disabled/);
   assert.doesNotMatch(enabledMarkup, /private-secret-key/);
 });
 

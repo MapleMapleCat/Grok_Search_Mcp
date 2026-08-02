@@ -32,7 +32,7 @@ import {
   state
 } from "./js/state.js";
 import { getUsagePeriodSince } from "./js/utils.js";
-import { synchronizeLoginTurnstile } from "./js/turnstile.js";
+import { preloadTurnstileScript, synchronizeLoginTurnstile } from "./js/turnstile.js";
 
 const applicationElement = document.querySelector("#app");
 const modalRegionElement = document.querySelector("#modal-region");
@@ -68,6 +68,11 @@ function renderModalRegion() {
 }
 
 async function initializeApplication() {
+  if (!panelAPI.hasSession()) {
+    // Start the cross-origin request while the public authentication settings load.
+    void preloadTurnstileScript().catch(() => {});
+  }
+
   configureToastRegion(toastRegionElement);
   configureCustomSelects();
   createApplicationEvents({

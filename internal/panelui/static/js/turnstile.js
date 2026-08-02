@@ -4,6 +4,10 @@ let scriptLoadPromise = null;
 let activeWidget = null;
 let synchronizationGeneration = 0;
 
+export function preloadTurnstileScript() {
+  return loadTurnstileScript();
+}
+
 export function synchronizeLoginTurnstile({ enabled, siteKey }) {
   synchronizationGeneration += 1;
   const currentGeneration = synchronizationGeneration;
@@ -18,6 +22,10 @@ export function synchronizeLoginTurnstile({ enabled, siteKey }) {
   }
 
   const normalizedSiteKey = String(siteKey).trim();
+  updateLoginTurnstileState(widgetContainer, {
+    state: "loading",
+    statusMessage: "正在加载人机验证组件..."
+  });
   void loadTurnstileScript()
     .then((turnstileAPI) => {
       const renderIsStale = currentGeneration !== synchronizationGeneration
@@ -27,37 +35,48 @@ export function synchronizeLoginTurnstile({ enabled, siteKey }) {
         return;
       }
 
-      const loginForm = widgetContainer.closest('form[data-form="login"]');
-      const tokenInput = loginForm?.elements?.turnstile_token;
-      const statusElement = loginForm?.querySelector("[data-turnstile-status]");
+      updateLoginTurnstileState(widgetContainer, {
+        state: "ready",
+        statusMessage: "请完成人机验证后登录。"
+      });
       const widgetIdentifier = turnstileAPI.render(widgetContainer, {
         sitekey: normalizedSiteKey,
         action: "login",
         theme: "light",
         size: "flexible",
         callback(token) {
-          if (tokenInput) {
-            tokenInput.value = String(token || "");
-          }
-          if (statusElement) {
-            statusElement.textContent = "人机验证已完成。";
-          }
+          const normalizedToken = String(token || "");
+          updateLoginTurnstileState(widgetContainer, {
+            state: normalizedToken ? "verified" : "error",
+            statusMessage: normalizedToken
+              ? "人机验证已完成。"
+              : "人机验证未返回有效结果，请重新加载。",
+            token: normalizedToken
+          });
         },
         "expired-callback"() {
-          if (tokenInput) {
-            tokenInput.value = "";
-          }
-          if (statusElement) {
-            statusElement.textContent = "验证已过期，请重新完成验证。";
-          }
+          updateLoginTurnstileState(widgetContainer, {
+            state: "ready",
+            statusMessage: "验证已过期，请重新完成验证。"
+          });
         },
         "error-callback"() {
-          if (tokenInput) {
-            tokenInput.value = "";
-          }
-          if (statusElement) {
-            statusElement.textContent = "验证组件暂时不可用，请稍后重试。";
-          }
+          updateLoginTurnstileState(widgetContainer, {
+            state: "error",
+            statusMessage: "验证组件暂时不可用，请重新加载。"
+          });
+        },
+        "timeout-callback"() {
+          updateLoginTurnstileState(widgetContainer, {
+            state: "error",
+            statusMessage: "人机验证等待超时，请重新加载。"
+          });
+        },
+        "unsupported-callback"() {
+          updateLoginTurnstileState(widgetContainer, {
+            state: "error",
+            statusMessage: "当前浏览器不支持人机验证组件。"
+          });
         }
       });
       activeWidget = {
@@ -69,13 +88,16 @@ export function synchronizeLoginTurnstile({ enabled, siteKey }) {
       if (currentGeneration !== synchronizationGeneration || !widgetContainer.isConnected) {
         return;
       }
-      const statusElement = widgetContainer
-        .closest('form[data-form="login"]')
-        ?.querySelector("[data-turnstile-status]");
-      if (statusElement) {
-        statusElement.textContent = "无法加载人机验证组件，请检查网络后重试。";
-      }
+      updateLoginTurnstileState(widgetContainer, {
+        state: "error",
+        statusMessage: "无法加载人机验证组件，请检查网络后重试。"
+      });
     });
+}
+
+export function retryLoginTurnstile({ enabled, siteKey }) {
+  removeActiveWidget();
+  synchronizeLoginTurnstile({ enabled, siteKey });
 }
 
 function loadTurnstileScript() {
@@ -127,4 +149,27 @@ function removeActiveWidget() {
     // The previous form may already have removed the widget iframe.
   }
   activeWidget = null;
+}
+
+function updateLoginTurnstileState(widgetContainer, { state, statusMessage, token = "" }) {
+  const loginForm = widgetContainer.closest('form[data-form="login"]');
+  const tokenInput = loginForm?.elements?.turnstile_token;
+  const statusElement = loginForm?.querySelector("[data-turnstile-status]");
+  const submitButton = loginForm?.querySelector('button[type="submit"]');
+  const retryButton = loginForm?.querySelector('[data-action="retry-turnstile"]');
+
+  widgetContainer.dataset.turnstileState = state;
+  widgetContainer.setAttribute("aria-busy", String(state === "loading"));
+  if (tokenInput) {
+    tokenInput.value = token;
+  }
+  if (statusElement) {
+    statusElement.textContent = statusMessage;
+  }
+  if (submitButton) {
+    submitButton.disabled = state !== "verified";
+  }
+  if (retryButton) {
+    retryButton.hidden = state !== "error";
+  }
 }

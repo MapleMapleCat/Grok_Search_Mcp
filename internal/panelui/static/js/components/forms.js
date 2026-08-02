@@ -80,11 +80,14 @@ function renderLoginForm(state) {
       ${turnstileEnabled ? `
         <div class="turnstile-field">
           <input name="turnstile_token" type="hidden" value="">
-          <div class="turnstile-widget" data-turnstile-container></div>
-          <p class="turnstile-status" data-turnstile-status aria-live="polite">请完成人机验证后登录。</p>
+          <div class="turnstile-widget" data-turnstile-container data-turnstile-state="loading" aria-busy="true" aria-label="人机验证"></div>
+          <div class="turnstile-status-row">
+            <p class="turnstile-status" data-turnstile-status aria-live="polite">正在加载人机验证组件...</p>
+            <button class="turnstile-retry" type="button" data-action="retry-turnstile" hidden>重新加载</button>
+          </div>
         </div>
       ` : ""}
-      <button class="button button-primary button-wide auth-submit" type="submit" ${state.authBusy ? "disabled" : ""}>
+      <button class="button button-primary button-wide auth-submit" type="submit" ${state.authBusy || turnstileEnabled ? "disabled" : ""}>
         ${state.authBusy ? `${renderIcon("refresh")} 正在登录` : `进入控制台 ${renderIcon("arrowRight")}`}
       </button>
     </form>

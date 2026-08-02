@@ -11,19 +11,35 @@ async function importStandaloneModule(relativeModulePath) {
 function createLoginWidgetContainer() {
   const tokenInput = { value: "" };
   const statusElement = { textContent: "" };
+  const submitButton = { disabled: true };
+  const retryButton = { hidden: true };
   const loginForm = {
     elements: { turnstile_token: tokenInput },
     querySelector(selector) {
-      return selector === "[data-turnstile-status]" ? statusElement : null;
+      if (selector === "[data-turnstile-status]") {
+        return statusElement;
+      }
+      if (selector === 'button[type="submit"]') {
+        return submitButton;
+      }
+      if (selector === '[data-action="retry-turnstile"]') {
+        return retryButton;
+      }
+      return null;
     }
   };
   const widgetContainer = {
+    dataset: {},
     isConnected: true,
+    attributes: {},
     closest(selector) {
       return selector === 'form[data-form="login"]' ? loginForm : null;
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
     }
   };
-  return { widgetContainer, tokenInput, statusElement };
+  return { widgetContainer, tokenInput, statusElement, submitButton, retryButton };
 }
 
 test("Turnstile synchronization ignores stale renders and cleans up widgets", async () => {
@@ -52,7 +68,9 @@ test("Turnstile synchronization ignores stale renders and cleans up widgets", as
     }
   };
 
-  const { synchronizeLoginTurnstile } = await importStandaloneModule("../static/js/turnstile.js");
+  const { retryLoginTurnstile, synchronizeLoginTurnstile } = await importStandaloneModule(
+    "../static/js/turnstile.js"
+  );
   const staleWidget = createLoginWidgetContainer();
   const currentWidget = createLoginWidgetContainer();
 
@@ -68,19 +86,33 @@ test("Turnstile synchronization ignores stale renders and cleans up widgets", as
   assert.equal(renderCalls[0].options.sitekey, "current-site-key");
   assert.equal(renderCalls[0].options.action, "login");
   assert.equal(renderCalls[0].options.size, "flexible");
+  assert.equal(currentWidget.widgetContainer.dataset.turnstileState, "ready");
+  assert.equal(currentWidget.submitButton.disabled, true);
+  assert.equal(currentWidget.retryButton.hidden, true);
 
   renderCalls[0].options.callback("browser-issued-token");
   assert.equal(currentWidget.tokenInput.value, "browser-issued-token");
   assert.match(currentWidget.statusElement.textContent, /已完成/);
+  assert.equal(currentWidget.submitButton.disabled, false);
 
   renderCalls[0].options["expired-callback"]();
   assert.equal(currentWidget.tokenInput.value, "");
   assert.match(currentWidget.statusElement.textContent, /已过期/);
+  assert.equal(currentWidget.submitButton.disabled, true);
 
   currentWidget.tokenInput.value = "another-token";
   renderCalls[0].options["error-callback"]();
   assert.equal(currentWidget.tokenInput.value, "");
   assert.match(currentWidget.statusElement.textContent, /暂时不可用/);
+  assert.equal(currentWidget.retryButton.hidden, false);
+
+  retryLoginTurnstile({ enabled: true, siteKey: "current-site-key" });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(removedWidgetIdentifiers, ["widget-1"]);
+  assert.equal(renderCalls.length, 2);
+  assert.equal(renderCalls[1].widgetContainer, currentWidget.widgetContainer);
 
   const replacementWidget = createLoginWidgetContainer();
   currentWidgetContainer = replacementWidget.widgetContainer;
@@ -88,11 +120,11 @@ test("Turnstile synchronization ignores stale renders and cleans up widgets", as
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.deepEqual(removedWidgetIdentifiers, ["widget-1"]);
-  assert.equal(renderCalls.length, 2);
-  assert.equal(renderCalls[1].widgetContainer, replacementWidget.widgetContainer);
+  assert.deepEqual(removedWidgetIdentifiers, ["widget-1", "widget-2"]);
+  assert.equal(renderCalls.length, 3);
+  assert.equal(renderCalls[2].widgetContainer, replacementWidget.widgetContainer);
 
   currentWidgetContainer = null;
   synchronizeLoginTurnstile({ enabled: false, siteKey: "" });
-  assert.deepEqual(removedWidgetIdentifiers, ["widget-1", "widget-2"]);
+  assert.deepEqual(removedWidgetIdentifiers, ["widget-1", "widget-2", "widget-3"]);
 });

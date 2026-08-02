@@ -12,6 +12,7 @@ import { createSettingsEvents } from "./events/settings-events.js";
 import { createTierEvents } from "./events/tier-events.js";
 import { createUserEvents } from "./events/user-events.js";
 import { createUserUsageModalEvents } from "./events/user-usage-modal.js";
+import { retryLoginTurnstile } from "./turnstile.js";
 
 export function createApplicationEvents({
   applicationElement,
@@ -139,6 +140,10 @@ export function createApplicationEvents({
     "switch-auth": (actionElement) => authEvents.switchAuthMode(actionElement.dataset.mode),
     "toggle-password": (actionElement) => authEvents.togglePasswordVisibility(actionElement),
     "retry-authentication-settings": () => authEvents.retryAuthenticationSettings(),
+    "retry-turnstile": () => retryLoginTurnstile({
+      enabled: state.turnstileEnabled,
+      siteKey: state.turnstileSiteKey
+    }),
     navigate: (actionElement) => navigationEvents.navigateToPage(actionElement.dataset.page),
     "toggle-sidebar": () => setSidebarOpen(!state.sidebarOpen),
     "close-sidebar": () => setSidebarOpen(false),

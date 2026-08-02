@@ -165,11 +165,60 @@
   min-height: 65px;
 }
 
+.turnstile-widget:empty::before {
+  display: flex;
+  min-height: 65px;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(110deg, var(--surface-muted) 8%, var(--canvas) 18%, var(--surface-muted) 33%);
+  color: var(--ink-faint);
+  content: "正在加载人机验证...";
+  font-size: 12px;
+}
+
+.turnstile-widget[data-turnstile-state="error"]:empty::before {
+  border-color: rgba(226, 82, 82, 0.28);
+  background: var(--danger-soft);
+  color: var(--danger);
+  content: "人机验证组件加载失败";
+}
+
+.turnstile-status-row {
+  display: flex;
+  min-height: 18px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .turnstile-status {
   margin: 0;
   color: var(--ink-faint);
   font-size: 10px;
   line-height: 1.5;
+}
+
+.turnstile-retry {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--success);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.turnstile-retry:hover {
+  text-decoration: underline;
+}
+
+.turnstile-retry[hidden] {
+  display: none;
 }
 
 .auth-settings-state {
