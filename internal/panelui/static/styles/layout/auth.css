@@ -217,6 +217,7 @@
   position: relative;
   z-index: 1;
   max-width: 610px;
+  margin-bottom: clamp(24px, 3vh, 36px);
   color: var(--surface-dark);
   animation: enter-up 650ms 100ms var(--transition-smooth) both;
 }
