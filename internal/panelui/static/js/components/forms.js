@@ -18,8 +18,8 @@ export function renderAuthView(state) {
 
         <div class="auth-panel-inner">
           <p class="eyebrow">Secure control plane</p>
-          <h1 class="auth-title">连接实时智能，<br>保持全局可控。</h1>
-          <p class="auth-copy">统一管理访问密钥、调用配额与 Grok 上游配置，让每一次搜索请求都清晰、稳定、可追踪。</p>
+          <h1 class="auth-title">Grok Search MCP<br>控制平面</h1>
+          <p class="auth-copy">集中管理 MCP 访问密钥、用量策略和 Grok 上游连接。</p>
 
           ${registrationAvailable ? `
             <div class="auth-tabs" role="tablist" aria-label="账户操作">
