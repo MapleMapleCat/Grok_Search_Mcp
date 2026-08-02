@@ -4,9 +4,6 @@ import { renderIcon } from "./icons.js";
 export function renderAuthView(state) {
   const registrationAvailable = state.registrationMode !== "disabled";
   const activeMode = registrationAvailable ? state.authMode : "login";
-  const registrationCopy = state.registrationMode === "invite"
-    ? "当前服务采用邀请注册，创建账户时需要有效邀请码。"
-    : "创建账户后即可生成独立 API 密钥，安全接入 MCP 服务。";
 
   return `
     <main class="auth-layout">
@@ -28,7 +25,7 @@ export function renderAuthView(state) {
             </div>
           ` : ""}
 
-          ${activeMode === "register" ? renderRegisterForm(state, registrationCopy) : renderLoginForm(state)}
+          ${activeMode === "register" ? renderRegisterForm(state) : renderLoginForm(state)}
         </div>
       </section>
 
@@ -70,7 +67,7 @@ function renderLoginForm(state) {
   `;
 }
 
-function renderRegisterForm(state, registrationCopy) {
+function renderRegisterForm(state) {
   return `
     <form class="auth-form" data-form="register" novalidate>
       ${state.authError ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(state.authError)}</span></div>` : ""}
@@ -94,7 +91,6 @@ function renderRegisterForm(state, registrationCopy) {
       <button class="button button-primary button-wide auth-submit" type="submit" ${state.authBusy ? "disabled" : ""}>
         ${state.authBusy ? `${renderIcon("refresh")} 正在完成本地验证` : `创建账户 ${renderIcon("arrowRight")}`}
       </button>
-      <p class="auth-footnote">${escapeHTML(registrationCopy)} 提交时浏览器会完成一次短暂的本地计算验证。</p>
     </form>
   `;
 }

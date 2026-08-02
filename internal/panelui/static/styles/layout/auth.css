@@ -72,7 +72,7 @@
 
 .auth-panel-inner {
   width: min(100%, 440px);
-  margin: auto;
+  margin: 0 auto auto;
   padding: 60px 0 40px;
   animation: enter-up 520ms var(--transition-smooth) both;
 }
@@ -152,14 +152,6 @@
 .auth-submit {
   min-height: 52px;
   margin-top: 4px;
-}
-
-.auth-footnote {
-  margin: 24px 0 0;
-  color: var(--ink-faint);
-  font-size: 12px;
-  line-height: 1.6;
-  text-align: center;
 }
 
 .auth-visual {
