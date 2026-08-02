@@ -79,7 +79,7 @@ function renderRegisterForm(state, registrationCopy) {
         <input class="text-input" name="username" type="text" autocomplete="username" maxlength="128" placeholder="创建用户名" required autofocus>
       </label>
       <label class="field-group">
-        <span class="field-label"><span>密码</span><span class="field-hint">8–72 字节</span></span>
+        <span class="field-label">密码</span>
         <span class="password-wrap">
           <input class="text-input" id="register-password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" placeholder="设置安全密码" required>
           <button class="input-icon-button" type="button" data-action="toggle-password" data-target="register-password" aria-label="显示或隐藏密码">${renderIcon("eye")}</button>
