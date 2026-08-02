@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -57,6 +58,18 @@ func (h *Handler) adminUpdateServerSettings(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to load server settings")
 		return
 	}
+	if req.ExpectedVersion == nil || *req.ExpectedVersion < 0 {
+		writeError(w, http.StatusBadRequest, "expected_version is required")
+		return
+	}
+	if *req.ExpectedVersion != currentSettings.Revision {
+		writeError(w, http.StatusConflict, "server settings changed; reload and retry")
+		return
+	}
+	if turnstileSiteKeyChangeRequiresSecret(currentSettings.Runtime, req) {
+		writeError(w, http.StatusBadRequest, "turnstile_secret_key is required when turnstile_site_key changes")
+		return
+	}
 
 	updatedSettings := mergeServerSettingsRequest(currentSettings.Runtime, req)
 	normalizedSettings, err := config.NormalizeServerSettings(updatedSettings)
@@ -65,8 +78,15 @@ func (h *Handler) adminUpdateServerSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	storedSettings, err := h.Store.UpsertServerSettings(r.Context(), store.ServerSettings{Runtime: normalizedSettings})
+	storedSettings, err := h.Store.UpsertServerSettings(r.Context(), store.ServerSettings{
+		Runtime:          normalizedSettings,
+		ExpectedRevision: req.ExpectedVersion,
+	})
 	if err != nil {
+		if errors.Is(err, store.ErrServerSettingsConflict) {
+			writeError(w, http.StatusConflict, "server settings changed; reload and retry")
+			return
+		}
 		log.Printf("admin persist server settings failed error_type=%T", err)
 		writeError(w, http.StatusInternalServerError, "failed to save server settings")
 		return
@@ -78,7 +98,7 @@ func (h *Handler) adminUpdateServerSettings(w http.ResponseWriter, r *http.Reque
 			log.Printf("admin apply server settings failed error_type=%T", err)
 			writeJSON(w, http.StatusInternalServerError, savedNotAppliedErrorResponse{
 				Code:             settingsSavedNotAppliedCode,
-				Error:            "settings were saved but are not active",
+				Error:            "settings were saved but runtime components are not fully active",
 				PersistedVersion: storedSettings.Revision,
 				LiveVersion:      h.SettingsApplier.LiveServerSettingsVersion(),
 			})
@@ -177,6 +197,15 @@ func mergeServerSettingsRequest(currentSettings config.ServerSettings, req Updat
 	if req.RegistrationMode != nil {
 		mergedSettings.RegistrationMode = *req.RegistrationMode
 	}
+	if req.TurnstileEnabled != nil {
+		mergedSettings.TurnstileEnabled = *req.TurnstileEnabled
+	}
+	if req.TurnstileSiteKey != nil {
+		mergedSettings.TurnstileSiteKey = *req.TurnstileSiteKey
+	}
+	if req.TurnstileSecretKey != nil && strings.TrimSpace(*req.TurnstileSecretKey) != "" {
+		mergedSettings.TurnstileSecretKey = *req.TurnstileSecretKey
+	}
 	if req.Debug != nil {
 		mergedSettings.Debug = *req.Debug
 	}
@@ -184,4 +213,19 @@ func mergeServerSettingsRequest(currentSettings config.ServerSettings, req Updat
 		mergedSettings.OperationsMetricsEnabled = *req.OperationsMetricsEnabled
 	}
 	return mergedSettings
+}
+
+func turnstileSiteKeyChangeRequiresSecret(
+	currentSettings config.ServerSettings,
+	request UpdateServerSettingsRequest,
+) bool {
+	if request.TurnstileSiteKey == nil || strings.TrimSpace(currentSettings.TurnstileSecretKey) == "" {
+		return false
+	}
+	currentSiteKey := strings.TrimSpace(currentSettings.TurnstileSiteKey)
+	requestedSiteKey := strings.TrimSpace(*request.TurnstileSiteKey)
+	if requestedSiteKey == currentSiteKey {
+		return false
+	}
+	return request.TurnstileSecretKey == nil || strings.TrimSpace(*request.TurnstileSecretKey) == ""
 }

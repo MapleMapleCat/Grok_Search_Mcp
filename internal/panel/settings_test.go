@@ -88,13 +88,17 @@ func (applier *recordingSettingsApplier) LiveServerSettingsVersion() int64 {
 	return applier.liveRevision
 }
 
-func TestServerSettingsResponseNeverIncludesCPAAPIKey(t *testing.T) {
+func TestServerSettingsResponseNeverIncludesSensitiveKeys(t *testing.T) {
 	const sensitiveAPIKey = "cpa-panel-never-return-this-full-secret-7f0d5b"
+	const sensitiveTurnstileSecret = "turnstile-panel-never-return-this-full-secret"
 	response := toServerSettingsResponse(config.ServerSettings{
 		CPABaseURL:               "https://cpa.example.test",
 		CPAAPIKey:                sensitiveAPIKey,
 		UpstreamProtocol:         config.UpstreamProtocolResponses,
 		Model:                    "grok-4.3",
+		TurnstileEnabled:         true,
+		TurnstileSiteKey:         "turnstile-public-site-key",
+		TurnstileSecretKey:       sensitiveTurnstileSecret,
 		OperationsMetricsEnabled: true,
 	}, nil, 7, 7)
 	if !response.OperationsMetricsEnabled {
@@ -111,6 +115,15 @@ func TestServerSettingsResponseNeverIncludesCPAAPIKey(t *testing.T) {
 	}
 	if strings.Contains(encodedText, `"cpa_api_key"`) {
 		t.Fatalf("panel settings response included raw CPA API key field: %s", encodedText)
+	}
+	if strings.Contains(encodedText, sensitiveTurnstileSecret) {
+		t.Fatalf("panel settings response exposed Turnstile secret key: %s", encodedText)
+	}
+	if strings.Contains(encodedText, `"turnstile_secret_key"`) {
+		t.Fatalf("panel settings response included raw Turnstile secret key field: %s", encodedText)
+	}
+	if !response.TurnstileSecretKeySet || response.TurnstileSiteKey != "turnstile-public-site-key" {
+		t.Fatalf("panel settings response omitted safe Turnstile state: %+v", response)
 	}
 }
 
@@ -161,7 +174,7 @@ func TestAdminUpdateServerSettingsKeepsInitialSettingsImmutable(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPatch,
 		"/panel/v1/admin/settings",
-		bytes.NewBufferString(`{"model":"grok-4.4","mcp_global_search_concurrency":10,"mcp_user_search_concurrency":2,"operations_metrics_enabled":true}`),
+		bytes.NewBufferString(`{"expected_version":1,"model":"grok-4.4","mcp_global_search_concurrency":10,"mcp_user_search_concurrency":2,"operations_metrics_enabled":true}`),
 	)
 	responseRecorder := httptest.NewRecorder()
 
@@ -259,7 +272,7 @@ func TestAdminUpdateServerSettingsReturnsSavedNotAppliedCondition(t *testing.T) 
 	request := httptest.NewRequest(
 		http.MethodPatch,
 		"/panel/v1/admin/settings",
-		bytes.NewBufferString(`{"model":"grok-4.4"}`),
+		bytes.NewBufferString(`{"expected_version":1,"model":"grok-4.4"}`),
 	)
 	responseRecorder := httptest.NewRecorder()
 
@@ -331,7 +344,7 @@ func TestAdminUpdateServerSettingsKeepsPersistenceFailureDistinct(t *testing.T) 
 	request := httptest.NewRequest(
 		http.MethodPatch,
 		"/panel/v1/admin/settings",
-		bytes.NewBufferString(`{"model":"grok-4.4"}`),
+		bytes.NewBufferString(`{"expected_version":0,"model":"grok-4.4"}`),
 	)
 	responseRecorder := httptest.NewRecorder()
 
@@ -396,7 +409,7 @@ func TestAdminUpdateServerSettingsSerializesPersistAndApplyOrder(t *testing.T) {
 		defer close(firstCompleted)
 		handler.adminUpdateServerSettings(
 			firstResponse,
-			httptest.NewRequest(http.MethodPatch, "/panel/v1/admin/settings", bytes.NewBufferString(`{"model":"grok-4.4"}`)),
+			httptest.NewRequest(http.MethodPatch, "/panel/v1/admin/settings", bytes.NewBufferString(`{"expected_version":1,"model":"grok-4.4"}`)),
 		)
 	}()
 	select {
@@ -410,7 +423,7 @@ func TestAdminUpdateServerSettingsSerializesPersistAndApplyOrder(t *testing.T) {
 		defer close(secondCompleted)
 		handler.adminUpdateServerSettings(
 			secondResponse,
-			httptest.NewRequest(http.MethodPatch, "/panel/v1/admin/settings", bytes.NewBufferString(`{"model":"grok-4.5"}`)),
+			httptest.NewRequest(http.MethodPatch, "/panel/v1/admin/settings", bytes.NewBufferString(`{"expected_version":2,"model":"grok-4.5"}`)),
 		)
 	}()
 	<-secondRequestStarted
@@ -470,8 +483,8 @@ func TestAdminUpdateServerSettingsRejectsInvalidSearchConcurrency(t *testing.T) 
 		name    string
 		payload string
 	}{
-		{name: "zero global", payload: `{"mcp_global_search_concurrency":0}`},
-		{name: "user exceeds global", payload: `{"mcp_global_search_concurrency":2,"mcp_user_search_concurrency":3}`},
+		{name: "zero global", payload: `{"expected_version":0,"mcp_global_search_concurrency":0}`},
+		{name: "user exceeds global", payload: `{"expected_version":0,"mcp_global_search_concurrency":2,"mcp_user_search_concurrency":3}`},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -488,5 +501,93 @@ func TestAdminUpdateServerSettingsRejectsInvalidSearchConcurrency(t *testing.T) 
 				t.Fatalf("status = %d, body = %s", responseRecorder.Code, responseRecorder.Body.String())
 			}
 		})
+	}
+}
+
+func TestAdminUpdateServerSettingsRequiresSecretWhenTurnstileSiteKeyChanges(t *testing.T) {
+	sqliteStore, err := store.OpenSQLite(filepath.Join(t.TempDir(), "turnstile-key-rotation.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqliteStore.Close()
+	if err := sqliteStore.ConfigureAPIKeyEncryption("turnstile-key-rotation-test-secret"); err != nil {
+		t.Fatal(err)
+	}
+
+	initialSettings := config.ServerSettings{
+		CPABaseURL:                 "http://127.0.0.1:8317",
+		CPAAPIKey:                  "initial-key",
+		UpstreamProtocol:           config.UpstreamProtocolResponses,
+		Model:                      "grok-4.3",
+		TimeoutSeconds:             120,
+		MCPGlobalSearchConcurrency: 16,
+		MCPUserSearchConcurrency:   4,
+		RegistrationMode:           store.RegistrationModeDisabled,
+		TurnstileEnabled:           true,
+		TurnstileSiteKey:           "original-site-key",
+		TurnstileSecretKey:         "original-secret-key",
+	}
+	if _, err := sqliteStore.UpsertServerSettings(
+		context.Background(),
+		store.ServerSettings{Runtime: initialSettings},
+	); err != nil {
+		t.Fatal(err)
+	}
+	handler := &Handler{Store: sqliteStore}
+
+	missingSecretRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/panel/v1/admin/settings",
+		bytes.NewBufferString(`{"expected_version":1,"turnstile_site_key":"replacement-site-key"}`),
+	)
+	missingSecretResponse := httptest.NewRecorder()
+	handler.adminUpdateServerSettings(missingSecretResponse, missingSecretRequest)
+	if missingSecretResponse.Code != http.StatusBadRequest {
+		t.Fatalf("site-key-only update status = %d, body = %s", missingSecretResponse.Code, missingSecretResponse.Body.String())
+	}
+
+	unchangedSettings, err := sqliteStore.GetServerSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchangedSettings.TurnstileSiteKey != "original-site-key" || unchangedSettings.TurnstileSecretKey != "original-secret-key" {
+		t.Fatalf("rejected key rotation changed persisted settings: %+v", unchangedSettings)
+	}
+
+	completeRotationRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/panel/v1/admin/settings",
+		bytes.NewBufferString(`{"expected_version":1,"turnstile_site_key":"replacement-site-key","turnstile_secret_key":"replacement-secret-key"}`),
+	)
+	completeRotationResponse := httptest.NewRecorder()
+	handler.adminUpdateServerSettings(completeRotationResponse, completeRotationRequest)
+	if completeRotationResponse.Code != http.StatusOK {
+		t.Fatalf("complete key rotation status = %d, body = %s", completeRotationResponse.Code, completeRotationResponse.Body.String())
+	}
+
+	rotatedSettings, err := sqliteStore.GetServerSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotatedSettings.TurnstileSiteKey != "replacement-site-key" || rotatedSettings.TurnstileSecretKey != "replacement-secret-key" {
+		t.Fatalf("complete key rotation was not persisted: %+v", rotatedSettings)
+	}
+
+	staleUpdateRequest := httptest.NewRequest(
+		http.MethodPatch,
+		"/panel/v1/admin/settings",
+		bytes.NewBufferString(`{"expected_version":1,"turnstile_enabled":false}`),
+	)
+	staleUpdateResponse := httptest.NewRecorder()
+	handler.adminUpdateServerSettings(staleUpdateResponse, staleUpdateRequest)
+	if staleUpdateResponse.Code != http.StatusConflict {
+		t.Fatalf("stale settings update status = %d, body = %s", staleUpdateResponse.Code, staleUpdateResponse.Body.String())
+	}
+	settingsAfterConflict, err := sqliteStore.GetServerSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settingsAfterConflict.TurnstileEnabled || settingsAfterConflict.Revision != 2 {
+		t.Fatalf("stale settings update changed persisted policy: %+v", settingsAfterConflict)
 	}
 }

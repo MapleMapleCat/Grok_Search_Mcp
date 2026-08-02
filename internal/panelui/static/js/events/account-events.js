@@ -12,6 +12,9 @@ export function createAccountEvents({ state, renderApplication, handleSessionErr
       state.user = replacementSession.user;
       showToast(successTitle, successMessage, "success");
     } catch (error) {
+      if (error?.name === "AbortError") {
+        return;
+      }
       if (!handleSessionError(error)) {
         showToast(errorTitle, withRetryAfter(getErrorMessage(error), error), "error");
       }

@@ -21,6 +21,10 @@ export const state = {
   authenticated: false,
   user: null,
   registrationMode: "free",
+  authenticationSettingsStatus: "loading",
+  authenticationSettingsError: "",
+  turnstileEnabled: false,
+  turnstileSiteKey: "",
   authMode: "login",
   authBusy: false,
   authError: "",
@@ -65,6 +69,29 @@ export function clearCachedData() {
   for (const paginationKey of Object.keys(state.pagination)) {
     resetPagination(paginationKey, { preservePageSize: false });
   }
+}
+
+export function applyAuthenticationSettings(stateToUpdate, authenticationSettings) {
+  const registrationMode = String(authenticationSettings?.registration_mode || "");
+  const validRegistrationModes = new Set(["free", "invite", "disabled"]);
+  const turnstileEnabled = Boolean(authenticationSettings?.turnstile_enabled);
+  const turnstileSiteKey = String(authenticationSettings?.turnstile_site_key || "").trim();
+
+  if (!validRegistrationModes.has(registrationMode) || (turnstileEnabled && !turnstileSiteKey)) {
+    stateToUpdate.authenticationSettingsStatus = "error";
+    stateToUpdate.authenticationSettingsError = "后端返回了无效的登录访问策略，请联系管理员。";
+    return false;
+  }
+
+  stateToUpdate.registrationMode = registrationMode;
+  stateToUpdate.turnstileEnabled = turnstileEnabled;
+  stateToUpdate.turnstileSiteKey = turnstileEnabled ? turnstileSiteKey : "";
+  stateToUpdate.authenticationSettingsStatus = "ready";
+  stateToUpdate.authenticationSettingsError = "";
+  if (registrationMode === "disabled") {
+    stateToUpdate.authMode = "login";
+  }
+  return true;
 }
 
 export function resetPagination(collectionName, options = {}) {

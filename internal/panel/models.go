@@ -26,8 +26,9 @@ type RegistrationChallengeResponse struct {
 }
 
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	TurnstileToken string `json:"turnstile_token,omitempty"`
 }
 
 type LoginResponse struct {
@@ -167,6 +168,10 @@ type ServerSettingsResponse struct {
 	ProxyURL                   string                   `json:"proxy_url"`
 	ProxyEnabled               bool                     `json:"proxy_enabled"`
 	RegistrationMode           store.RegistrationMode   `json:"registration_mode"`
+	TurnstileEnabled           bool                     `json:"turnstile_enabled"`
+	TurnstileSiteKey           string                   `json:"turnstile_site_key"`
+	TurnstileSecretKeySet      bool                     `json:"turnstile_secret_key_set"`
+	TurnstileSecretKeyPreview  string                   `json:"turnstile_secret_key_preview,omitempty"`
 	Debug                      bool                     `json:"debug"`
 	OperationsMetricsEnabled   bool                     `json:"operations_metrics_enabled"`
 	UpdatedAt                  *time.Time               `json:"updated_at,omitempty"`
@@ -181,6 +186,8 @@ const (
 
 type RegistrationSettingsResponse struct {
 	RegistrationMode store.RegistrationMode `json:"registration_mode"`
+	TurnstileEnabled bool                   `json:"turnstile_enabled"`
+	TurnstileSiteKey string                 `json:"turnstile_site_key,omitempty"`
 }
 
 type ModelResponse struct {
@@ -206,6 +213,7 @@ type OverviewHealthResponse struct {
 }
 
 type UpdateServerSettingsRequest struct {
+	ExpectedVersion            *int64                   `json:"expected_version"`
 	CPABaseURL                 *string                  `json:"cpa_base_url,omitempty"`
 	CPAAPIKey                  *string                  `json:"cpa_api_key,omitempty"`
 	UpstreamProtocol           *config.UpstreamProtocol `json:"upstream_protocol,omitempty"`
@@ -216,6 +224,9 @@ type UpdateServerSettingsRequest struct {
 	ProxyURL                   *string                  `json:"proxy_url,omitempty"`
 	ProxyEnabled               *bool                    `json:"proxy_enabled,omitempty"`
 	RegistrationMode           *store.RegistrationMode  `json:"registration_mode,omitempty"`
+	TurnstileEnabled           *bool                    `json:"turnstile_enabled,omitempty"`
+	TurnstileSiteKey           *string                  `json:"turnstile_site_key,omitempty"`
+	TurnstileSecretKey         *string                  `json:"turnstile_secret_key,omitempty"`
 	Debug                      *bool                    `json:"debug,omitempty"`
 	OperationsMetricsEnabled   *bool                    `json:"operations_metrics_enabled,omitempty"`
 }
@@ -357,6 +368,10 @@ func toServerSettingsResponse(
 	if settings.CPAAPIKey != "" {
 		apiKeyPreview = maskSecret(settings.CPAAPIKey)
 	}
+	turnstileSecretKeyPreview := ""
+	if settings.TurnstileSecretKey != "" {
+		turnstileSecretKeyPreview = maskSecret(settings.TurnstileSecretKey)
+	}
 	applyState := ServerSettingsApplied
 	if persistedVersion != liveVersion {
 		applyState = ServerSettingsSavedNotApplied
@@ -377,6 +392,10 @@ func toServerSettingsResponse(
 		ProxyURL:                   settings.ProxyURL,
 		ProxyEnabled:               settings.ProxyEnabled,
 		RegistrationMode:           settings.RegistrationMode,
+		TurnstileEnabled:           settings.TurnstileEnabled,
+		TurnstileSiteKey:           settings.TurnstileSiteKey,
+		TurnstileSecretKeySet:      settings.TurnstileSecretKey != "",
+		TurnstileSecretKeyPreview:  turnstileSecretKeyPreview,
 		Debug:                      settings.Debug,
 		OperationsMetricsEnabled:   settings.OperationsMetricsEnabled,
 		UpdatedAt:                  updatedAt,

@@ -2,6 +2,7 @@ import { escapeHTML } from "../utils.js";
 import { renderIcon } from "./icons.js";
 
 export function renderAuthView(state) {
+  const authenticationSettingsReady = state.authenticationSettingsStatus === "ready";
   const registrationAvailable = state.registrationMode !== "disabled";
   const activeMode = registrationAvailable ? state.authMode : "login";
 
@@ -18,14 +19,15 @@ export function renderAuthView(state) {
           <h1 class="auth-title">Grok Search MCP<br>控制平面</h1>
           <p class="auth-copy">集中管理 MCP 访问密钥、用量策略和 Grok 上游连接。</p>
 
-          ${registrationAvailable ? `
-            <div class="auth-tabs" role="tablist" aria-label="账户操作">
-              <button class="auth-tab ${activeMode === "login" ? "is-active" : ""}" type="button" role="tab" aria-selected="${activeMode === "login"}" data-action="switch-auth" data-mode="login">登录</button>
-              <button class="auth-tab ${activeMode === "register" ? "is-active" : ""}" type="button" role="tab" aria-selected="${activeMode === "register"}" data-action="switch-auth" data-mode="register">注册</button>
-            </div>
-          ` : ""}
-
-          ${activeMode === "register" ? renderRegisterForm(state) : renderLoginForm(state)}
+          ${authenticationSettingsReady ? `
+            ${registrationAvailable ? `
+              <div class="auth-tabs" role="tablist" aria-label="账户操作">
+                <button class="auth-tab ${activeMode === "login" ? "is-active" : ""}" type="button" role="tab" aria-selected="${activeMode === "login"}" data-action="switch-auth" data-mode="login">登录</button>
+                <button class="auth-tab ${activeMode === "register" ? "is-active" : ""}" type="button" role="tab" aria-selected="${activeMode === "register"}" data-action="switch-auth" data-mode="register">注册</button>
+              </div>
+            ` : ""}
+            ${activeMode === "register" ? renderRegisterForm(state) : renderLoginForm(state)}
+          ` : renderAuthenticationSettingsState(state)}
         </div>
       </section>
 
@@ -45,7 +47,22 @@ export function renderAuthView(state) {
   `;
 }
 
+function renderAuthenticationSettingsState(state) {
+  const loading = state.authenticationSettingsStatus === "loading";
+  const description = loading
+    ? "正在加载当前登录访问策略..."
+    : escapeHTML(state.authenticationSettingsError || "无法加载当前登录访问策略，请稍后重试。");
+  return `
+    <div class="auth-settings-state" role="${loading ? "status" : "alert"}">
+      <span class="auth-settings-state-icon">${renderIcon(loading ? "refresh" : "alert")}</span>
+      <p>${description}</p>
+      ${loading ? "" : `<button class="button button-secondary button-wide" type="button" data-action="retry-authentication-settings">重新加载</button>`}
+    </div>
+  `;
+}
+
 function renderLoginForm(state) {
+  const turnstileEnabled = Boolean(state.turnstileEnabled && state.turnstileSiteKey);
   return `
     <form class="auth-form" data-form="login" novalidate>
       ${state.authError ? `<div class="inline-alert">${renderIcon("alert")}<span>${escapeHTML(state.authError)}</span></div>` : ""}
@@ -60,6 +77,13 @@ function renderLoginForm(state) {
           <button class="input-icon-button" type="button" data-action="toggle-password" data-target="login-password" aria-label="显示或隐藏密码">${renderIcon("eye")}</button>
         </span>
       </label>
+      ${turnstileEnabled ? `
+        <div class="turnstile-field">
+          <input name="turnstile_token" type="hidden" value="">
+          <div class="turnstile-widget" data-turnstile-container></div>
+          <p class="turnstile-status" data-turnstile-status aria-live="polite">请完成人机验证后登录。</p>
+        </div>
+      ` : ""}
       <button class="button button-primary button-wide auth-submit" type="submit" ${state.authBusy ? "disabled" : ""}>
         ${state.authBusy ? `${renderIcon("refresh")} 正在登录` : `进入控制台 ${renderIcon("arrowRight")}`}
       </button>

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/config"
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -151,25 +152,85 @@ func (handler *Handler) generatePasswordHash(password string) ([]byte, error) {
 }
 
 func (handler *Handler) registrationSettings(writer http.ResponseWriter, request *http.Request) {
-	registrationMode, err := handler.currentRegistrationMode(request)
+	authenticationSettings, err := handler.currentAuthenticationSettings(request)
 	if err != nil {
 		log.Printf("load registration settings failed error_type=%T", err)
 		writeError(writer, http.StatusInternalServerError, "failed to load registration settings")
 		return
 	}
-	writeJSON(writer, http.StatusOK, RegistrationSettingsResponse{RegistrationMode: registrationMode})
+	registrationMode := store.RegistrationModeDisabled
+	if authenticationSettings.RegistrationMode != "" {
+		registrationMode, err = store.NormalizeRegistrationMode(authenticationSettings.RegistrationMode)
+		if err != nil {
+			log.Printf("normalize registration settings failed error_type=%T", err)
+			writeError(writer, http.StatusInternalServerError, "failed to load registration settings")
+			return
+		}
+	}
+	response := RegistrationSettingsResponse{
+		RegistrationMode: registrationMode,
+	}
+	loginVerificationSettings := handler.liveLoginVerificationSettings(authenticationSettings)
+	response.TurnstileEnabled = loginVerificationSettings.TurnstileEnabled
+	if loginVerificationSettings.TurnstileEnabled {
+		response.TurnstileSiteKey = loginVerificationSettings.TurnstileSiteKey
+	}
+	writeJSON(writer, http.StatusOK, response)
 }
 
 func (handler *Handler) currentRegistrationMode(request *http.Request) (store.RegistrationMode, error) {
-	storedSettings, err := handler.Store.GetServerSettings(request.Context())
+	// Registration policy is intentionally authoritative as soon as it is
+	// persisted because the store enforces that same value in the user-creation
+	// transaction. Turnstile instead follows the last fully applied snapshot.
+	authenticationSettings, err := handler.currentAuthenticationSettings(request)
 	if err != nil {
 		return "", err
 	}
-	if storedSettings != nil {
-		return store.NormalizeRegistrationMode(storedSettings.RegistrationMode)
-	}
-	if handler.InitialServerSettings.RegistrationMode == "" {
+	if authenticationSettings.RegistrationMode == "" {
 		return store.RegistrationModeDisabled, nil
 	}
-	return store.NormalizeRegistrationMode(handler.InitialServerSettings.RegistrationMode)
+	return store.NormalizeRegistrationMode(authenticationSettings.RegistrationMode)
+}
+
+func (handler *Handler) currentAuthenticationSettings(request *http.Request) (config.ServerSettings, error) {
+	storedSettings, err := handler.Store.GetServerSettings(request.Context())
+	if err != nil {
+		return config.ServerSettings{}, err
+	}
+	if storedSettings != nil {
+		return storedSettings.Runtime, nil
+	}
+	return handler.InitialServerSettings, nil
+}
+
+func (handler *Handler) currentLoginVerificationSettings(
+	request *http.Request,
+) (LoginVerificationSettings, error) {
+	if handler.LoginVerificationSettingsProvider != nil {
+		return handler.LoginVerificationSettingsProvider.LiveLoginVerificationSettings(), nil
+	}
+	authenticationSettings, err := handler.currentAuthenticationSettings(request)
+	if err != nil {
+		return LoginVerificationSettings{}, err
+	}
+	return loginVerificationSettingsFromServerSettings(authenticationSettings), nil
+}
+
+func (handler *Handler) liveLoginVerificationSettings(
+	fallbackSettings config.ServerSettings,
+) LoginVerificationSettings {
+	if handler.LoginVerificationSettingsProvider != nil {
+		return handler.LoginVerificationSettingsProvider.LiveLoginVerificationSettings()
+	}
+	return loginVerificationSettingsFromServerSettings(fallbackSettings)
+}
+
+func loginVerificationSettingsFromServerSettings(
+	serverSettings config.ServerSettings,
+) LoginVerificationSettings {
+	return LoginVerificationSettings{
+		TurnstileEnabled:   serverSettings.TurnstileEnabled,
+		TurnstileSiteKey:   serverSettings.TurnstileSiteKey,
+		TurnstileSecretKey: serverSettings.TurnstileSecretKey,
+	}
 }

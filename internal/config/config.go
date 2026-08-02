@@ -437,6 +437,8 @@ func normalizeServerSettings(settings ServerSettings, requireAPIKey bool) (Serve
 	settings.UpstreamProtocol = upstreamProtocol
 	settings.Model = strings.TrimSpace(settings.Model)
 	settings.ProxyURL = strings.TrimSpace(settings.ProxyURL)
+	settings.TurnstileSiteKey = strings.TrimSpace(settings.TurnstileSiteKey)
+	settings.TurnstileSecretKey = strings.TrimSpace(settings.TurnstileSecretKey)
 	registrationMode, err := store.NormalizeRegistrationMode(settings.RegistrationMode)
 	if err != nil {
 		return settings, err
@@ -470,6 +472,14 @@ func normalizeServerSettings(settings ServerSettings, requireAPIKey bool) (Serve
 		}
 		if err := validateProxyURL("GROK_PROXY_URL", settings.ProxyURL); err != nil {
 			return settings, err
+		}
+	}
+	if settings.TurnstileEnabled {
+		if settings.TurnstileSiteKey == "" {
+			return settings, fmt.Errorf("turnstile_site_key is required when Turnstile is enabled")
+		}
+		if settings.TurnstileSecretKey == "" {
+			return settings, fmt.Errorf("turnstile_secret_key is required when Turnstile is enabled")
 		}
 	}
 

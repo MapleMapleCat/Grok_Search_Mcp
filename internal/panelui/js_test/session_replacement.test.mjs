@@ -138,3 +138,51 @@ test("revoke-all replaces the current browser session", async (testContext) => {
     expires_at: "2030-03-01T00:00:00Z"
   });
 });
+
+test("logout prevents an in-flight replacement response from restoring a session", async (testContext) => {
+  resetSession();
+  const originalFetch = globalThis.fetch;
+  testContext.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  let resolveRequest;
+  globalThis.fetch = async () => new Promise((resolve) => {
+    resolveRequest = resolve;
+  });
+
+  const replacementRequest = revokeSessions();
+  panelAPI.clearSession();
+  resolveRequest(createSessionResponse("late-replacement-token", "2030-04-01T00:00:00Z"));
+
+  await assert.rejects(replacementRequest, (error) => error?.name === "AbortError");
+  assert.equal(panelAPI.token, "");
+  assert.equal(sessionValues.has(panelSessionStorageKey), false);
+});
+
+test("a stale unauthorized response cannot clear a newer session", async (testContext) => {
+  resetSession();
+  const originalFetch = globalThis.fetch;
+  testContext.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  let resolveRequest;
+  globalThis.fetch = async () => new Promise((resolve) => {
+    resolveRequest = resolve;
+  });
+
+  const staleRequest = panelAPI.request("/panel/v1/delayed");
+  panelAPI.saveSession("newer-token", "2030-05-01T00:00:00Z");
+  resolveRequest(new Response(JSON.stringify({ error: "unauthorized" }), {
+    status: 401,
+    headers: { "Content-Type": "application/json" }
+  }));
+
+  await assert.rejects(staleRequest, (error) => error?.name === "AbortError");
+  assert.equal(panelAPI.token, "newer-token");
+  assert.deepEqual(JSON.parse(sessionValues.get(panelSessionStorageKey)), {
+    token: "newer-token",
+    expires_at: "2030-05-01T00:00:00Z"
+  });
+});

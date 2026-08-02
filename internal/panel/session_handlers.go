@@ -66,6 +66,9 @@ func (handler *Handler) login(writer http.ResponseWriter, request *http.Request)
 		writeClientIPResolutionError(writer, clientIPError)
 		return
 	}
+	if !handler.verifyLoginTurnstile(writer, request, loginRequest.TurnstileToken, clientIP) {
+		return
+	}
 	loginAttempt, retryAfter := authProtector.beginLoginAttempt(username, clientIP)
 	if loginAttempt == nil {
 		writeRetryAfter(writer, retryAfter)
@@ -110,6 +113,93 @@ func (handler *Handler) login(writer http.ResponseWriter, request *http.Request)
 	writeJSON(writer, http.StatusOK, LoginResponse{
 		Token: token, ExpiresAt: expiresAt, User: toUserResponseWithTier(user, handler.loadUserTierForResponse(request.Context(), user)),
 	})
+}
+
+func (handler *Handler) verifyLoginTurnstile(
+	writer http.ResponseWriter,
+	request *http.Request,
+	token string,
+	clientIP string,
+) bool {
+	loginVerificationSettings, err := handler.currentLoginVerificationSettings(request)
+	if err != nil {
+		log.Printf("load Turnstile login settings failed error_type=%T", err)
+		writeCodedError(
+			writer,
+			http.StatusServiceUnavailable,
+			turnstileUnavailableErrorCode,
+			"human verification temporarily unavailable",
+		)
+		return false
+	}
+	if !loginVerificationSettings.TurnstileEnabled {
+		return true
+	}
+
+	trimmedSiteKey := strings.TrimSpace(loginVerificationSettings.TurnstileSiteKey)
+	trimmedSecretKey := strings.TrimSpace(loginVerificationSettings.TurnstileSecretKey)
+	if trimmedSiteKey == "" || trimmedSecretKey == "" || handler.TurnstileVerifier == nil {
+		log.Printf("Turnstile login verification is enabled but not fully configured")
+		writeCodedError(
+			writer,
+			http.StatusServiceUnavailable,
+			turnstileUnavailableErrorCode,
+			"human verification temporarily unavailable",
+		)
+		return false
+	}
+
+	trimmedToken := strings.TrimSpace(token)
+	if trimmedToken == "" {
+		writeCodedError(
+			writer,
+			http.StatusBadRequest,
+			turnstileRequiredErrorCode,
+			"human verification is required",
+		)
+		return false
+	}
+	if len(trimmedToken) > maximumTurnstileTokenBytes {
+		writeCodedError(
+			writer,
+			http.StatusBadRequest,
+			turnstileRejectedErrorCode,
+			"human verification failed",
+		)
+		return false
+	}
+
+	err = handler.TurnstileVerifier.Verify(request.Context(), TurnstileVerification{
+		SecretKey:      trimmedSecretKey,
+		Token:          trimmedToken,
+		RemoteIP:       clientIP,
+		ExpectedAction: turnstileLoginAction,
+	})
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, errTurnstileRejected) {
+		writeCodedError(
+			writer,
+			http.StatusBadRequest,
+			turnstileRejectedErrorCode,
+			"human verification failed",
+		)
+		return false
+	}
+	log.Printf("Turnstile login verification failed error_type=%T", err)
+	writeRetryAfter(writer, time.Second)
+	errorCode := turnstileUnavailableErrorCode
+	if errors.Is(err, errTurnstileOverloaded) {
+		errorCode = turnstileOverloadedErrorCode
+	}
+	writeCodedError(
+		writer,
+		http.StatusServiceUnavailable,
+		errorCode,
+		"human verification temporarily unavailable",
+	)
+	return false
 }
 
 func (handler *Handler) comparePasswordHash(requestContext context.Context, hashedPassword, password []byte) error {

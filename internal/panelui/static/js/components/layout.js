@@ -3,7 +3,8 @@ import { renderIcon } from "./icons.js";
 
 export function renderShell(state, currentMetadata, currentPageHTML) {
   const isAdmin = state.user?.role === "admin";
-  const refreshButtonLabel = state.refreshing ? "正在刷新当前页面" : "刷新当前页面";
+  const refreshDisabled = Boolean(state.refreshing || state.formBusy);
+  const refreshButtonLabel = refreshDisabled ? "当前操作完成后可刷新" : "刷新当前页面";
   const refreshButtonHTML = currentMetadata.dataMode === "static" ? "" : `
     <button
       class="icon-button ${state.refreshing ? "is-spinning" : ""}"
@@ -11,7 +12,7 @@ export function renderShell(state, currentMetadata, currentPageHTML) {
       data-action="refresh-page"
       aria-label="${refreshButtonLabel}"
       title="${refreshButtonLabel}"
-      ${state.refreshing ? "disabled" : ""}
+      ${refreshDisabled ? "disabled" : ""}
     >${renderIcon("refresh")}</button>
   `;
 

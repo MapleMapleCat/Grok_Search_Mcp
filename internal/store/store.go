@@ -62,6 +62,10 @@ var ErrInviteCodeExhausted = errors.New("invite code exhausted")
 // ErrInviteCodeLimitTooLow 表示新的注册上限低于当前已使用次数。
 var ErrInviteCodeLimitTooLow = errors.New("invite code registration limit is lower than current usage")
 
+// ErrServerSettingsConflict indicates that another settings revision was
+// persisted after the caller loaded its edit form.
+var ErrServerSettingsConflict = errors.New("server settings version conflict")
+
 // ErrUsageRecordNotFound is returned when a usage record does not exist or is
 // outside the caller's authorized scope.
 var ErrUsageRecordNotFound = errors.New("usage record not found")
@@ -330,10 +334,11 @@ type UsageRecordScope struct {
 // restart without exposing them back through the panel API.
 type ServerSettings struct {
 	settings.Runtime
-	ID        string
-	Revision  int64
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID               string
+	Revision         int64
+	ExpectedRevision *int64
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // KeyUpdates 用于 PATCH 式更新密钥；指针字段为 nil 表示不修改该列。

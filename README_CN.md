@@ -33,9 +33,10 @@ MCP 客户端 -- HTTPS --> 反向代理 / 负载均衡器 -- HTTP --> grok-searc
 - 用户级客户端 API Key，可单独启用或禁用
 - 基于 tier 的 RPM 和每月成功调用额度
 - 面向直连或可信代理的对端感知 `/mcp` 与面板认证 IP 防护
+- 可选的 Cloudflare Turnstile 面板登录保护，并在服务端验证不可用时安全拒绝登录
 - 使用 SQLite 持久化用户、Key、tier、用量、邀请码和服务设置
 - 内嵌管理面板，无独立前端构建步骤
-- 上游、搜索并发、代理、注册模式、debug 和运行指标采集设置支持运行时热更新
+- 上游、搜索并发、代理、注册模式、Turnstile 登录保护、debug 和运行指标采集设置支持运行时热更新
 - 使用非 root 运行镜像的 Docker Compose 部署
 
 ## 架构
@@ -52,6 +53,8 @@ grok-search-mcp
   |
   +---------- SQLite ------------------- 用户、Key、tier、用量、设置
   |
+  +---- HTTPS（启用时）----------------- Cloudflare Turnstile Siteverify
+  |
   |  POST /v1/responses、/v1/chat/completions 或 /v1/messages
   |  GET  /v1/models
   |  Authorization: Bearer <CPA API Key>
@@ -62,13 +65,14 @@ CLIProxyAPI
 xAI / Grok
 ```
 
-### 三类凭证不可混用
+### 凭证不可混用
 
 | 凭证 | 使用位置 | 用途 |
 |---|---|---|
 | CPA API Key | `grok-search-mcp` -> CPA | 认证所选上游搜索端点和 `/v1/models` 请求。 |
 | MCP 客户端 API Key | MCP 客户端 -> `/mcp` | 在面板创建并可按需复制；数据库保存鉴权哈希和由 `GROK_JWT_SECRET` 派生密钥加密的可恢复密文。 |
 | 面板 JWT | 浏览器/API 客户端 -> `/panel/v1` | 登录面板后返回，不能用于认证 `/mcp`。 |
+| Turnstile Secret Key | `grok-search-mcp` -> Cloudflare | 可选的面板登录验证凭证；使用由 `GROK_JWT_SECRET` 派生的密钥加密保存在 SQLite 中，面板只返回掩码预览。 |
 
 ## 环境要求
 
@@ -77,8 +81,14 @@ xAI / Grok
 - 可访问 `/v1/models`，并至少兼容 `/v1/responses`、`/v1/chat/completions`、`/v1/messages` 之一的 CPA 服务
 - 容器部署可选用 Docker 和 Docker Compose
 - MCP 客户端需要支持 Streamable HTTP 和自定义 Bearer Header
+- 启用 Turnstile 登录保护时，浏览器和服务端均需能通过 HTTPS 访问 `challenges.cloudflare.com`
 
 项目使用纯 Go SQLite 驱动 `modernc.org/sqlite`，不依赖 CGO。
+
+Turnstile 通过面板的 **服务设置** 在运行时配置，不使用启动环境变量。请在
+Cloudflare Widget 中填写部署使用的准确允许域名，并始终成对轮换 Site Key 与
+Secret Key。网络、持久化、故障与恢复行为见
+[高级配置文档](./ADVANCE_README.md#cloudflare-turnstile-登录保护)。
 
 ## 快速开始
 

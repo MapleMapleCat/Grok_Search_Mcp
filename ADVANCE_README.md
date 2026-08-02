@@ -189,6 +189,43 @@ Compose 发布为 `0.0.0.0:8080:8080`，虚拟机、局域网客户端和容器�
 均可通过宿主机访问服务。公网部署时，应使用防火墙和可信 HTTPS 反向代理限制
 外部访问。
 
+### Cloudflare Turnstile 登录保护
+
+管理员可以在 **服务设置** 中启用 Cloudflare Turnstile 登录保护。该功能只保护
+面板登录，不替代注册工作量证明、来源 IP 限流、登录失败锁定或 bcrypt 并发保护。
+启用前应在 Cloudflare 创建 Managed Widget，将实际使用的 `localhost` 或生产域名
+逐项加入允许 hostname，并把同一 Widget 的 Site Key 和 Secret Key 一起提交。
+服务端依赖 Cloudflare 的 Widget hostname 管理，不会信任请求 `Host` Header
+自行推断允许域名，因此不应给 Widget 配置不受控的宽泛 hostname。
+
+网络要求如下：
+
+- 浏览器必须能从 `https://challenges.cloudflare.com` 加载脚本和 iframe；内置 CSP
+  已只为该来源增加 `script-src`、`connect-src` 和 `frame-src` 权限。
+- `grok-search-mcp` 必须能向同一主机的 `/turnstile/v0/siteverify` 发起 HTTPS POST。
+- 面板中的显式代理设置只定义 CPA 上游代理，不会自动接管 Turnstile；Turnstile
+  出站请求仍遵循 Go 标准 `HTTPS_PROXY` 和 `NO_PROXY` 环境变量。
+
+Secret Key 使用独立的 AES-256-GCM 记录身份加密保存在 SQLite 中，密钥仍由
+`GROK_JWT_SECRET` 派生；面板和公开认证接口不会返回明文。数据库备份必须与正确的
+`GROK_JWT_SECRET` 一起保护，否则恢复后无法解密。禁用 Turnstile 不会清空已保存
+密钥。Site Key 不变时 Secret Key 可留空以保留原值；只要更换 Site Key，就必须在
+同一次保存中提交对应的新 Secret Key，避免不匹配的密钥对锁死登录。
+
+Turnstile 设置先持久化，但只有整个运行时设置版本完整应用成功后，登录入口才会
+原子切换到新 Site Key、Secret Key 和启用状态。如果其他运行时组件应用失败，面板
+会显示“已保存，尚未应用”，登录继续使用最后完整确认的版本；重启成功后加载保存
+版本。匿名页面在退出、会话失效和 Turnstile 登录错误后会重新读取公开认证设置，
+已打开的旧页面因此可以恢复 Site Key 轮换。注册模式是有意保留的例外：它在持久化
+成功后立即生效，并由创建用户的 SQLite 事务再次读取，以免设置切换期间绕过策略。
+
+验证器安全失败：单次外部验证总超时为 8 秒，不跟随重定向，并设有 32 个进程级
+同时在途上限；容量耗尽时立即返回 HTTP `503` 和 `Retry-After: 1`，不会排队。
+无效、过期或重复 token 返回 `400`；Secret 配置错误、Cloudflare 内部错误、网络
+错误和未知错误返回 `503`。Cloudflare 不可用时不会绕过验证。生产启用前应保留一个
+管理员会话，确认浏览器与服务端两条网络路径均正常；故障恢复时由仍有效的管理员
+会话禁用或修正配置。
+
 ### 持久化与热更新
 
 服务启动时，环境变量提供初始运行时默认值。`GROK_INITIAL_REGISTRATION_MODE` 只在 SQLite 尚无服务设置行时提供注册策略，安全默认值为 `disabled`。如果 SQLite 已保存服务设置，则完整持久化对象优先，包括注册模式；重启时修改初始值不会覆盖管理员选择。监听地址、数据库路径、JWT 密钥、客户端 IP 信任模式/CIDR、IP RPM/注册表容量、保留期限和维护周期仍只由环境变量控制。管理员可以在 **Server Settings** 中热更新：
@@ -198,17 +235,25 @@ Compose 发布为 `0.0.0.0:8080:8080`，虚拟机、局域网客户端和容器�
 - 默认模型和超时
 - 显式代理地址及开关
 - 注册模式
+- Cloudflare Turnstile 登录保护及 Site Key/Secret Key
 - Debug 模式
 - 进程级和单用户流式搜索并发上限
 - 运行指标采集开关
 
-设置更新会先写入持久化存储，再应用到当前运行进程。面板分别显示已保存设置版本和已确认运行版本。如果持久化成功但运行时应用失败，保存值仍然有效，面板会明确提示“已保存，尚未应用”而不是笼统的保存失败，并重新加载持久化值。版本不一致期间，上游健康状态返回未知，避免使用混合配置进行探测。服务重启成功后会加载持久化版本，并恢复两个版本一致。
+设置更新携带表单读取时的已保存版本，并在 SQLite 写入中原子比较；如果其他会话已
+先更新，服务返回 `409 Conflict`，面板重新加载最新值，避免旧表单覆盖注册或登录
+安全策略。通过版本检查后，设置会先写入持久化存储，再应用到当前运行进程。面板
+分别显示已保存设置版本和已确认运行版本。如果持久化成功但运行时应用失败，保存值
+仍然有效，面板会明确提示“已保存，尚未应用”而不是笼统的保存失败，并重新加载
+持久化值。此时注册模式已经按保存值生效；Turnstile、上游客户端、搜索并发和指标
+开关仍使用最后完整确认的运行版本。版本不一致期间，上游健康状态返回未知，避免
+使用混合配置进行探测。服务重启成功后会加载持久化版本，并恢复两个版本一致。
 
 监听地址、数据库路径、JWT 密钥、客户端 IP 模式/可信 CIDR、来源 IP RPM、
 注册表容量和降级桶数量仍然是仅启动时生效的配置。
 
 > [!WARNING]
-> CPA API Key 会持久化到 SQLite。请将数据库视为敏感数据进行权限控制和备份；面板响应只返回掩码预览。
+> CPA API Key 和 Turnstile Secret Key 都会加密持久化到 SQLite。请将数据库视为敏感数据进行权限控制和备份；面板响应只返回掩码预览。
 
 ### 上游协议映射
 
@@ -450,6 +495,59 @@ container-network clients can reach the service through the host. For an
 internet-facing deployment, restrict external access with a firewall and a
 trusted HTTPS reverse proxy.
 
+### Cloudflare Turnstile login protection
+
+Administrators can enable Cloudflare Turnstile login protection from **Server
+Settings**. It protects panel login only; it does not replace registration
+proof-of-work, source-IP rate limiting, failed-login lockout, or bounded bcrypt
+work. Before enabling it, create a Managed Widget in Cloudflare, add each exact
+`localhost` or production hostname used by the deployment, and submit the Site
+Key and Secret Key from that same widget together. The service relies on
+Cloudflare Widget hostname management and does not infer trusted hostnames from
+the request `Host` header, so do not configure an uncontrolled broad hostname
+for the widget.
+
+The network requirements are:
+
+- Browsers must load the script and iframe from
+  `https://challenges.cloudflare.com`. The built-in CSP grants only that origin
+  the additional `script-src`, `connect-src`, and `frame-src` access.
+- `grok-search-mcp` must send HTTPS POST requests to
+  `/turnstile/v0/siteverify` on the same host.
+- The panel's explicit proxy setting defines the CPA upstream proxy only; it
+  does not automatically proxy Turnstile. Turnstile requests still honor Go's
+  standard `HTTPS_PROXY` and `NO_PROXY` environment variables.
+
+The Secret Key is stored in SQLite as a separate AES-256-GCM record encrypted
+with key material derived from `GROK_JWT_SECRET`. Neither the panel nor the
+public authentication endpoint returns it. Protect database backups together
+with the correct `GROK_JWT_SECRET`, or the restored service cannot decrypt the
+credential. Disabling Turnstile does not erase saved keys. The Secret Key may
+be left blank only while the Site Key is unchanged; changing the Site Key
+requires the matching new Secret Key in the same update so a mismatched pair
+cannot lock out every login.
+
+Turnstile settings are persisted first, but the login path switches the
+enabled state and key pair atomically only after the complete runtime settings
+revision applies successfully. If another runtime component fails to apply,
+the panel reports **saved but not applied** and login continues using the last
+confirmed revision; a successful restart loads the saved revision. Anonymous
+pages reload public authentication settings after logout, session expiry, and
+Turnstile login errors, allowing an already-open page to recover from key
+rotation. Registration mode is an intentional exception: it becomes effective
+as soon as persistence succeeds and is read again inside the SQLite user-
+creation transaction so a policy change cannot be bypassed.
+
+Verification fails closed. Each external check has an eight-second total
+timeout, does not follow redirects, and shares a process-wide limit of 32
+in-flight checks. Saturation returns HTTP `503` with `Retry-After: 1` without
+queueing. Invalid, expired, or duplicate tokens return `400`; Secret
+misconfiguration, Cloudflare internal failures, network errors, and unknown
+errors return `503`. Cloudflare unavailability never bypasses verification.
+Keep an administrator session open while first enabling the feature, verify
+both browser and server network paths, and use a still-valid administrator
+session to disable or correct the setting during recovery.
+
 ### Persistence and live updates
 
 On startup, environment variables provide the initial runtime defaults.
@@ -467,16 +565,24 @@ update the following values from **Server Settings** without restarting:
 - Default model and timeout
 - Explicit proxy URL and enabled state
 - Registration mode
+- Cloudflare Turnstile login protection and its Site Key/Secret Key
 - Debug mode
 - Process-wide and per-user streaming search concurrency limits
 - Operational metrics collection
 
-Settings updates are persisted before the running process applies them. The
-panel exposes separate persisted and confirmed-live settings versions. If
-persistence succeeds but live application fails, the saved values remain
-durable, the panel shows **saved but not applied** instead of a generic save
-failure, and the settings form reloads the persisted values. While the versions
-differ, upstream health is reported as unknown to avoid probing with mixed
+Each settings update carries the persisted version read by its form and
+compares it atomically during the SQLite write. If another session updated the
+row first, the service returns `409 Conflict` and the panel reloads the latest
+values, preventing an old form from overwriting registration or login security
+policy. After that version check, settings are persisted before the running
+process applies them. The panel exposes separate persisted and confirmed-live
+settings versions. If persistence succeeds but live application fails, the
+saved values remain durable, the panel shows **saved but not applied** instead
+of a generic save failure, and the settings form reloads the persisted values.
+Registration mode is already effective from the saved row in this state;
+Turnstile, the upstream client, search concurrency, and metrics switches remain
+on the last completely confirmed runtime revision. While the versions differ,
+upstream health is reported as unknown to avoid probing with mixed
 configuration state. A service restart loads the persisted revision and
 restores the versions to a synchronized state after startup succeeds.
 
@@ -485,7 +591,7 @@ source-IP RPM, registry capacity, and fallback-bucket count remain startup-only
 settings.
 
 > [!WARNING]
-> The CPA API key is persisted in SQLite. Protect and back up the database as sensitive data. The panel only returns a masked preview of this key.
+> The CPA API key and Turnstile Secret Key are encrypted and persisted in SQLite. Protect and back up the database as sensitive data. The panel only returns masked previews.
 
 ### Upstream protocol mapping
 

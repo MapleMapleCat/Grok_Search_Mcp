@@ -34,12 +34,13 @@ const bootstrapAdminUsername = "admin"
 
 var contentSecurityPolicy = strings.Join([]string{
 	"default-src 'self'",
-	"script-src 'self'",
+	"script-src 'self' https://challenges.cloudflare.com",
 	"worker-src 'self'",
 	"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
 	"font-src 'self' https://fonts.gstatic.com data:",
 	"img-src 'self' data: blob: https:",
-	"connect-src 'self'",
+	"connect-src 'self' https://challenges.cloudflare.com",
+	"frame-src https://challenges.cloudflare.com",
 	"base-uri 'none'",
 	"frame-ancestors 'none'",
 	"form-action 'self'",
@@ -68,7 +69,12 @@ type runtimeServerSettingsApplier struct {
 	searchConcurrencyLimiter *ratelimit.SearchConcurrencyLimiter
 	sqliteStore              *store.SQLiteStore
 	usageWriter              *store.AsyncUsageWriter
-	liveVersion              atomic.Int64
+	liveSettings             atomic.Pointer[liveServerSettingsSnapshot]
+}
+
+type liveServerSettingsSnapshot struct {
+	revision                  int64
+	loginVerificationSettings panel.LoginVerificationSettings
 }
 
 func (applier *runtimeServerSettingsApplier) ApplyServerSettings(settings config.ServerSettings, persistedVersion int64) error {
@@ -91,12 +97,38 @@ func (applier *runtimeServerSettingsApplier) ApplyServerSettings(settings config
 	if applier.usageWriter != nil {
 		applier.usageWriter.SetMetricsEnabled(settings.OperationsMetricsEnabled)
 	}
-	applier.liveVersion.Store(persistedVersion)
+	applier.publishLiveServerSettings(settings, persistedVersion)
 	return nil
 }
 
 func (applier *runtimeServerSettingsApplier) LiveServerSettingsVersion() int64 {
-	return applier.liveVersion.Load()
+	liveSettings := applier.liveSettings.Load()
+	if liveSettings == nil {
+		return 0
+	}
+	return liveSettings.revision
+}
+
+func (applier *runtimeServerSettingsApplier) LiveLoginVerificationSettings() panel.LoginVerificationSettings {
+	liveSettings := applier.liveSettings.Load()
+	if liveSettings == nil {
+		return panel.LoginVerificationSettings{}
+	}
+	return liveSettings.loginVerificationSettings
+}
+
+func (applier *runtimeServerSettingsApplier) publishLiveServerSettings(
+	settings config.ServerSettings,
+	revision int64,
+) {
+	applier.liveSettings.Store(&liveServerSettingsSnapshot{
+		revision: revision,
+		loginVerificationSettings: panel.LoginVerificationSettings{
+			TurnstileEnabled:   settings.TurnstileEnabled,
+			TurnstileSiteKey:   settings.TurnstileSiteKey,
+			TurnstileSecretKey: settings.TurnstileSecretKey,
+		},
+	})
 }
 
 // Run starts the HTTP server (MCP + panel) and blocks until ctx is cancelled or ListenAndServe fails.
@@ -186,7 +218,7 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		sqliteStore:              st,
 		usageWriter:              usageWriter,
 	}
-	settingsApplier.liveVersion.Store(storedServerSettings.Revision)
+	settingsApplier.publishLiveServerSettings(serverSettings, storedServerSettings.Revision)
 	panelHandler := &panel.Handler{
 		Store:                    st,
 		JWTSecret:                cfg.JWTSecret,
@@ -196,14 +228,16 @@ func Run(ctx context.Context, cfg *config.Config) error {
 		BootstrapCredentialCleaner: func() error {
 			return os.Remove(cfg.BootstrapCredentialsPath)
 		},
-		InitialServerSettings: serverSettings,
-		SettingsApplier:       settingsApplier,
-		ModelLister:           grokClient,
-		AuthCache:             authResolver,
+		InitialServerSettings:             serverSettings,
+		SettingsApplier:                   settingsApplier,
+		LoginVerificationSettingsProvider: settingsApplier,
+		ModelLister:                       grokClient,
+		AuthCache:                         authResolver,
 		AuthProtector: panel.NewAuthProtector(panel.AuthProtectorConfig{
 			ClientIPResolver:          clientIPResolver,
 			PasswordMaximumConcurrent: cfg.AuthPasswordMaxConcurrent,
 		}),
+		TurnstileVerifier:  panel.NewCloudflareTurnstileVerifier(),
 		SQLiteMetrics:      st,
 		UsageWriterMetrics: usageWriter,
 		IPLimiterMetrics:   mcpIPLimiter,

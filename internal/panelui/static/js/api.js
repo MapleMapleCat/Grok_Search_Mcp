@@ -19,6 +19,7 @@ export class APIError extends Error {
 
 export class PanelAPI {
   constructor() {
+    this.sessionGeneration = 0;
     const storedSession = readStoredSession();
     this.token = storedSession.token
       || sessionStorage.getItem(panelTokenStorageKey)
@@ -63,6 +64,7 @@ export class PanelAPI {
     // One storage write publishes the token and expiry together. In-memory
     // state changes only after that atomic browser-storage operation succeeds.
     sessionStorage.setItem(panelSessionStorageKey, JSON.stringify(replacementSession));
+    this.sessionGeneration += 1;
     this.token = replacementSession.token;
     this.expiresAt = replacementSession.expires_at;
     sessionStorage.removeItem(panelTokenStorageKey);
@@ -70,6 +72,7 @@ export class PanelAPI {
   }
 
   clearSession() {
+    this.sessionGeneration += 1;
     this.token = "";
     this.expiresAt = "";
     sessionStorage.removeItem(panelSessionStorageKey);
@@ -79,14 +82,32 @@ export class PanelAPI {
     sessionStorage.removeItem(legacyPanelTokenExpiryStorageKey);
   }
 
+  captureSession() {
+    return {
+      generation: this.sessionGeneration,
+      token: this.token
+    };
+  }
+
+  saveSessionIfCurrent(token, expiresAt, expectedSession) {
+    const sessionIsCurrent = expectedSession?.generation === this.sessionGeneration
+      && expectedSession?.token === this.token;
+    if (!sessionIsCurrent) {
+      return false;
+    }
+    this.saveSession(token, expiresAt);
+    return true;
+  }
+
   async request(path, options = {}) {
+    const requestSession = this.captureSession();
     const requestHeaders = new Headers(options.headers || {});
     const hasBody = options.body !== undefined && options.body !== null;
     if (hasBody && !requestHeaders.has("Content-Type")) {
       requestHeaders.set("Content-Type", "application/json");
     }
-    if (options.auth !== false && this.token) {
-      requestHeaders.set("Authorization", `Bearer ${this.token}`);
+    if (options.auth !== false && requestSession.token) {
+      requestHeaders.set("Authorization", `Bearer ${requestSession.token}`);
     }
 
     let response;
@@ -108,8 +129,15 @@ export class PanelAPI {
     const responseData = await parseResponseData(response);
 
     if (!response.ok) {
-      if (response.status === 401 && options.auth !== false && options.clearSessionOnUnauthorized !== false) {
-        this.clearSession();
+      if (response.status === 401 && options.auth !== false) {
+        const requestUsedCurrentSession = requestSession.generation === this.sessionGeneration
+          && requestSession.token === this.token;
+        if (!requestUsedCurrentSession) {
+          throw createStaleSessionError();
+        }
+        if (options.clearSessionOnUnauthorized !== false) {
+          this.clearSession();
+        }
       }
       const retryAfterHeader = response.headers.get("Retry-After");
       const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : null;
@@ -179,9 +207,18 @@ function requestMutation(path, method, body) {
 }
 
 async function requestReplacementSession(path, requestOptions = {}) {
+  const expectedSession = panelAPI.captureSession();
   const replacementSession = await panelAPI.request(path, { method: "POST", ...requestOptions });
-  panelAPI.saveSession(replacementSession.token, replacementSession.expires_at);
+  if (!panelAPI.saveSessionIfCurrent(replacementSession.token, replacementSession.expires_at, expectedSession)) {
+    throw createStaleSessionError();
+  }
   return replacementSession;
+}
+
+function createStaleSessionError() {
+  const staleSessionError = new Error("The session changed while the request was in flight.");
+  staleSessionError.name = "AbortError";
+  return staleSessionError;
 }
 
 function translateBackendError(message, status) {
@@ -192,6 +229,10 @@ function translateBackendError(message, status) {
     "API key limit reached": "已达到当前账户的 API 密钥数量上限。",
     "user disabled": "该账户已被管理员禁用。",
     "too many failed login attempts": "登录失败次数过多，请稍后再试。",
+    "human verification is required": "请先完成人机验证。",
+    "human verification failed": "人机验证失败，请重新验证。",
+    "human verification temporarily unavailable": "人机验证服务暂时不可用，请稍后重试。",
+    "server settings changed; reload and retry": "其他会话已更新服务设置，请刷新后重试。",
     "rate limit exceeded": "请求过于频繁，请稍后再试。",
     "username already taken": "该用户名已被使用。",
     "registration is disabled": "当前服务已关闭公开注册。",

@@ -20,10 +20,11 @@ type errorResponse struct {
 }
 
 func writeError(writer http.ResponseWriter, status int, message string) {
-	writeJSON(writer, status, errorResponse{
-		Code:  defaultErrorCode(status),
-		Error: message,
-	})
+	writeCodedError(writer, status, defaultErrorCode(status), message)
+}
+
+func writeCodedError(writer http.ResponseWriter, status int, code, message string) {
+	writeJSON(writer, status, errorResponse{Code: code, Error: message})
 }
 
 func defaultErrorCode(status int) string {

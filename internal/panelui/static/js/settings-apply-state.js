@@ -3,7 +3,6 @@ export const savedNotAppliedCondition = "settings_saved_not_applied";
 export function applySettingsResponseToState(state, settingsResponse) {
   state.data.settings = settingsResponse;
   state.settingsApplyWarning = null;
-  state.registrationMode = settingsResponse?.registration_mode || state.registrationMode;
   if (!settingsResponse?.operations_metrics_enabled) {
     state.data.operationsMetrics = null;
   }
@@ -35,7 +34,7 @@ export function buildSavedNotAppliedMessage(settingsResponse, errorDetails = nul
   const persistedVersion = settingsResponse?.persisted_version ?? errorDetails?.persisted_version;
   const liveVersion = settingsResponse?.live_version ?? errorDetails?.live_version;
   if (persistedVersion !== undefined && liveVersion !== undefined) {
-    return `已加载保存的版本 ${persistedVersion}，最后完整确认的运行版本为 ${liveVersion}。请重试应用或重启服务。`;
+    return `已加载保存的版本 ${persistedVersion}，最后完整确认的运行版本为 ${liveVersion}。注册模式已按保存值生效，其他运行时组件仍使用已确认版本；请重试应用或重启服务。`;
   }
-  return "新设置已写入持久化存储，但当前运行服务尚未确认应用。请重试应用或重启服务。";
+  return "新设置已写入持久化存储；注册模式已生效，但其他运行时组件尚未确认应用。请重试应用或重启服务。";
 }

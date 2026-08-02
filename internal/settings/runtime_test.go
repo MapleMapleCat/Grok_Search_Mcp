@@ -6,12 +6,15 @@ import (
 	"testing"
 )
 
-func TestRuntimeJSONExcludesCPAAPIKey(t *testing.T) {
+func TestRuntimeJSONExcludesSensitiveKeys(t *testing.T) {
 	const sensitiveAPIKey = "cpa-test-never-return-this-full-secret-7f0d5b"
+	const sensitiveTurnstileSecret = "turnstile-test-never-return-this-secret"
 	runtimeSettings := Runtime{
-		CPABaseURL: "https://cpa.example.test",
-		CPAAPIKey:  sensitiveAPIKey,
-		Model:      "grok-4.3",
+		CPABaseURL:         "https://cpa.example.test",
+		CPAAPIKey:          sensitiveAPIKey,
+		Model:              "grok-4.3",
+		TurnstileSiteKey:   "turnstile-public-site-key",
+		TurnstileSecretKey: sensitiveTurnstileSecret,
 	}
 
 	encodedSettings, err := json.Marshal(runtimeSettings)
@@ -25,7 +28,13 @@ func TestRuntimeJSONExcludesCPAAPIKey(t *testing.T) {
 	if strings.Contains(encodedText, "CPAAPIKey") {
 		t.Fatalf("runtime settings JSON included CPA API key field: %s", encodedText)
 	}
+	if strings.Contains(encodedText, sensitiveTurnstileSecret) || strings.Contains(encodedText, "TurnstileSecretKey") {
+		t.Fatalf("runtime settings JSON exposed Turnstile secret key: %s", encodedText)
+	}
 	if !strings.Contains(encodedText, "https://cpa.example.test") {
 		t.Fatalf("runtime settings JSON omitted non-secret fields: %s", encodedText)
+	}
+	if !strings.Contains(encodedText, "turnstile-public-site-key") {
+		t.Fatalf("runtime settings JSON omitted Turnstile site key: %s", encodedText)
 	}
 }

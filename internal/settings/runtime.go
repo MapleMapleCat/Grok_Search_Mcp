@@ -45,8 +45,8 @@ func NormalizeRegistrationMode(mode RegistrationMode) (RegistrationMode, error) 
 }
 
 // Runtime is the canonical value object for settings that can be changed at
-// runtime. CPAAPIKey is deliberately excluded from JSON so this internal value
-// cannot accidentally expose the upstream credential through a panel response.
+// runtime. Sensitive keys are deliberately excluded from JSON so this internal
+// value cannot accidentally expose credentials through a panel response.
 type Runtime struct {
 	CPABaseURL                 string
 	CPAAPIKey                  string `json:"-"`
@@ -58,6 +58,9 @@ type Runtime struct {
 	ProxyURL                   string
 	ProxyEnabled               bool
 	RegistrationMode           RegistrationMode
+	TurnstileEnabled           bool
+	TurnstileSiteKey           string
+	TurnstileSecretKey         string `json:"-"`
 	Debug                      bool
 	OperationsMetricsEnabled   bool
 }

@@ -563,6 +563,7 @@ func TestRecordUsageRollsBackLogWhenKeyAccountingFails(t *testing.T) {
 func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T) {
 	const encryptionSecret = "test-server-settings-encryption-secret-at-least-32-bytes"
 	const cpaAPIKey = "sensitive-cpa-api-key"
+	const turnstileSecretKey = "sensitive-turnstile-secret-key"
 	databasePath := filepath.Join(t.TempDir(), "encrypted-settings.db")
 	ctx := context.Background()
 
@@ -589,6 +590,9 @@ func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T)
 			MCPGlobalSearchConcurrency: 12,
 			MCPUserSearchConcurrency:   3,
 			RegistrationMode:           RegistrationModeFree,
+			TurnstileEnabled:           true,
+			TurnstileSiteKey:           "turnstile-public-site-key",
+			TurnstileSecretKey:         turnstileSecretKey,
 		},
 	}
 	storedSettings, err := sqliteStore.UpsertServerSettings(ctx, serverSettings)
@@ -616,14 +620,34 @@ func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T)
 	var ciphertext string
 	var nonce string
 	var encryptionVersion int
+	var turnstileCiphertext string
+	var turnstileNonce string
+	var turnstileEncryptionVersion int
 	if err := sqliteStore.db.QueryRowContext(ctx, `
-		SELECT cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version
+		SELECT cpa_api_key_ciphertext, cpa_api_key_nonce, cpa_api_key_encryption_version,
+		       turnstile_secret_key_ciphertext, turnstile_secret_key_nonce,
+		       turnstile_secret_key_encryption_version
 		FROM server_settings WHERE id = ?`, serverSettingsID,
-	).Scan(&ciphertext, &nonce, &encryptionVersion); err != nil {
+	).Scan(
+		&ciphertext,
+		&nonce,
+		&encryptionVersion,
+		&turnstileCiphertext,
+		&turnstileNonce,
+		&turnstileEncryptionVersion,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if ciphertext == "" || ciphertext == cpaAPIKey || nonce == "" || encryptionVersion == 0 {
 		t.Fatalf("invalid encrypted CPA API key fields: ciphertext=%q nonce=%q version=%d", ciphertext, nonce, encryptionVersion)
+	}
+	if turnstileCiphertext == "" || turnstileCiphertext == turnstileSecretKey || turnstileNonce == "" || turnstileEncryptionVersion == 0 {
+		t.Fatalf(
+			"invalid encrypted Turnstile secret fields: ciphertext=%q nonce=%q version=%d",
+			turnstileCiphertext,
+			turnstileNonce,
+			turnstileEncryptionVersion,
+		)
 	}
 
 	if err := sqliteStore.Close(); err != nil {
@@ -644,6 +668,9 @@ func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T)
 	if reopenedSettings == nil || reopenedSettings.CPAAPIKey != cpaAPIKey {
 		t.Fatalf("reopened settings = %+v, want decrypted CPA API key", reopenedSettings)
 	}
+	if reopenedSettings.TurnstileSecretKey != turnstileSecretKey || reopenedSettings.TurnstileSiteKey != "turnstile-public-site-key" || !reopenedSettings.TurnstileEnabled {
+		t.Fatalf("reopened settings omitted Turnstile configuration: %+v", reopenedSettings)
+	}
 	if reopenedSettings.Revision != 2 {
 		t.Fatalf("reopened settings revision = %d, want 2", reopenedSettings.Revision)
 	}
@@ -659,6 +686,48 @@ func TestServerSettingsAPIKeyEncryptedAtRestAndReadableAfterReopen(t *testing.T)
 	}
 	if revealedAPIKey != rawAPIKey {
 		t.Fatal("generalized encryption configuration broke existing API key ciphertext")
+	}
+}
+
+func TestServerSettingsUpsertRejectsStaleExpectedRevision(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+	serverSettings := ServerSettings{Runtime: settings.Runtime{
+		CPABaseURL:                 "http://127.0.0.1:8317",
+		CPAAPIKey:                  "revision-test-api-key",
+		UpstreamProtocol:           "responses",
+		Model:                      "grok-4.3",
+		TimeoutSeconds:             30,
+		MCPGlobalSearchConcurrency: 12,
+		MCPUserSearchConcurrency:   3,
+		RegistrationMode:           RegistrationModeDisabled,
+	}}
+	initialSettings, err := sqliteStore.UpsertServerSettings(requestContext, serverSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedRevision := initialSettings.Revision
+	serverSettings.Model = "grok-4.4"
+	serverSettings.ExpectedRevision = &expectedRevision
+	updatedSettings, err := sqliteStore.UpsertServerSettings(requestContext, serverSettings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedSettings.Revision != 2 {
+		t.Fatalf("updated revision = %d, want 2", updatedSettings.Revision)
+	}
+
+	serverSettings.Model = "stale-overwrite"
+	if _, err := sqliteStore.UpsertServerSettings(requestContext, serverSettings); !errors.Is(err, ErrServerSettingsConflict) {
+		t.Fatalf("stale settings update error = %v, want conflict", err)
+	}
+	persistedSettings, err := sqliteStore.GetServerSettings(requestContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedSettings.Model != "grok-4.4" || persistedSettings.Revision != 2 {
+		t.Fatalf("stale update changed persisted settings: %+v", persistedSettings)
 	}
 }
 
@@ -905,6 +974,106 @@ func TestServerSettingsRevisionMigrationBackfillsExistingRow(t *testing.T) {
 	}
 	if updatedSettings.Revision != 2 || updatedSettings.Model != "grok-4.4" {
 		t.Fatalf("updated migrated settings = %+v", updatedSettings)
+	}
+}
+
+func TestTurnstileSettingsMigrationUpgradesExistingServerSettings(t *testing.T) {
+	const encryptionSecret = "test-turnstile-migration-secret-at-least-32-bytes"
+	databasePath := filepath.Join(t.TempDir(), "settings-before-turnstile.db")
+	requestContext := context.Background()
+
+	currentStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := currentStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		t.Fatal(err)
+	}
+	originalSettings := ServerSettings{Runtime: settings.Runtime{
+		CPABaseURL:                 "http://127.0.0.1:8317",
+		CPAAPIKey:                  "migration-api-key",
+		UpstreamProtocol:           "responses",
+		Model:                      "grok-4.3",
+		TimeoutSeconds:             30,
+		MCPGlobalSearchConcurrency: 12,
+		MCPUserSearchConcurrency:   3,
+		RegistrationMode:           RegistrationModeDisabled,
+	}}
+	if _, err := currentStore.UpsertServerSettings(requestContext, originalSettings); err != nil {
+		t.Fatal(err)
+	}
+	if err := currentStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rawDatabase, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnstileColumns := []string{
+		"turnstile_secret_key_encryption_version",
+		"turnstile_secret_key_nonce",
+		"turnstile_secret_key_ciphertext",
+		"turnstile_site_key",
+		"turnstile_enabled",
+	}
+	for _, columnName := range turnstileColumns {
+		if _, err := rawDatabase.Exec(`ALTER TABLE server_settings DROP COLUMN ` + columnName); err != nil {
+			_ = rawDatabase.Close()
+			t.Fatalf("drop Turnstile column %s: %v", columnName, err)
+		}
+	}
+	if _, err := rawDatabase.Exec(`DELETE FROM schema_migrations WHERE version = '013_turnstile_settings'`); err != nil {
+		_ = rawDatabase.Close()
+		t.Fatal(err)
+	}
+	if err := rawDatabase.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migratedStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migratedStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		_ = migratedStore.Close()
+		t.Fatal(err)
+	}
+	migratedSettings, err := migratedStore.GetServerSettings(requestContext)
+	if err != nil {
+		_ = migratedStore.Close()
+		t.Fatal(err)
+	}
+	if migratedSettings.TurnstileEnabled || migratedSettings.TurnstileSiteKey != "" || migratedSettings.TurnstileSecretKey != "" {
+		_ = migratedStore.Close()
+		t.Fatalf("migrated Turnstile defaults = %+v, want disabled empty settings", migratedSettings)
+	}
+
+	migratedSettings.TurnstileEnabled = true
+	migratedSettings.TurnstileSiteKey = "migrated-site-key"
+	migratedSettings.TurnstileSecretKey = "migrated-secret-key"
+	if _, err := migratedStore.UpsertServerSettings(requestContext, *migratedSettings); err != nil {
+		_ = migratedStore.Close()
+		t.Fatal(err)
+	}
+	if err := migratedStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopenedStore, err := OpenSQLite(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopenedStore.Close()
+	if err := reopenedStore.ConfigureAPIKeyEncryption(encryptionSecret); err != nil {
+		t.Fatal(err)
+	}
+	reopenedSettings, err := reopenedStore.GetServerSettings(requestContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopenedSettings.TurnstileEnabled || reopenedSettings.TurnstileSiteKey != "migrated-site-key" || reopenedSettings.TurnstileSecretKey != "migrated-secret-key" {
+		t.Fatalf("reopened migrated Turnstile settings = %+v", reopenedSettings)
 	}
 }
 

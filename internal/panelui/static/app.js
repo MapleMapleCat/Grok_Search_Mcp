@@ -23,6 +23,7 @@ import { getErrorMessage } from "./js/events/event-helpers.js";
 import { adminPages, availablePages, isStaticPage, pageMetadata, renderShell } from "./js/router.js";
 import { renderSafeHTML } from "./js/safe-html.js";
 import {
+  applyAuthenticationSettings,
   clearAuthenticatedState,
   COLLECTION_PAGE_SIZE,
   commitPageData,
@@ -31,6 +32,7 @@ import {
   state
 } from "./js/state.js";
 import { getUsagePeriodSince } from "./js/utils.js";
+import { synchronizeLoginTurnstile } from "./js/turnstile.js";
 
 const applicationElement = document.querySelector("#app");
 const modalRegionElement = document.querySelector("#modal-region");
@@ -39,6 +41,7 @@ const toastRegionElement = document.querySelector("#toast-region");
 let activePageRequestIdentifier = 0;
 let activePageRequestController = null;
 let activeOverviewHealthRequestController = null;
+let authenticationSettingsRequestIdentifier = 0;
 
 function abortCurrentPageLoad() {
   activePageRequestController?.abort();
@@ -50,6 +53,10 @@ function abortCurrentPageLoad() {
 
 function renderApplication() {
   renderSafeHTML(applicationElement, state.authenticated ? renderShell(state) : renderAuthView(state));
+  synchronizeLoginTurnstile({
+    enabled: !state.authenticated && !state.authBusy && state.authMode === "login" && state.turnstileEnabled,
+    siteKey: state.turnstileSiteKey
+  });
   renderModalRegion();
   document.title = state.authenticated
     ? `${pageMetadata[state.currentPage]?.title || "控制台"} · Grok Search MCP`
@@ -71,10 +78,11 @@ async function initializeApplication() {
     loadCurrentPage,
     abortCurrentPageLoad,
     normalizeCurrentPageForRole,
-    handleSessionError
+    handleSessionError,
+    reloadAuthenticationSettings: loadAuthenticationSettings
   }).register();
 
-  await loadRegistrationMode();
+  await loadAuthenticationSettings();
   if (!panelAPI.hasSession()) {
     renderApplication();
     return;
@@ -107,16 +115,24 @@ async function initializeApplication() {
   }
 }
 
-async function loadRegistrationMode() {
+async function loadAuthenticationSettings() {
+  authenticationSettingsRequestIdentifier += 1;
+  const requestIdentifier = authenticationSettingsRequestIdentifier;
+  state.authenticationSettingsStatus = "loading";
+  state.authenticationSettingsError = "";
   try {
     const registrationSettings = await fetchRegistrationSettings();
-    state.registrationMode = registrationSettings?.registration_mode || "free";
-    if (state.registrationMode === "disabled") {
-      state.authMode = "login";
+    if (requestIdentifier !== authenticationSettingsRequestIdentifier) {
+      return false;
     }
+    return applyAuthenticationSettings(state, registrationSettings);
   } catch (error) {
-    state.registrationMode = "free";
-    state.authError = getErrorMessage(error);
+    if (requestIdentifier !== authenticationSettingsRequestIdentifier) {
+      return false;
+    }
+    state.authenticationSettingsStatus = "error";
+    state.authenticationSettingsError = getErrorMessage(error);
+    return false;
   }
 }
 
@@ -299,7 +315,14 @@ function handleSessionError(error) {
   panelAPI.clearSession();
   clearAuthenticatedState();
   state.authError = "会话已失效，请重新登录。";
+  state.authenticationSettingsStatus = "loading";
+  state.authenticationSettingsError = "";
   renderApplication();
+  void loadAuthenticationSettings().then(() => {
+    if (!state.authenticated) {
+      renderApplication();
+    }
+  });
   return true;
 }
 

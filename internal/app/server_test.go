@@ -58,15 +58,28 @@ func TestRuntimeServerSettingsApplierKeepsConfirmedVersionAfterFailure(t *testin
 		sqliteStore:     sqliteStore,
 		usageWriter:     usageWriter,
 	}
-	applier.liveVersion.Store(5)
+	applier.publishLiveServerSettings(config.ServerSettings{
+		TurnstileEnabled:   true,
+		TurnstileSiteKey:   "previous-site-key",
+		TurnstileSecretKey: "previous-secret-key",
+	}, 5)
 
-	err = applier.ApplyServerSettings(config.ServerSettings{OperationsMetricsEnabled: true}, 6)
+	err = applier.ApplyServerSettings(config.ServerSettings{
+		OperationsMetricsEnabled: true,
+		TurnstileEnabled:         true,
+		TurnstileSiteKey:         "unapplied-site-key",
+		TurnstileSecretKey:       "unapplied-secret-key",
+	}, 6)
 
 	if err == nil {
 		t.Fatal("ApplyServerSettings succeeded, want upstream failure")
 	}
 	if liveVersion := applier.LiveServerSettingsVersion(); liveVersion != 5 {
 		t.Fatalf("live settings version = %d, want prior confirmed version 5", liveVersion)
+	}
+	loginVerificationSettings := applier.LiveLoginVerificationSettings()
+	if loginVerificationSettings.TurnstileSiteKey != "previous-site-key" || loginVerificationSettings.TurnstileSecretKey != "previous-secret-key" {
+		t.Fatalf("login verification settings changed after failed apply: %+v", loginVerificationSettings)
 	}
 	if metrics := sqliteStore.SQLiteMetrics(); !reflect.DeepEqual(metrics, store.SQLiteMetricsSnapshot{}) {
 		t.Fatalf("SQLite metrics enabled before complete settings apply: %+v", metrics)
@@ -88,6 +101,9 @@ func TestRuntimeServerSettingsApplierUpdatesSearchConcurrency(t *testing.T) {
 	settings := config.ServerSettings{
 		MCPGlobalSearchConcurrency: 2,
 		MCPUserSearchConcurrency:   2,
+		TurnstileEnabled:           true,
+		TurnstileSiteKey:           "applied-site-key",
+		TurnstileSecretKey:         "applied-secret-key",
 	}
 	if err := applier.ApplyServerSettings(settings, 7); err != nil {
 		t.Fatalf("ApplyServerSettings failed: %v", err)
@@ -97,6 +113,10 @@ func TestRuntimeServerSettingsApplierUpdatesSearchConcurrency(t *testing.T) {
 	}
 	if upstreamApplier.appliedSettings != settings {
 		t.Fatalf("upstream applied settings = %+v, want %+v", upstreamApplier.appliedSettings, settings)
+	}
+	loginVerificationSettings := applier.LiveLoginVerificationSettings()
+	if !loginVerificationSettings.TurnstileEnabled || loginVerificationSettings.TurnstileSiteKey != "applied-site-key" || loginVerificationSettings.TurnstileSecretKey != "applied-secret-key" {
+		t.Fatalf("live login verification settings = %+v", loginVerificationSettings)
 	}
 
 	requestEntered := make(chan struct{}, 2)
@@ -393,10 +413,13 @@ func TestSecurityHeadersAllowPanelExternalAssets(t *testing.T) {
 
 	contentSecurityPolicyHeader := recorder.Header().Get("Content-Security-Policy")
 	expectedDirectives := []string{
+		"script-src 'self' https://challenges.cloudflare.com",
 		"worker-src 'self'",
 		"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
 		"font-src 'self' https://fonts.gstatic.com data:",
 		"img-src 'self' data: blob: https:",
+		"connect-src 'self' https://challenges.cloudflare.com",
+		"frame-src https://challenges.cloudflare.com",
 	}
 	for _, expectedDirective := range expectedDirectives {
 		if !strings.Contains(contentSecurityPolicyHeader, expectedDirective) {

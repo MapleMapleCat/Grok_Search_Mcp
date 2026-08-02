@@ -33,9 +33,10 @@ MCP client -- HTTPS --> reverse proxy / load balancer -- HTTP --> grok-search-mc
 - Per-user client API keys with enable/disable controls
 - Tier-based RPM and monthly successful-call quotas
 - Peer-aware direct or trusted-proxy IP protection for `/mcp` and panel authentication
+- Optional Cloudflare Turnstile protection for panel login, with fail-closed server-side verification
 - SQLite persistence for users, keys, tiers, usage, invite codes, and server settings
 - Embedded administration panel with no separate frontend build step
-- Runtime updates for upstream settings, search concurrency, proxy settings, registration mode, debug mode, and operational metrics collection
+- Runtime updates for upstream settings, search concurrency, proxy settings, registration mode, Turnstile login protection, debug mode, and operational metrics collection
 - Docker Compose deployment with a non-root runtime image
 
 ## Architecture
@@ -51,6 +52,8 @@ grok-search-mcp
   |     +---- /panel/ and /panel/v1/* ---- administrators and users
   |
   +---------- SQLite -------------------- users, keys, tiers, usage, settings
+  |
+  +---- HTTPS (when enabled) ------------ Cloudflare Turnstile Siteverify
   |
   |  POST /v1/responses, /v1/chat/completions, or /v1/messages
   |  GET  /v1/models
@@ -69,6 +72,7 @@ xAI / Grok
 | CPA API key | `grok-search-mcp` -> CPA | Authenticates the selected upstream search endpoint and `/v1/models` requests. |
 | MCP client API key | MCP client -> `/mcp` | Created and copied on demand in the panel. The database stores an authentication hash plus recoverable ciphertext encrypted with a key derived from `GROK_JWT_SECRET`. |
 | Panel JWT | Browser/API client -> `/panel/v1` | Returned by panel login. It cannot authenticate `/mcp`. |
+| Turnstile Secret Key | `grok-search-mcp` -> Cloudflare | Optional panel-login verification credential. It is encrypted in SQLite with a key derived from `GROK_JWT_SECRET`; only a masked preview is returned by the panel. |
 
 ## Requirements
 
@@ -77,8 +81,15 @@ xAI / Grok
 - A reachable CPA deployment with `/v1/models` and at least one compatible search endpoint: `/v1/responses`, `/v1/chat/completions`, or `/v1/messages`
 - Docker and Docker Compose for the container workflow, if preferred
 - An MCP client that supports Streamable HTTP and custom Bearer headers
+- When Turnstile login protection is enabled, browser and server outbound HTTPS access to `challenges.cloudflare.com`
 
 The application uses pure-Go SQLite (`modernc.org/sqlite`) and does not require CGO.
+
+Turnstile is configured at runtime from **Server Settings**, not from startup
+environment variables. Create a Cloudflare widget with the deployment's exact
+allowed hostnames and rotate its Site Key and Secret Key together. See the
+[advanced configuration guide](./ADVANCE_README.md#cloudflare-turnstile-login-protection)
+for network, persistence, failure, and recovery behavior.
 
 ## Quick start
 

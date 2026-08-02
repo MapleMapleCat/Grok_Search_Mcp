@@ -4,6 +4,7 @@ import { showToast } from "../components/toast.js";
 import { solveRegistrationProof } from "../registration-proof.js";
 import { renderSafeHTML } from "../safe-html.js";
 import { clearAuthenticatedState, clearCachedData } from "../state.js";
+import { refreshLoginVerificationBeforeMissingTokenError } from "../login-verification-state.js";
 import { createFormDataObject } from "../utils.js";
 import { getErrorMessage, withRetryAfter } from "./event-helpers.js";
 
@@ -12,7 +13,8 @@ export function createAuthEvents({
   modalController,
   renderApplication,
   loadCurrentPage,
-  abortCurrentPageLoad
+  abortCurrentPageLoad,
+  reloadAuthenticationSettings = async () => false
 }) {
   function switchAuthMode(mode) {
     state.authMode = mode || "login";
@@ -31,20 +33,43 @@ export function createAuthEvents({
     passwordInput.focus();
   }
 
-  function logout() {
+  async function logout() {
     abortCurrentPageLoad();
     modalController.abortCurrentModalRequest();
     panelAPI.clearSession();
     clearAuthenticatedState();
     state.authError = "";
+    state.authenticationSettingsStatus = "loading";
+    state.authenticationSettingsError = "";
     state.currentPage = "overview";
     window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    renderApplication();
+    await reloadAuthenticationSettings();
     renderApplication();
     showToast("已退出", "当前会话已从浏览器标签页中清除。", "success");
   }
 
+  async function retryAuthenticationSettings() {
+    state.authError = "";
+    state.authenticationSettingsStatus = "loading";
+    state.authenticationSettingsError = "";
+    renderApplication();
+    await reloadAuthenticationSettings();
+    renderApplication();
+  }
+
   async function submitLogin(formElement) {
     const credentials = createFormDataObject(formElement);
+    const turnstileToken = String(credentials.turnstile_token || "").trim();
+    const loginVerificationReady = await refreshLoginVerificationBeforeMissingTokenError({
+      state,
+      turnstileToken,
+      reloadAuthenticationSettings,
+      renderApplication
+    });
+    if (!loginVerificationReady) {
+      return;
+    }
     state.authBusy = true;
     state.authError = "";
     renderApplication();
@@ -52,7 +77,8 @@ export function createAuthEvents({
     try {
       const loginResponse = await login({
         username: String(credentials.username || "").trim(),
-        password: String(credentials.password || "")
+        password: String(credentials.password || ""),
+        ...(state.turnstileEnabled ? { turnstile_token: turnstileToken } : {})
       });
       panelAPI.saveSession(loginResponse.token, loginResponse.expires_at);
       state.user = loginResponse.user;
@@ -68,6 +94,12 @@ export function createAuthEvents({
     } catch (error) {
       state.authBusy = false;
       state.authError = withRetryAfter(getErrorMessage(error), error);
+      if (String(error?.code || "").startsWith("turnstile_")) {
+        state.authenticationSettingsStatus = "loading";
+        state.authenticationSettingsError = "";
+        renderApplication();
+        await reloadAuthenticationSettings();
+      }
       renderApplication();
     }
   }
@@ -115,6 +147,7 @@ export function createAuthEvents({
   return {
     switchAuthMode,
     togglePasswordVisibility,
+    retryAuthenticationSettings,
     logout,
     submitLogin,
     submitRegistration

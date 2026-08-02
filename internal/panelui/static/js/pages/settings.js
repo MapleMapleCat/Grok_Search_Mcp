@@ -66,8 +66,8 @@ export function renderSettingsPage(state) {
     ${settingsNotApplied ? `<div class="settings-apply-warning" role="status">
       <span class="settings-apply-warning-icon">${renderIcon("warning")}</span>
       <div><strong>设置已保存，尚未应用</strong><p>${persistedValuesReloaded
-        ? `当前表单显示持久化版本 ${escapeHTML(persistedVersion)}，最后完整确认的运行版本为 ${escapeHTML(liveVersion)}。请重试保存并应用，或重启服务以加载持久化设置。`
-        : `保存版本 ${escapeHTML(persistedVersion)} 已确认，但最新持久化值重新读取失败；当前表单可能仍显示提交前内容。最后完整确认的运行版本为 ${escapeHTML(liveVersion)}。`}</p></div>
+        ? `当前表单显示持久化版本 ${escapeHTML(persistedVersion)}，最后完整确认的运行版本为 ${escapeHTML(liveVersion)}。注册模式已按保存值生效，其他运行时组件仍使用已确认版本。请重试保存并应用，或重启服务。`
+        : `保存版本 ${escapeHTML(persistedVersion)} 已确认，但最新持久化值重新读取失败；当前表单可能仍显示提交前内容。注册模式可能已变化，其他运行时组件仍使用版本 ${escapeHTML(liveVersion)}。`}</p></div>
     </div>` : ""}
     <div class="settings-layout">
       <form class="data-card" data-form="settings">
@@ -101,6 +101,16 @@ export function renderSettingsPage(state) {
           </div>
         </section>
         <section class="settings-section">
+          <div class="settings-section-copy"><h3>登录人机验证</h3><p>使用 Cloudflare Turnstile 保护登录入口。Site Key 会发送到浏览器，Secret Key 仅加密保存在服务端。</p></div>
+          <div>
+            <label class="switch-row"><span class="switch-copy"><strong>启用 Turnstile</strong><span>启用后登录必须先完成 Cloudflare 人机验证</span></span><span class="switch"><input name="turnstile_enabled" type="checkbox" ${settings.turnstile_enabled ? "checked" : ""}><span class="switch-track"></span></span></label>
+            <div class="form-grid">
+              <label class="field-group is-full"><span class="field-label">Site Key</span><input class="text-input mono-value" name="turnstile_site_key" type="text" autocomplete="off" value="${escapeHTML(settings.turnstile_site_key || "")}" placeholder="0x4AAAA..."><span class="field-hint">在 Cloudflare Widget 中为当前网站配置 localhost 或生产域名。</span></label>
+              <label class="field-group is-full"><span class="field-label"><span>Secret Key</span><span class="field-hint">${settings.turnstile_secret_key_set ? `已配置 ${escapeHTML(settings.turnstile_secret_key_preview || "")}` : "尚未配置"}</span></span><input class="text-input" name="turnstile_secret_key" type="password" autocomplete="new-password" placeholder="Site Key 不变时可留空保留"><span class="field-hint">更换 Site Key 时必须同时填写对应的 Secret Key，避免密钥对不匹配导致登录不可用。</span></label>
+            </div>
+          </div>
+        </section>
+        <section class="settings-section">
           <div class="settings-section-copy"><h3>访问策略与运维观测</h3><p>控制公开注册入口、调试日志与运行指标。调试模式可能记录更多请求信息。</p></div>
           <div class="form-grid">
             <div class="field-group"><span class="field-label">注册模式</span>${registrationModeSelect}</div>
@@ -114,9 +124,9 @@ export function renderSettingsPage(state) {
       <aside class="info-card">
         <div class="info-card-top"><span class="info-card-icon">${renderIcon("shield")}</span><h3>运行时热更新</h3><p>${settingsNotApplied
           ? (persistedValuesReloaded
-            ? "已保存配置与当前运行配置不一致。表单值来自持久化存储，运行状态以已确认版本为准。"
-            : "设置已保存但尚未应用，且最新持久化值暂时无法重新读取。请勿将当前表单视为已保存值。")
-          : "这些设置保存后会立即应用到上游客户端和搜索并发控制，无需重启 grok-search-mcp 服务。"}</p></div>
+            ? "已保存配置与当前运行配置不一致。注册模式以保存值为准，其他运行组件以已确认版本为准。"
+            : "设置已保存但尚未完整应用，且最新持久化值暂时无法重新读取。请勿将当前表单视为已保存值。")
+          : "这些设置保存后会立即应用到上游客户端、搜索并发控制和登录访问策略，无需重启 grok-search-mcp 服务。"}</p></div>
         <div class="info-list">
           <div class="info-row"><span>服务版本</span><strong>${escapeHTML(settings.version || "未知")}</strong></div>
           <div class="info-row"><span>已保存设置版本</span><strong>${escapeHTML(persistedVersion)}</strong></div>
@@ -127,6 +137,7 @@ export function renderSettingsPage(state) {
           <div class="info-row"><span>搜索并发</span><strong>${escapeHTML(`${settings.mcp_global_search_concurrency || 16} / 用户 ${settings.mcp_user_search_concurrency || 4}`)}</strong></div>
           <div class="info-row"><span>API Key</span><strong>${settings.cpa_api_key_set ? "已安全配置" : "未配置"}</strong></div>
           <div class="info-row"><span>代理</span><strong>${settings.proxy_enabled ? "已启用" : "直连"}</strong></div>
+          <div class="info-row"><span>登录验证</span><strong>${settings.turnstile_enabled ? "Turnstile 已启用" : "未启用"}</strong></div>
           <div class="info-row"><span>注册</span><strong>${escapeHTML(getRegistrationModeLabel(settings.registration_mode))}</strong></div>
           <div class="info-row"><span>最后更新</span><strong>${escapeHTML(formatDateTime(settings.updated_at))}</strong></div>
         </div>

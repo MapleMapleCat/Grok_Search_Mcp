@@ -21,7 +21,8 @@ export function createApplicationEvents({
   loadCurrentPage,
   abortCurrentPageLoad,
   normalizeCurrentPageForRole,
-  handleSessionError
+  handleSessionError,
+  reloadAuthenticationSettings
 }) {
   let eventHandlersRegistered = false;
 
@@ -42,7 +43,8 @@ export function createApplicationEvents({
     modalController,
     renderApplication,
     loadCurrentPage,
-    abortCurrentPageLoad
+    abortCurrentPageLoad,
+    reloadAuthenticationSettings
   });
   const accountEvents = createAccountEvents({
     state,
@@ -89,7 +91,8 @@ export function createApplicationEvents({
   const settingsEvents = createSettingsEvents({
     state,
     renderApplication,
-    handleSessionError
+    handleSessionError,
+    abortCurrentPageLoad
   });
   const debugJSONModalEvents = createDebugJSONModalEvents({
     state,
@@ -135,6 +138,7 @@ export function createApplicationEvents({
   const applicationActionHandlers = {
     "switch-auth": (actionElement) => authEvents.switchAuthMode(actionElement.dataset.mode),
     "toggle-password": (actionElement) => authEvents.togglePasswordVisibility(actionElement),
+    "retry-authentication-settings": () => authEvents.retryAuthenticationSettings(),
     navigate: (actionElement) => navigationEvents.navigateToPage(actionElement.dataset.page),
     "toggle-sidebar": () => setSidebarOpen(!state.sidebarOpen),
     "close-sidebar": () => setSidebarOpen(false),

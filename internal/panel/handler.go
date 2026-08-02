@@ -13,25 +13,27 @@ import (
 
 // Handler 实现面板 API；路由由 NewMux 注册。
 type Handler struct {
-	Store                      store.Store
-	JWTSecret                  string
-	MaxAPIKeysPerUser          int
-	BootstrapAdminUsername     string
-	BootstrapCredentialsPath   string
-	BootstrapCredentialCleaner func() error
-	InitialServerSettings      config.ServerSettings
-	SettingsApplier            ServerSettingsApplier      // 可选；保存服务器设置后热更新运行时组件
-	ModelLister                ModelLister                // 可选；面板通过它检查上游状态并拉取可用 Grok 模型
-	AuthCache                  AuthCacheInvalidator       // 可选；管理员变更用户/等级/密钥后清空 MCP 鉴权缓存
-	AuthProtector              *AuthProtector             // 可选；未设置时使用内置面板登录/注册防护
-	SQLiteMetrics              SQLiteMetricsProvider      // 可选；管理员运行指标中的 SQLite 快照
-	UsageWriterMetrics         UsageWriterMetricsProvider // 可选；管理员运行指标中的异步队列快照
-	IPLimiterMetrics           IPLimiterMetricsProvider   // 可选；管理员运行指标中的 IP 限流注册表快照
-	UserLimiterMetrics         UserLimiterMetricsProvider // 可选；管理员运行指标中的用户限流注册表快照
-	passwordHashGenerator      func(password []byte, cost int) ([]byte, error)
-	passwordHashComparator     func(context.Context, []byte, []byte) error
-	settingsUpdateMutex        sync.Mutex
-	overviewHealthState        overviewHealthState
+	Store                             store.Store
+	JWTSecret                         string
+	MaxAPIKeysPerUser                 int
+	BootstrapAdminUsername            string
+	BootstrapCredentialsPath          string
+	BootstrapCredentialCleaner        func() error
+	InitialServerSettings             config.ServerSettings
+	SettingsApplier                   ServerSettingsApplier             // 可选；保存服务器设置后热更新运行时组件
+	LoginVerificationSettingsProvider LoginVerificationSettingsProvider // 可选；提供最后完整应用版本的登录验证设置
+	ModelLister                       ModelLister                       // 可选；面板通过它检查上游状态并拉取可用 Grok 模型
+	AuthCache                         AuthCacheInvalidator              // 可选；管理员变更用户/等级/密钥后清空 MCP 鉴权缓存
+	AuthProtector                     *AuthProtector                    // 可选；未设置时使用内置面板登录/注册防护
+	TurnstileVerifier                 TurnstileVerifier                 // 可选；启用 Turnstile 时必须配置
+	SQLiteMetrics                     SQLiteMetricsProvider             // 可选；管理员运行指标中的 SQLite 快照
+	UsageWriterMetrics                UsageWriterMetricsProvider        // 可选；管理员运行指标中的异步队列快照
+	IPLimiterMetrics                  IPLimiterMetricsProvider          // 可选；管理员运行指标中的 IP 限流注册表快照
+	UserLimiterMetrics                UserLimiterMetricsProvider        // 可选；管理员运行指标中的用户限流注册表快照
+	passwordHashGenerator             func(password []byte, cost int) ([]byte, error)
+	passwordHashComparator            func(context.Context, []byte, []byte) error
+	settingsUpdateMutex               sync.Mutex
+	overviewHealthState               overviewHealthState
 }
 
 type overviewHealthState struct {
@@ -52,6 +54,20 @@ type overviewHealthProbe struct {
 type ServerSettingsApplier interface {
 	ApplyServerSettings(config.ServerSettings, int64) error
 	LiveServerSettingsVersion() int64
+}
+
+// LoginVerificationSettings contains the non-registration authentication
+// settings that must switch atomically with a confirmed runtime revision.
+type LoginVerificationSettings struct {
+	TurnstileEnabled   bool
+	TurnstileSiteKey   string
+	TurnstileSecretKey string
+}
+
+// LoginVerificationSettingsProvider reports the settings from the last
+// completely applied runtime revision, rather than the latest persisted row.
+type LoginVerificationSettingsProvider interface {
+	LiveLoginVerificationSettings() LoginVerificationSettings
 }
 
 // ModelLister fetches the currently available upstream Grok models.
