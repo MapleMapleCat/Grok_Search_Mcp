@@ -30,8 +30,6 @@ export function renderAuthView(state) {
 
           ${activeMode === "register" ? renderRegisterForm(state, registrationCopy) : renderLoginForm(state)}
         </div>
-
-        <p class="auth-footnote">JWT 会话仅保存在当前浏览器标签页中 · 12 小时后自动失效</p>
       </section>
 
       <aside class="auth-visual" aria-hidden="true">
@@ -59,7 +57,7 @@ function renderLoginForm(state) {
         <input class="text-input" name="username" type="text" autocomplete="username" maxlength="128" placeholder="输入用户名" required autofocus>
       </label>
       <label class="field-group">
-        <span class="field-label"><span>密码</span><span class="field-hint">8–72 字节</span></span>
+        <span class="field-label">密码</span>
         <span class="password-wrap">
           <input class="text-input" id="login-password" name="password" type="password" autocomplete="current-password" minlength="8" maxlength="72" placeholder="输入密码" required>
           <button class="input-icon-button" type="button" data-action="toggle-password" data-target="login-password" aria-label="显示或隐藏密码">${renderIcon("eye")}</button>
