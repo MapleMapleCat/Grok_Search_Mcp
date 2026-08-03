@@ -86,7 +86,7 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 }
 
 func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (*User, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.readDB.QueryRowContext(ctx,
 		`SELECT `+userColumns+` FROM users WHERE username = ? COLLATE NOCASE`, strings.TrimSpace(username))
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
@@ -99,7 +99,7 @@ func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (*
 }
 
 func (s *SQLiteStore) GetUserByID(ctx context.Context, id string) (*User, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.readDB.QueryRowContext(ctx,
 		`SELECT `+userColumns+` FROM users WHERE id = ?`, id)
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {

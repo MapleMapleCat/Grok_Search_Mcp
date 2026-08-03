@@ -95,7 +95,7 @@ func turnstileSecretKeyRecordIdentity(settingsID string) string {
 }
 
 func (s *SQLiteStore) GetServerSettings(ctx context.Context) (*ServerSettings, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+serverSettingsColumns+` FROM server_settings WHERE id = ?`, serverSettingsID)
+	row := s.readDB.QueryRowContext(ctx, `SELECT `+serverSettingsColumns+` FROM server_settings WHERE id = ?`, serverSettingsID)
 	return s.scanAndDecryptServerSettings(row)
 }
 

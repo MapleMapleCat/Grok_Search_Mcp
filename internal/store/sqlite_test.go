@@ -159,6 +159,62 @@ func TestSQLiteReadPoolIsBoundedAndQueryOnly(t *testing.T) {
 	}
 }
 
+func TestAuthenticationReadsDoNotWaitForPrimaryWriteConnection(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	setupContext := context.Background()
+
+	user, err := sqliteStore.CreateUser(setupContext, "read-pool-user", "password-hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverSettings := ServerSettings{Runtime: settings.Runtime{
+		CPABaseURL:                 "http://127.0.0.1:8317",
+		CPAAPIKey:                  "read-pool-settings-api-key",
+		UpstreamProtocol:           "responses",
+		Model:                      "grok-read-pool-test",
+		TimeoutSeconds:             30,
+		MCPGlobalSearchConcurrency: 4,
+		MCPUserSearchConcurrency:   1,
+		RegistrationMode:           RegistrationModeDisabled,
+	}}
+	if _, err := sqliteStore.UpsertServerSettings(setupContext, serverSettings); err != nil {
+		t.Fatal(err)
+	}
+
+	primaryWriteConnection, err := sqliteStore.db.Conn(setupContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primaryWriteConnection.Close()
+
+	readContext, cancelReads := context.WithTimeout(setupContext, time.Second)
+	defer cancelReads()
+
+	userByUsername, err := sqliteStore.GetUserByUsername(readContext, user.Username)
+	if err != nil {
+		t.Fatalf("GetUserByUsername waited for the primary write connection: %v", err)
+	}
+	if userByUsername == nil || userByUsername.ID != user.ID {
+		t.Fatalf("GetUserByUsername returned %+v, want user %q", userByUsername, user.ID)
+	}
+
+	userByID, err := sqliteStore.GetUserByID(readContext, user.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID waited for the primary write connection: %v", err)
+	}
+	if userByID.Username != user.Username {
+		t.Fatalf("GetUserByID returned username %q, want %q", userByID.Username, user.Username)
+	}
+
+	storedSettings, err := sqliteStore.GetServerSettings(readContext)
+	if err != nil {
+		t.Fatalf("GetServerSettings waited for the primary write connection: %v", err)
+	}
+	if storedSettings == nil || storedSettings.Model != serverSettings.Model {
+		t.Fatalf("GetServerSettings returned %+v, want model %q", storedSettings, serverSettings.Model)
+	}
+}
+
 func TestSQLiteInMemoryDatabaseKeepsSharedConnection(t *testing.T) {
 	sqliteStore, err := OpenSQLite(":memory:")
 	if err != nil {
