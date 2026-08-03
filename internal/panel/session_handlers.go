@@ -279,8 +279,10 @@ func (handler *Handler) changePassword(writer http.ResponseWriter, request *http
 	}
 
 	replacementHash := string(replacementPasswordHash)
+	revokeTokens := true
 	updatedUser, err := handler.Store.UpdateUser(request.Context(), currentUser.ID, store.UserUpdates{
 		PasswordHash: &replacementHash,
+		RevokeTokens: &revokeTokens,
 	})
 	if err != nil {
 		log.Printf("update password for user %s failed error_type=%T", currentUser.ID, err)
