@@ -29,11 +29,27 @@ func (s *SQLiteStore) ListUsageRecordsPage(
 	default:
 		return nil, fmt.Errorf("usage record list scope is required")
 	}
-	return s.queryUsageRecordPage(ctx, where, whereArgs, since.UTC().Truncate(time.Second), cursor, limit)
+	page, err := s.queryUsageRecordPage(
+		ctx,
+		s.readDB,
+		where,
+		whereArgs,
+		since.UTC().Truncate(time.Second),
+		cursor,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.loadUsageDebugBodySummaries(ctx, page.Records); err != nil {
+		return nil, err
+	}
+	return page, nil
 }
 
 func (s *SQLiteStore) queryUsageRecordPage(
 	ctx context.Context,
+	queryExecutor usageQueryExecutor,
 	where string,
 	whereArgs []any,
 	since time.Time,
@@ -52,7 +68,7 @@ func (s *SQLiteStore) queryUsageRecordPage(
 	query += ` ORDER BY timestamp DESC, id DESC LIMIT ?`
 	queryArgs = append(queryArgs, pageLimit+1)
 
-	rows, err := s.readDB.QueryContext(ctx, query, queryArgs...)
+	rows, err := queryExecutor.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -86,9 +102,6 @@ func (s *SQLiteStore) queryUsageRecordPage(
 	if page.HasMore && len(records) > 0 {
 		lastRecord := records[len(records)-1]
 		page.NextCursor = &UsageRecordCursor{Timestamp: lastRecord.Timestamp, ID: lastRecord.ID}
-	}
-	if err := s.loadUsageDebugBodySummaries(ctx, page.Records); err != nil {
-		return nil, err
 	}
 	return page, nil
 }

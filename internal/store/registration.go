@@ -61,10 +61,16 @@ func (s *SQLiteStore) RegisterUserWithCurrentMode(
 		return nil, err
 	}
 
+	registeredUser, err := scanUser(transaction.QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE id = ?`, userID,
+	))
+	if err != nil {
+		return nil, err
+	}
 	if err := transaction.Commit(); err != nil {
 		return nil, err
 	}
-	return s.GetUserByID(ctx, userID)
+	return registeredUser, nil
 }
 
 func readRegistrationMode(ctx context.Context, transaction *sql.Tx, fallbackMode RegistrationMode) (RegistrationMode, error) {

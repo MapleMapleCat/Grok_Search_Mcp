@@ -49,6 +49,11 @@ func scanUser(row interface {
 	if err != nil {
 		return nil, err
 	}
+	currentPeriod := currentSuccessQuotaPeriod()
+	if u.SuccessPeriod != currentPeriod {
+		u.SuccessCalls = 0
+		u.SuccessPeriod = currentPeriod
+	}
 	return &u, nil
 }
 
@@ -66,23 +71,39 @@ func (s *SQLiteStore) CreateUser(ctx context.Context, username, passwordHash str
 		return nil, err
 	}
 	now := formatTime(nowUTC())
-	tierID, err := s.defaultTierID(ctx)
+	period := currentSuccessQuotaPeriod()
+	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
-	period := currentSuccessQuotaPeriod()
-	_, err = s.db.ExecContext(ctx,
+	defer func() { _ = transaction.Rollback() }()
+
+	var tierID string
+	if err := transaction.QueryRowContext(ctx,
+		`SELECT id FROM tiers WHERE is_default = 1 LIMIT 1`,
+	).Scan(&tierID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrTierNotFound
+		}
+		return nil, err
+	}
+
+	createdUser, err := scanUser(transaction.QueryRowContext(ctx,
 		`INSERT INTO users (id, username, password_hash, role, enabled, tier_id, success_calls, success_period, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, 1, ?, 0, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, 1, ?, 0, ?, ?, ?)
+		 RETURNING `+userColumns,
 		id, username, passwordHash, string(role), tierID, period, now, now,
-	)
+	))
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrUsernameTaken
 		}
 		return nil, fmt.Errorf("insert user: %w", err)
 	}
-	return s.GetUserByID(ctx, id)
+	if err := transaction.Commit(); err != nil {
+		return nil, err
+	}
+	return createdUser, nil
 }
 
 func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (*User, error) {
@@ -91,9 +112,6 @@ func (s *SQLiteStore) GetUserByUsername(ctx context.Context, username string) (*
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
-	}
-	if err == nil {
-		err = s.resetUserSuccessPeriodIfNeeded(ctx, u)
 	}
 	return u, err
 }
@@ -104,9 +122,6 @@ func (s *SQLiteStore) GetUserByID(ctx context.Context, id string) (*User, error)
 	u, err := scanUser(row)
 	if err == sql.ErrNoRows {
 		return nil, ErrUserNotFound
-	}
-	if err == nil {
-		err = s.resetUserSuccessPeriodIfNeeded(ctx, u)
 	}
 	return u, err
 }
@@ -143,11 +158,6 @@ func (s *SQLiteStore) ListUsersPage(ctx context.Context, cursor *TimeIDCursor, l
 	users, hasMore, nextCursor := finalizeTimeIDPage(users, pageLimit, func(user *User) TimeIDCursor {
 		return TimeIDCursor{Timestamp: user.CreatedAt, ID: user.ID}
 	})
-	for _, user := range users {
-		if err := s.resetUserSuccessPeriodIfNeeded(ctx, user); err != nil {
-			return nil, err
-		}
-	}
 	page := &UserPage{
 		Users:      users,
 		HasMore:    hasMore,
@@ -229,9 +239,6 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		if err := tx.Commit(); err != nil {
 			return nil, err
 		}
-		if err := s.resetUserSuccessPeriodIfNeeded(ctx, existingUser); err != nil {
-			return nil, err
-		}
 		return existingUser, nil
 	}
 	sets = append(sets, "updated_at = ?")
@@ -265,9 +272,6 @@ func (s *SQLiteStore) UpdateUser(ctx context.Context, id string, updates UserUpd
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	if err := s.resetUserSuccessPeriodIfNeeded(ctx, updatedUser); err != nil {
 		return nil, err
 	}
 	return updatedUser, nil
@@ -356,17 +360,28 @@ func (s *SQLiteStore) CountEnabledAdmins(ctx context.Context) (int64, error) {
 	return enabledAdminCount, err
 }
 
-// ReserveSuccessCall 在 tools/call 前原子递增当月 success_calls；success_limit 为 0 表示不限。
-// RowsAffected==0 时区分用户不存在（ErrUserNotFound）与额度耗尽（ErrQuotaSuccess）。
-// 成功时返回本次实际递增的用户与月份，供失败路径精确回滚。
+// ReserveSuccessCall 在 tools/call 前的短事务内递增当月 success_calls 并保存唯一预留；
+// success_limit 为 0 表示不限。RowsAffected==0 时区分用户不存在（ErrUserNotFound）
+// 与额度耗尽（ErrQuotaSuccess）。
 func (s *SQLiteStore) ReserveSuccessCall(ctx context.Context, userID string, successLimit int) (_ SuccessQuotaReservation, returnErr error) {
 	operationStartedAt := time.Now()
 	defer func() {
 		s.metrics.observeQuotaReserve(time.Since(operationStartedAt), returnErr)
 	}()
 
+	reservationID, err := randomID()
+	if err != nil {
+		return SuccessQuotaReservation{}, fmt.Errorf("generate success quota reservation ID: %w", err)
+	}
 	period := currentSuccessQuotaPeriod()
-	result, err := s.db.ExecContext(ctx,
+	reservation := SuccessQuotaReservation{ID: reservationID, UserID: userID, Period: period}
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SuccessQuotaReservation{}, err
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	result, err := transaction.ExecContext(ctx,
 		`UPDATE users
 		 SET success_calls = CASE WHEN success_period = ? THEN success_calls + 1 ELSE 1 END,
 		     success_period = ?
@@ -380,7 +395,7 @@ func (s *SQLiteStore) ReserveSuccessCall(ctx context.Context, userID string, suc
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		var exists int
-		lookupErr := s.db.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, userID).Scan(&exists)
+		lookupErr := transaction.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, userID).Scan(&exists)
 		if lookupErr == sql.ErrNoRows {
 			return SuccessQuotaReservation{}, ErrUserNotFound
 		}
@@ -389,11 +404,21 @@ func (s *SQLiteStore) ReserveSuccessCall(ctx context.Context, userID string, suc
 		}
 		return SuccessQuotaReservation{}, ErrQuotaSuccess
 	}
-	return SuccessQuotaReservation{UserID: userID, Period: period}, nil
+	if _, err := transaction.ExecContext(ctx,
+		`INSERT INTO success_quota_reservations (id, user_id, period, created_at) VALUES (?, ?, ?, ?)`,
+		reservation.ID, reservation.UserID, reservation.Period, formatTime(nowUTC()),
+	); err != nil {
+		return SuccessQuotaReservation{}, fmt.Errorf("insert success quota reservation: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return SuccessQuotaReservation{}, fmt.Errorf("commit success quota reservation: %w", err)
+	}
+	return reservation, nil
 }
 
-// ReleaseSuccessCall 在 MCP 工具返回 IsError 或 HTTP 非 2xx 时回滚 ReserveSuccessCall。
-func (s *SQLiteStore) ReleaseSuccessCall(ctx context.Context, reservation SuccessQuotaReservation) (returnErr error) {
+// CompleteSuccessCall 幂等结束一个持久预留。只有本次确实删除预留且工具失败时，
+// 才回滚该预留对应的用户/月计数；成功完成只删除预留。
+func (s *SQLiteStore) CompleteSuccessCall(ctx context.Context, reservation SuccessQuotaReservation, succeeded bool) (returnErr error) {
 	operationStartedAt := time.Now()
 	defer func() {
 		s.metrics.observeQuotaRelease(time.Since(operationStartedAt), returnErr)
@@ -402,46 +427,39 @@ func (s *SQLiteStore) ReleaseSuccessCall(ctx context.Context, reservation Succes
 		return fmt.Errorf("invalid success quota reservation")
 	}
 
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET success_calls = success_calls - 1 WHERE id = ? AND success_period = ? AND success_calls > 0`,
-		reservation.UserID, reservation.Period,
-	)
-	return err
-}
-func nowUTC() time.Time {
-	return time.Now().UTC()
-}
-
-// defaultTierID 返回显式默认 tier 的 ID；若未配置默认 tier 则 fail-closed。
-func (s *SQLiteStore) defaultTierID(ctx context.Context) (string, error) {
-	var id string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id FROM tiers WHERE is_default = 1 LIMIT 1`,
-	).Scan(&id)
-	if err == sql.ErrNoRows {
-		return "", ErrTierNotFound
-	}
-	return id, err
-}
-
-func (s *SQLiteStore) resetUserSuccessPeriodIfNeeded(ctx context.Context, user *User) error {
-	if user == nil {
-		return nil
-	}
-	period := currentSuccessQuotaPeriod()
-	if user.SuccessPeriod == period {
-		return nil
-	}
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE users SET success_calls = 0, success_period = ? WHERE id = ? AND COALESCE(success_period, '') <> ?`,
-		period, user.ID, period,
-	)
+	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	user.SuccessCalls = 0
-	user.SuccessPeriod = period
+	defer func() { _ = transaction.Rollback() }()
+
+	deleteResult, err := transaction.ExecContext(ctx,
+		`DELETE FROM success_quota_reservations WHERE id = ? AND user_id = ? AND period = ?`,
+		reservation.ID, reservation.UserID, reservation.Period,
+	)
+	if err != nil {
+		return fmt.Errorf("delete success quota reservation: %w", err)
+	}
+	deletedReservations, err := deleteResult.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count deleted success quota reservations: %w", err)
+	}
+	if deletedReservations > 0 && !succeeded {
+		if _, err := transaction.ExecContext(ctx,
+			`UPDATE users SET success_calls = success_calls - 1 WHERE id = ? AND success_period = ? AND success_calls > 0`,
+			reservation.UserID, reservation.Period,
+		); err != nil {
+			return fmt.Errorf("rollback failed success quota reservation: %w", err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit success quota completion: %w", err)
+	}
 	return nil
+}
+
+func nowUTC() time.Time {
+	return time.Now().UTC()
 }
 
 func validateAssignableTierID(ctx context.Context, executor queryRowContextExecutor, tierID string) error {

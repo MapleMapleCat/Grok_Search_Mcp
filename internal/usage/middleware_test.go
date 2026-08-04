@@ -32,12 +32,12 @@ func (f *fakeStore) RecordUsage(_ context.Context, record store.UsageRecord) err
 	return nil
 }
 
-func (f *fakeStore) ReleaseSuccessCall(context.Context, store.SuccessQuotaReservation) error {
+func (f *fakeStore) CompleteSuccessCall(context.Context, store.SuccessQuotaReservation, bool) error {
 	return nil
 }
 
 func testSuccessQuotaReservation(userID string) store.SuccessQuotaReservation {
-	return store.SuccessQuotaReservation{UserID: userID, Period: "2026-01"}
+	return store.SuccessQuotaReservation{ID: "reservation-" + userID, UserID: userID, Period: "2026-01"}
 }
 
 func (f *fakeStore) RecordedUsage() []store.UsageRecord {
@@ -314,43 +314,48 @@ func (f *flushRecorder) Flush() {
 	*f.flushed = true
 }
 
-// releaseCountingStore 记录 ReleaseSuccessCall 调用次数，用于断言 panic 时的回滚行为。
-type releaseCountingStore struct {
-	testsupport.Store
-	releasedReservations []store.SuccessQuotaReservation
+type quotaCompletion struct {
+	reservation store.SuccessQuotaReservation
+	succeeded   bool
 }
 
-func (r *releaseCountingStore) ReleaseSuccessCall(_ context.Context, reservation store.SuccessQuotaReservation) error {
-	r.releasedReservations = append(r.releasedReservations, reservation)
+// completionCountingStore 记录 CompleteSuccessCall 调用，用于断言完成结果。
+type completionCountingStore struct {
+	testsupport.Store
+	completions []quotaCompletion
+}
+
+func (completionStore *completionCountingStore) CompleteSuccessCall(_ context.Context, reservation store.SuccessQuotaReservation, succeeded bool) error {
+	completionStore.completions = append(completionStore.completions, quotaCompletion{reservation: reservation, succeeded: succeeded})
 	return nil
 }
 
-type releaseContextRecordingStore struct {
+type completionContextRecordingStore struct {
 	testsupport.Store
-	releasedReservations []store.SuccessQuotaReservation
-	releaseContextErr    error
+	completions          []quotaCompletion
+	completionContextErr error
 }
 
-type panickingQuotaReleaser struct {
+type panickingQuotaCompleter struct {
 	testsupport.Store
-	releaseAttempts int
+	completionAttempts int
 }
 
-func (releaser *panickingQuotaReleaser) ReleaseSuccessCall(context.Context, store.SuccessQuotaReservation) error {
-	releaser.releaseAttempts++
-	panic("quota release failed unexpectedly")
+func (completer *panickingQuotaCompleter) CompleteSuccessCall(context.Context, store.SuccessQuotaReservation, bool) error {
+	completer.completionAttempts++
+	panic("quota completion failed unexpectedly")
 }
 
-func (r *releaseContextRecordingStore) ReleaseSuccessCall(ctx context.Context, reservation store.SuccessQuotaReservation) error {
-	r.releasedReservations = append(r.releasedReservations, reservation)
-	r.releaseContextErr = ctx.Err()
+func (completionStore *completionContextRecordingStore) CompleteSuccessCall(ctx context.Context, reservation store.SuccessQuotaReservation, succeeded bool) error {
+	completionStore.completions = append(completionStore.completions, quotaCompletion{reservation: reservation, succeeded: succeeded})
+	completionStore.completionContextErr = ctx.Err()
 	return nil
 }
 
 type failureRecordingStore struct {
 	testsupport.Store
-	releasedReservations []store.SuccessQuotaReservation
-	recordedUsage        []store.UsageRecord
+	completions   []quotaCompletion
+	recordedUsage []store.UsageRecord
 }
 
 type debugCaptureRecordingStore struct {
@@ -468,25 +473,25 @@ func TestMCPMiddlewareBoundsDebugBodiesWithoutChangingForwardedContent(t *testin
 
 func TestMCPMiddlewarePrefersAuthoritativeSemanticOutcome(t *testing.T) {
 	testCases := []struct {
-		name                 string
-		semanticSuccess      bool
-		responseBody         string
-		expectedSuccess      bool
-		expectedQuotaRelease int
+		name                   string
+		semanticSuccess        bool
+		responseBody           string
+		expectedSuccess        bool
+		expectedQuotaSucceeded bool
 	}{
 		{
-			name:                 "handler success overrides fallback error payload",
-			semanticSuccess:      true,
-			responseBody:         `{"jsonrpc":"2.0","id":1,"result":{"isError":true}}`,
-			expectedSuccess:      true,
-			expectedQuotaRelease: 0,
+			name:                   "handler success overrides fallback error payload",
+			semanticSuccess:        true,
+			responseBody:           `{"jsonrpc":"2.0","id":1,"result":{"isError":true}}`,
+			expectedSuccess:        true,
+			expectedQuotaSucceeded: true,
 		},
 		{
-			name:                 "handler error overrides fallback success payload",
-			semanticSuccess:      false,
-			responseBody:         `{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`,
-			expectedSuccess:      false,
-			expectedQuotaRelease: 1,
+			name:                   "handler error overrides fallback success payload",
+			semanticSuccess:        false,
+			responseBody:           `{"jsonrpc":"2.0","id":1,"result":{"content":[]}}`,
+			expectedSuccess:        false,
+			expectedQuotaSucceeded: false,
 		},
 	}
 
@@ -515,11 +520,12 @@ func TestMCPMiddlewarePrefersAuthoritativeSemanticOutcome(t *testing.T) {
 			if usageStore.recordedUsage[0].Success != testCase.expectedSuccess {
 				t.Fatalf("recorded success = %t, want %t", usageStore.recordedUsage[0].Success, testCase.expectedSuccess)
 			}
-			if len(usageStore.releasedReservations) != testCase.expectedQuotaRelease {
-				t.Fatalf("quota releases = %d, want %d", len(usageStore.releasedReservations), testCase.expectedQuotaRelease)
+			if len(usageStore.completions) != 1 {
+				t.Fatalf("quota completions = %+v, want exactly one", usageStore.completions)
 			}
-			if testCase.expectedQuotaRelease == 1 && usageStore.releasedReservations[0] != expectedReservation {
-				t.Fatalf("released reservation = %+v, want %+v", usageStore.releasedReservations[0], expectedReservation)
+			completion := usageStore.completions[0]
+			if completion.reservation != expectedReservation || completion.succeeded != testCase.expectedQuotaSucceeded {
+				t.Fatalf("quota completion = %+v, want reservation=%+v succeeded=%t", completion, expectedReservation, testCase.expectedQuotaSucceeded)
 			}
 		})
 	}
@@ -556,8 +562,8 @@ func TestMCPMiddlewareCleansDebugSpoolsOnPanic(t *testing.T) {
 	}
 }
 
-func (f *failureRecordingStore) ReleaseSuccessCall(_ context.Context, reservation store.SuccessQuotaReservation) error {
-	f.releasedReservations = append(f.releasedReservations, reservation)
+func (f *failureRecordingStore) CompleteSuccessCall(_ context.Context, reservation store.SuccessQuotaReservation, succeeded bool) error {
+	f.completions = append(f.completions, quotaCompletion{reservation: reservation, succeeded: succeeded})
 	return nil
 }
 
@@ -566,7 +572,7 @@ func (f *failureRecordingStore) RecordUsage(_ context.Context, record store.Usag
 	return nil
 }
 
-func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testing.T) {
+func TestMCPMiddlewareCompletesAndRecordsFailureOnToolErrorAndHTTPError(t *testing.T) {
 	testCases := []struct {
 		name    string
 		handler http.Handler
@@ -610,8 +616,8 @@ func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testin
 			h.ServeHTTP(httptest.NewRecorder(), req)
 			writer.Close()
 
-			if len(st.releasedReservations) != 1 || st.releasedReservations[0] != expectedReservation {
-				t.Fatalf("released reservations = %+v, want [%+v]", st.releasedReservations, expectedReservation)
+			if len(st.completions) != 1 || st.completions[0].reservation != expectedReservation || st.completions[0].succeeded {
+				t.Fatalf("quota completions = %+v, want one failed completion for %+v", st.completions, expectedReservation)
 			}
 			if len(st.recordedUsage) != 1 {
 				t.Fatalf("expected one usage record, got %+v", st.recordedUsage)
@@ -626,16 +632,17 @@ func TestMCPMiddlewareReleasesAndRecordsFailureOnToolErrorAndHTTPError(t *testin
 	}
 }
 
-func TestMCPMiddlewareSkipsReleaseWithoutUsableReservation(t *testing.T) {
+func TestMCPMiddlewareSkipsCompletionWithoutUsableReservation(t *testing.T) {
 	testCases := []struct {
 		name        string
 		reservation store.SuccessQuotaReservation
 	}{
 		{name: "missing reservation"},
-		{name: "missing period", reservation: store.SuccessQuotaReservation{UserID: "u1"}},
-		{name: "missing user", reservation: store.SuccessQuotaReservation{Period: "2026-01"}},
-		{name: "malformed period", reservation: store.SuccessQuotaReservation{UserID: "u1", Period: "January"}},
-		{name: "different user", reservation: store.SuccessQuotaReservation{UserID: "other-user", Period: "2026-01"}},
+		{name: "missing reservation ID", reservation: store.SuccessQuotaReservation{UserID: "u1", Period: "2026-01"}},
+		{name: "missing period", reservation: store.SuccessQuotaReservation{ID: "reservation-1", UserID: "u1"}},
+		{name: "missing user", reservation: store.SuccessQuotaReservation{ID: "reservation-1", Period: "2026-01"}},
+		{name: "malformed period", reservation: store.SuccessQuotaReservation{ID: "reservation-1", UserID: "u1", Period: "January"}},
+		{name: "different user", reservation: store.SuccessQuotaReservation{ID: "reservation-1", UserID: "other-user", Period: "2026-01"}},
 	}
 
 	for _, testCase := range testCases {
@@ -656,17 +663,17 @@ func TestMCPMiddlewareSkipsReleaseWithoutUsableReservation(t *testing.T) {
 
 			handler.ServeHTTP(httptest.NewRecorder(), request)
 
-			if len(usageStore.releasedReservations) != 0 {
-				t.Fatalf("missing or invalid token released quota: %+v", usageStore.releasedReservations)
+			if len(usageStore.completions) != 0 {
+				t.Fatalf("missing or invalid reservation completed quota: %+v", usageStore.completions)
 			}
 		})
 	}
 }
 
-func TestMCPMiddlewareReleasesWithLiveContextAfterRequestCancel(t *testing.T) {
+func TestMCPMiddlewareCompletesWithLiveContextAfterRequestCancel(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
 	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
-	st := &releaseContextRecordingStore{}
+	st := &completionContextRecordingStore{}
 	h := MCPMiddleware(st, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 	}))
@@ -683,11 +690,11 @@ func TestMCPMiddlewareReleasesWithLiveContextAfterRequestCancel(t *testing.T) {
 
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
-	if len(st.releasedReservations) != 1 || st.releasedReservations[0] != expectedReservation {
-		t.Fatalf("released reservations = %+v, want [%+v]", st.releasedReservations, expectedReservation)
+	if len(st.completions) != 1 || st.completions[0].reservation != expectedReservation || st.completions[0].succeeded {
+		t.Fatalf("quota completions = %+v, want one failed completion for %+v", st.completions, expectedReservation)
 	}
-	if st.releaseContextErr != nil {
-		t.Fatalf("quota release must detach from canceled request context, got context err %v", st.releaseContextErr)
+	if st.completionContextErr != nil {
+		t.Fatalf("quota completion must detach from canceled request context, got context err %v", st.completionContextErr)
 	}
 }
 
@@ -709,13 +716,12 @@ func TestHeaderSnapshotRedactsSensitiveHeadersCaseInsensitively(t *testing.T) {
 	}
 }
 
-// TestMCPMiddlewareReleasesOnPanic 验证 issue 8 的修复：当 handler panic 时，
-// usage 中间件通过 defer/recover 仍会执行 ReleaseSuccessCall，
-// 避免 success_calls 虚高，然后重新 panic 让上层处理。
-func TestMCPMiddlewareReleasesOnPanic(t *testing.T) {
+// TestMCPMiddlewareCompletesFailureOnPanic 验证 handler panic 时，usage 中间件
+// 通过 defer/recover 按失败完成预留，然后重新 panic 让上层处理。
+func TestMCPMiddlewareCompletesFailureOnPanic(t *testing.T) {
 	key := &store.APIKey{ID: "k1"}
 	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
-	st := &releaseCountingStore{}
+	st := &completionCountingStore{}
 	h := MCPMiddleware(st, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("boom")
 	}))
@@ -731,17 +737,17 @@ func TestMCPMiddlewareReleasesOnPanic(t *testing.T) {
 		if recover() == nil {
 			t.Fatal("expected panic to propagate")
 		}
-		if len(st.releasedReservations) != 1 || st.releasedReservations[0] != expectedReservation {
-			t.Fatalf("released reservations = %+v, want [%+v]", st.releasedReservations, expectedReservation)
+		if len(st.completions) != 1 || st.completions[0].reservation != expectedReservation || st.completions[0].succeeded {
+			t.Fatalf("quota completions = %+v, want one failed completion for %+v", st.completions, expectedReservation)
 		}
 	}()
 	h.ServeHTTP(httptest.NewRecorder(), req)
 }
 
-func TestMCPMiddlewareDoesNotRetryPanickingQuotaRelease(t *testing.T) {
+func TestMCPMiddlewareDoesNotRetryPanickingQuotaCompletion(t *testing.T) {
 	user := &auth.AuthenticatedUser{User: store.User{ID: "u1"}}
-	quotaReleaser := &panickingQuotaReleaser{}
-	handler := MCPMiddleware(quotaReleaser, nil)(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
+	quotaCompleter := &panickingQuotaCompleter{}
+	handler := MCPMiddleware(quotaCompleter, nil)(http.HandlerFunc(func(responseWriter http.ResponseWriter, _ *http.Request) {
 		http.Error(responseWriter, "upstream unavailable", http.StatusBadGateway)
 	}))
 
@@ -754,10 +760,10 @@ func TestMCPMiddlewareDoesNotRetryPanickingQuotaRelease(t *testing.T) {
 
 	defer func() {
 		if recover() == nil {
-			t.Fatal("expected quota release panic to propagate")
+			t.Fatal("expected quota completion panic to propagate")
 		}
-		if quotaReleaser.releaseAttempts != 1 {
-			t.Fatalf("quota release attempts = %d, want 1", quotaReleaser.releaseAttempts)
+		if quotaCompleter.completionAttempts != 1 {
+			t.Fatalf("quota completion attempts = %d, want 1", quotaCompleter.completionAttempts)
 		}
 	}()
 	handler.ServeHTTP(httptest.NewRecorder(), request)

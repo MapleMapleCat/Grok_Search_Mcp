@@ -131,23 +131,19 @@ func (s *SQLiteStore) CreateKey(ctx context.Context, userID, name string, maximu
 		return nil, "", ErrAPIKeyLimit
 	}
 
-	_, err = transaction.ExecContext(ctx,
+	createdAPIKey, err := scanAPIKey(transaction.QueryRowContext(ctx,
 		`INSERT INTO apikeys (id, user_id, name, key_hash, key_prefix, key_ciphertext, key_nonce, key_encryption_version, enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		 RETURNING `+keyColumns,
 		id, userID, name, keyhash.HashAPIKey(raw), prefix, ciphertext, nonce, encryptionVersion, formatTime(now), formatTime(now),
-	)
+	))
 	if err != nil {
 		return nil, "", fmt.Errorf("insert apikey: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
 		return nil, "", fmt.Errorf("commit API key creation: %w", err)
 	}
-
-	k, err := s.GetKeyByID(ctx, id)
-	if err != nil {
-		return nil, "", err
-	}
-	return k, raw, nil
+	return createdAPIKey, raw, nil
 }
 
 // RevealKey decrypts a stored API key. Ownership must be checked by the caller
@@ -242,7 +238,8 @@ func (s *SQLiteStore) GetKeyByID(ctx context.Context, id string) (*APIKey, error
 
 // UpdateKey 动态拼接 SET 子句，仅更新 KeyUpdates 中非 nil 字段。
 func (s *SQLiteStore) UpdateKey(ctx context.Context, id string, updates KeyUpdates) (*APIKey, error) {
-	if _, err := s.GetKeyByID(ctx, id); err != nil {
+	existingAPIKey, err := s.GetKeyByID(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 
@@ -263,18 +260,22 @@ func (s *SQLiteStore) UpdateKey(ctx context.Context, id string, updates KeyUpdat
 	}
 
 	if len(sets) == 0 {
-		return s.GetKeyByID(ctx, id)
+		return existingAPIKey, nil
 	}
 
 	sets = append(sets, "updated_at = ?")
 	args = append(args, formatTime(time.Now().UTC()))
 	args = append(args, id)
 
-	q := `UPDATE apikeys SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
-	if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
+	query := `UPDATE apikeys SET ` + strings.Join(sets, ", ") + ` WHERE id = ? RETURNING ` + keyColumns
+	updatedAPIKey, err := scanAPIKey(s.db.QueryRowContext(ctx, query, args...))
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("api key not found")
+	}
+	if err != nil {
 		return nil, err
 	}
-	return s.GetKeyByID(ctx, id)
+	return updatedAPIKey, nil
 }
 
 func (s *SQLiteStore) DeleteKey(ctx context.Context, id string) error {

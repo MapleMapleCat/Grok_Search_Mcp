@@ -287,6 +287,41 @@ func TestSQLiteCreatesSeparateRestrictedDebugDatabase(t *testing.T) {
 	}
 }
 
+func TestLoadUsageDebugBodySummariesReleasesConnectionAfterScanError(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+
+	if _, err := sqliteStore.debugDB.ExecContext(ctx, `
+		INSERT INTO usage_debug (
+			usage_id, key_id, usage_timestamp, request_captured_bytes, created_at
+		) VALUES (1, 'scan-error-key', '2026-08-04T00:00:00Z', 'not-an-integer', '2026-08-04T00:00:00Z')
+	`); err != nil {
+		t.Fatalf("insert malformed debug summary: %v", err)
+	}
+
+	records := []UsageRecord{{ID: 1}}
+	scanErr := sqliteStore.loadUsageDebugBodySummaries(ctx, records)
+	if scanErr == nil {
+		t.Fatal("expected malformed debug summary to cause a scan error")
+	}
+	if !strings.Contains(scanErr.Error(), "request_captured_bytes") {
+		t.Fatalf("loadUsageDebugBodySummaries error = %v, want request_captured_bytes scan error", scanErr)
+	}
+
+	reuseContext, cancelReuse := context.WithTimeout(ctx, time.Second)
+	defer cancelReuse()
+	var debugRecordCount int
+	if err := sqliteStore.debugDB.QueryRowContext(
+		reuseContext,
+		`SELECT COUNT(*) FROM usage_debug`,
+	).Scan(&debugRecordCount); err != nil {
+		t.Fatalf("reuse debug connection after scan error: %v", err)
+	}
+	if debugRecordCount != 1 {
+		t.Fatalf("debug record count = %d, want 1", debugRecordCount)
+	}
+}
+
 func TestSQLiteStrictSchemaExcludesRetiredStorage(t *testing.T) {
 	sqliteStore := openTestDB(t)
 	ctx := context.Background()
@@ -1574,6 +1609,7 @@ func TestGetUsageRecordDetailEnforcesUserScope(t *testing.T) {
 
 func TestUsageDebugBodyPersistenceFailurePreservesPrimaryUsage(t *testing.T) {
 	store := openTestDB(t)
+	store.SetMetricsEnabled(true)
 	ctx := context.Background()
 	key, _, err := store.CreateKey(ctx, testUserID(t, store), "debug-rollback", 20)
 	if err != nil {
@@ -1592,8 +1628,8 @@ func TestUsageDebugBodyPersistenceFailurePreservesPrimaryUsage(t *testing.T) {
 		DebugRequestBodyPath:  requestPath,
 		DebugResponseBodyPath: missingResponsePath,
 	})
-	if err == nil {
-		t.Fatal("expected missing response spool to fail persistence")
+	if err != nil {
+		t.Fatalf("debug spool failure changed committed primary result: %v", err)
 	}
 
 	var usageCount int
@@ -1609,6 +1645,14 @@ func TestUsageDebugBodyPersistenceFailurePreservesPrimaryUsage(t *testing.T) {
 	}
 	if debugRecordCount != 0 {
 		t.Fatalf("debug records after failed sidecar write = %d, want 0", debugRecordCount)
+	}
+
+	metrics := store.SQLiteMetrics()
+	if metrics.UsageWrite.Operation.Attempts != 1 ||
+		metrics.UsageWrite.Operation.Errors != 0 ||
+		metrics.UsageWrite.RecordsSucceeded != 1 ||
+		metrics.UsageWrite.RecordsFailed != 0 {
+		t.Fatalf("debug spool failure changed primary usage metrics: %+v", metrics.UsageWrite)
 	}
 }
 

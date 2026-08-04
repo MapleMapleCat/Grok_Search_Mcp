@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -43,7 +44,7 @@ func (s *SQLiteStore) RecordUsageBatch(ctx context.Context, records []UsageRecor
 	// remains isolated so large diagnostic writes cannot expand the primary
 	// transaction or retain its single writer lock.
 	if err := s.persistUsageDebugRecords(ctx, persistedRecords); err != nil {
-		return fmt.Errorf("persist usage debug batch: %w", err)
+		log.Printf("usage debug batch write failed after primary commit records=%d: %v", len(records), err)
 	}
 	return nil
 }

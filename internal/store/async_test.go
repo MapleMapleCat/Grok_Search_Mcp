@@ -450,3 +450,63 @@ func TestAsyncUsageWriterFailedBatchCountsAndCleansEveryRecord(t *testing.T) {
 		t.Fatalf("cleanup count = %d, want 3", cleanupCount.Load())
 	}
 }
+
+func TestAsyncUsageWriterTreatsDebugFailureAsSuccessAndCleansCapture(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+	apiKey, _, err := sqliteStore.CreateKey(ctx, testUserID(t, sqliteStore), "async-debug-failure-key", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	temporaryCapture, err := os.CreateTemp(t.TempDir(), "async-debug-failure-*.body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := temporaryCapture.WriteString("debug request body"); err != nil {
+		t.Fatal(err)
+	}
+	temporaryCapturePath := temporaryCapture.Name()
+	if err := temporaryCapture.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.debugDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	writer := newAsyncUsageWriterWithBatch(sqliteStore, 1, time.Second, time.Second, 1, time.Millisecond)
+	writer.SetMetricsEnabled(true)
+	var cleanupCount atomic.Int64
+	writer.Enqueue(UsageRecord{
+		KeyID:                apiKey.ID,
+		ToolName:             "grok_web_search",
+		Timestamp:            time.Now().UTC(),
+		Success:              true,
+		DebugJSON:            `{"capture":true}`,
+		DebugRequestBodyPath: temporaryCapturePath,
+		Cleanup: func() {
+			cleanupCount.Add(1)
+			_ = os.Remove(temporaryCapturePath)
+		},
+	})
+	writer.Close()
+
+	stats := writer.Stats()
+	if stats.WriteSuccesses != 1 || stats.WriteFailures != 0 || stats.FailedBatches != 0 {
+		t.Fatalf("debug failure changed async primary-write metrics: %+v", stats)
+	}
+	if cleanupCount.Load() != 1 {
+		t.Fatalf("cleanup count = %d, want 1", cleanupCount.Load())
+	}
+	if _, err := os.Stat(temporaryCapturePath); !os.IsNotExist(err) {
+		t.Fatalf("debug capture was not removed: %v", err)
+	}
+
+	updatedKey, err := sqliteStore.GetKeyByID(ctx, apiKey.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedKey.TotalCalls != 1 {
+		t.Fatalf("primary key accounting total calls = %d, want 1", updatedKey.TotalCalls)
+	}
+}

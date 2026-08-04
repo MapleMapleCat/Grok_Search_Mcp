@@ -107,7 +107,7 @@ type User struct {
 	TierID       string
 	SuccessCalls int64
 	// SuccessPeriod 是 success_calls 所属的 UTC 月份（YYYY-MM）。success_calls 表示该月成功调用数，
-	// 进入新月份后会在读写用户或预留 quota 时重置为 0。
+	// 读取过期月份时返回当前月份的零值视图；持久化 rollover 仅由 quota 预留原子完成。
 	SuccessPeriod string
 	// TokenVersion 写入 JWT 的 "tv" 声明；中间件比对 DB 当前值，不一致即拒签。
 	// 角色/启用状态变更或显式吊销时自增，令所有未刷新的 token 立即失效。
@@ -116,18 +116,20 @@ type User struct {
 	UpdatedAt    time.Time
 }
 
-// SuccessQuotaReservation identifies the exact monthly quota bucket incremented
-// for one admitted MCP tool call. Rollback must use this value instead of
-// deriving mutable accounting dimensions again.
+// SuccessQuotaReservation identifies one persistent quota increment owned by
+// an admitted MCP tool call.
 type SuccessQuotaReservation struct {
+	ID     string
 	UserID string
 	Period string
 }
 
-// IsValid reports whether the token identifies one complete UTC monthly quota
-// bucket. It does not check whether that bucket is currently active.
+// IsValid reports whether the reservation identifies one complete persistent
+// record and UTC monthly quota bucket. It does not query that record.
 func (reservation SuccessQuotaReservation) IsValid() bool {
-	if strings.TrimSpace(reservation.UserID) == "" || strings.TrimSpace(reservation.Period) == "" {
+	if strings.TrimSpace(reservation.ID) == "" ||
+		strings.TrimSpace(reservation.UserID) == "" ||
+		strings.TrimSpace(reservation.Period) == "" {
 		return false
 	}
 	parsedPeriod, err := time.Parse(successQuotaPeriodLayout, reservation.Period)
@@ -390,7 +392,7 @@ type Store interface {
 	CountUsers(ctx context.Context) (int64, error)
 	CountEnabledAdmins(ctx context.Context) (int64, error)
 	ReserveSuccessCall(ctx context.Context, userID string, successLimit int) (SuccessQuotaReservation, error)
-	ReleaseSuccessCall(ctx context.Context, reservation SuccessQuotaReservation) error
+	CompleteSuccessCall(ctx context.Context, reservation SuccessQuotaReservation, succeeded bool) error
 
 	GetTierByID(ctx context.Context, id string) (*Tier, error)
 	GetDefaultTier(ctx context.Context) (*Tier, error)

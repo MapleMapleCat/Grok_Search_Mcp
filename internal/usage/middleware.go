@@ -16,10 +16,10 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/store"
 )
 
-// SuccessQuotaReleaser rolls back a previously reserved success call.
+// SuccessQuotaCompleter ends a previously reserved success call with its outcome.
 // Defined at the consumer side so usage does not require the full store.Store.
-type SuccessQuotaReleaser interface {
-	ReleaseSuccessCall(ctx context.Context, reservation store.SuccessQuotaReservation) error
+type SuccessQuotaCompleter interface {
+	CompleteSuccessCall(ctx context.Context, reservation store.SuccessQuotaReservation, succeeded bool) error
 }
 
 // DebugState exposes the runtime debug switch without loading persisted settings.
@@ -29,14 +29,14 @@ type DebugState interface {
 
 // UsageStore is the minimal store surface needed by MCP usage middleware.
 type UsageStore interface {
-	SuccessQuotaReleaser
+	SuccessQuotaCompleter
 }
 
 // toolNameCtxKey 为 context 中存放 tools/call 工具名的私有键类型。
 type toolNameCtxKey struct{}
 
-// successQuotaReservationCtxKey keeps the store-selected accounting bucket
-// private while allowing quota middleware to pass it to failure cleanup.
+// successQuotaReservationCtxKey keeps the store-selected persistent reservation
+// private while allowing quota middleware to pass it to outcome completion.
 type successQuotaReservationCtxKey struct{}
 
 // searchPermitReleaseCtxKey stores an idempotent callback supplied by the
@@ -80,7 +80,7 @@ func ToolNameFromContext(ctx context.Context) (string, bool) {
 }
 
 // WithSuccessQuotaReservation attaches a successfully persisted quota
-// reservation for exact rollback by downstream usage middleware.
+// reservation for downstream outcome completion.
 func WithSuccessQuotaReservation(ctx context.Context, reservation store.SuccessQuotaReservation) context.Context {
 	if !isUsableSuccessQuotaReservation(reservation) {
 		return ctx
@@ -173,8 +173,8 @@ func (s *responseRecorder) Unwrap() http.ResponseWriter {
 
 // MCPMiddleware 在请求前后统计耗时；仅 tools/call 才计入用量，以保证
 // API Key 调用数与 usage_log 的 COUNT 口径一致，并避免握手请求（initialize/ping 等）刷新 last_used_at。
-// success_calls 在 quota 中间件中已原子预留；此处根据 MCP isError / HTTP 状态回滚失败调用。
-// 使用 defer + recover 保证即便下游 handler panic，release/usage 后处理也会执行，避免 success_calls 虚高。
+// success_calls 在 quota 中间件中已原子预留；此处根据 MCP isError / HTTP 状态完成预留，
+// 失败调用回滚计数，成功调用保留计数。使用 defer + recover 保证下游 handler panic 时按失败完成。
 func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ...DebugState) func(http.Handler) http.Handler {
 	var debugState DebugState
 	if len(debugStates) > 0 {
@@ -227,18 +227,17 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 			if debugCapture != nil {
 				rec.responseSpool = debugCapture.responseSpool
 			}
-			quotaReleaseAttempted := false
-			releaseQuotaOnce := func() {
-				if !hasReservation || quotaReleaseAttempted {
+			quotaCompletionAttempted := false
+			completeQuotaOnce := func(succeeded bool) {
+				if !hasReservation || quotaCompletionAttempted {
 					return
 				}
-				quotaReleaseAttempted = true
-				releaseReservedSuccessCall(st, r.Context(), reservation)
+				quotaCompletionAttempted = true
+				completeReservedSuccessCall(st, r.Context(), reservation, succeeded)
 			}
 
-			// recover 捕获 handler panic：将状态视为失败并执行 release 逻辑，
+			// recover 捕获 handler panic：将状态视为失败并完成预留，
 			// 随后重新 panic 让 http.Server 在连接层处理（关闭连接）。
-			// success_calls 由 quota 中间件预留，此处必须回滚。
 			defer func() {
 				if debugCapture != nil {
 					debugCapture.finalize()
@@ -247,7 +246,7 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 					}
 				}
 				if rcv := recover(); rcv != nil {
-					releaseQuotaOnce()
+					completeQuotaOnce(false)
 					panic(rcv)
 				}
 			}()
@@ -268,9 +267,7 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 			}
 			success := mcpOK
 
-			if !mcpOK {
-				releaseQuotaOnce()
-			}
+			completeQuotaOnce(success)
 			if writer != nil {
 				debugJSON := ""
 				if debugEnabled {
@@ -297,19 +294,24 @@ func MCPMiddleware(st UsageStore, writer *store.AsyncUsageWriter, debugStates ..
 	}
 }
 
-const quotaReleaseTimeout = 2 * time.Second
+const quotaCompletionTimeout = 2 * time.Second
 
-func releaseReservedSuccessCall(releaser SuccessQuotaReleaser, requestContext context.Context, reservation store.SuccessQuotaReservation) {
-	if releaser == nil || !isUsableSuccessQuotaReservation(reservation) {
+func completeReservedSuccessCall(completer SuccessQuotaCompleter, requestContext context.Context, reservation store.SuccessQuotaReservation, succeeded bool) {
+	if completer == nil || !isUsableSuccessQuotaReservation(reservation) {
 		return
 	}
-	// Search capacity is scarcer than the quota write path. Release it before
-	// the bounded rollback so a slow SQLite write does not retain a search slot.
-	releaseSearchPermitBeforeQuotaRollback(requestContext)
-	releaseContext, cancel := context.WithTimeout(context.WithoutCancel(requestContext), quotaReleaseTimeout)
+	if !succeeded {
+		// Search capacity is scarcer than the quota write path. Release it before
+		// the bounded rollback so a slow SQLite write does not retain a search slot.
+		releaseSearchPermitBeforeQuotaRollback(requestContext)
+	}
+	// The persistent reservation ID makes repeated completion idempotent. A
+	// process crash before completion or a completion write failure still leaves
+	// conservative counted usage; this path intentionally does not retry.
+	completionContext, cancel := context.WithTimeout(context.WithoutCancel(requestContext), quotaCompletionTimeout)
 	defer cancel()
-	if err := releaser.ReleaseSuccessCall(releaseContext, reservation); err != nil {
-		log.Printf("release success quota failed user=%s period=%s error_type=%T", reservation.UserID, reservation.Period, err)
+	if err := completer.CompleteSuccessCall(completionContext, reservation, succeeded); err != nil {
+		log.Printf("complete success quota failed reservation=%s user=%s period=%s succeeded=%t error_type=%T", reservation.ID, reservation.UserID, reservation.Period, succeeded, err)
 	}
 }
 

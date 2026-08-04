@@ -175,7 +175,8 @@ type crossMonthQuotaStore struct {
 	reservationPeriods   []string
 	nextReservationIndex int
 	reservedTokens       []store.SuccessQuotaReservation
-	releasedTokens       []store.SuccessQuotaReservation
+	completedTokens      []store.SuccessQuotaReservation
+	completionOutcomes   []bool
 }
 
 func TestHTTPRevokeSessionsReplacesCurrentToken(t *testing.T) {
@@ -248,7 +249,7 @@ func (quotaStore *crossMonthQuotaStore) ReserveSuccessCall(
 		return store.SuccessQuotaReservation{}, err
 	}
 	if reservation.Period != desiredPeriod {
-		if err := quotaStore.SQLiteStore.ReleaseSuccessCall(requestContext, reservation); err != nil {
+		if err := quotaStore.SQLiteStore.CompleteSuccessCall(requestContext, reservation, false); err != nil {
 			return store.SuccessQuotaReservation{}, err
 		}
 		reservation.Period = desiredPeriod
@@ -260,26 +261,30 @@ func (quotaStore *crossMonthQuotaStore) ReserveSuccessCall(
 	return reservation, nil
 }
 
-func (quotaStore *crossMonthQuotaStore) ReleaseSuccessCall(
+func (quotaStore *crossMonthQuotaStore) CompleteSuccessCall(
 	requestContext context.Context,
 	reservation store.SuccessQuotaReservation,
+	succeeded bool,
 ) error {
 	quotaStore.mutex.Lock()
-	quotaStore.releasedTokens = append(quotaStore.releasedTokens, reservation)
+	quotaStore.completedTokens = append(quotaStore.completedTokens, reservation)
+	quotaStore.completionOutcomes = append(quotaStore.completionOutcomes, succeeded)
 	quotaStore.mutex.Unlock()
 
-	return quotaStore.SQLiteStore.ReleaseSuccessCall(requestContext, reservation)
+	return quotaStore.SQLiteStore.CompleteSuccessCall(requestContext, reservation, succeeded)
 }
 
 func (quotaStore *crossMonthQuotaStore) quotaTokens() (
 	[]store.SuccessQuotaReservation,
 	[]store.SuccessQuotaReservation,
+	[]bool,
 ) {
 	quotaStore.mutex.Lock()
 	defer quotaStore.mutex.Unlock()
 	reservedTokens := append([]store.SuccessQuotaReservation(nil), quotaStore.reservedTokens...)
-	releasedTokens := append([]store.SuccessQuotaReservation(nil), quotaStore.releasedTokens...)
-	return reservedTokens, releasedTokens
+	completedTokens := append([]store.SuccessQuotaReservation(nil), quotaStore.completedTokens...)
+	completionOutcomes := append([]bool(nil), quotaStore.completionOutcomes...)
+	return reservedTokens, completedTokens, completionOutcomes
 }
 
 func TestHTTPCrossMonthFailurePreservesLaterReservation(t *testing.T) {
@@ -376,12 +381,22 @@ func TestHTTPCrossMonthFailurePreservesLaterReservation(t *testing.T) {
 		t.Fatalf("January failure status=%d body=%s", firstResult.statusCode, truncate(firstResult.body, 512))
 	}
 
-	reservedTokens, releasedTokens := quotaStore.quotaTokens()
+	reservedTokens, completedTokens, completionOutcomes := quotaStore.quotaTokens()
 	if len(reservedTokens) != 2 || reservedTokens[0].Period != previousPeriod || reservedTokens[1].Period != currentPeriod {
 		t.Fatalf("reserved tokens = %+v, want previous period then current period", reservedTokens)
 	}
-	if len(releasedTokens) != 1 || releasedTokens[0] != reservedTokens[0] {
-		t.Fatalf("released tokens = %+v, want original January token %+v", releasedTokens, reservedTokens[0])
+	if len(completedTokens) != 2 || len(completionOutcomes) != 2 {
+		t.Fatalf("completed tokens = %+v outcomes=%+v, want two completions", completedTokens, completionOutcomes)
+	}
+	completionByReservationID := make(map[string]bool, len(completedTokens))
+	for completionIndex, completedToken := range completedTokens {
+		completionByReservationID[completedToken.ID] = completionOutcomes[completionIndex]
+	}
+	if succeeded, exists := completionByReservationID[reservedTokens[0].ID]; !exists || succeeded {
+		t.Fatalf("previous-period reservation completed as success: %+v", completionByReservationID)
+	}
+	if succeeded, exists := completionByReservationID[reservedTokens[1].ID]; !exists || !succeeded {
+		t.Fatalf("current-period reservation did not complete as success: %+v", completionByReservationID)
 	}
 
 	user, err := environment.st.GetUserByID(context.Background(), environment.login.User.ID)

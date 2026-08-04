@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"time"
@@ -103,10 +104,13 @@ func (s *SQLiteStore) deleteUsageDebugByKeyIDsBestEffort(keyIDs []string) {
 		arguments[keyIndex] = keyID
 	}
 
-	_, _ = s.debugDB.ExecContext(cleanupContext,
+	_, err := s.debugDB.ExecContext(cleanupContext,
 		`DELETE FROM usage_debug WHERE key_id IN (`+strings.Join(placeholders, ", ")+`)`,
 		arguments...,
 	)
+	if err != nil {
+		log.Printf("usage debug cleanup failed key_count=%d: %v", len(keyIDs), err)
+	}
 }
 
 const maxPersistedDebugBodyBytes int64 = 1 << 20
@@ -205,6 +209,16 @@ func (s *SQLiteStore) persistUsageDebugRecords(ctx context.Context, persistedRec
 	}
 	defer func() { _ = transaction.Rollback() }()
 
+	// BeginTx reserves debugDB's only connection. Checking the primary database
+	// after that point serializes this decision with key/user debug cleanup.
+	existingKeyIDs, err := s.findExistingDebugRecordKeyIDs(ctx, preparedRecords)
+	if err != nil {
+		return fmt.Errorf("check API keys before usage debug batch: %w", err)
+	}
+	if len(existingKeyIDs) == 0 {
+		return nil
+	}
+
 	statement, err := transaction.PrepareContext(ctx, `
 		INSERT INTO usage_debug (
 			usage_id, key_id, usage_timestamp, debug_json,
@@ -234,6 +248,9 @@ func (s *SQLiteStore) persistUsageDebugRecords(ctx context.Context, persistedRec
 	createdAt := formatTime(time.Now().UTC())
 	for _, preparedRecord := range preparedRecords {
 		record := preparedRecord.record
+		if _, keyStillExists := existingKeyIDs[record.KeyID]; !keyStillExists {
+			continue
+		}
 		if _, err := statement.ExecContext(
 			ctx,
 			preparedRecord.usageID,
@@ -257,6 +274,46 @@ func (s *SQLiteStore) persistUsageDebugRecords(ctx context.Context, persistedRec
 		return fmt.Errorf("commit usage debug batch: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLiteStore) findExistingDebugRecordKeyIDs(
+	ctx context.Context,
+	preparedRecords []preparedUsageDebugRecord,
+) (map[string]struct{}, error) {
+	distinctKeyIDs := make(map[string]struct{}, len(preparedRecords))
+	for _, preparedRecord := range preparedRecords {
+		distinctKeyIDs[preparedRecord.record.KeyID] = struct{}{}
+	}
+
+	placeholders := make([]string, 0, len(distinctKeyIDs))
+	queryArguments := make([]any, 0, len(distinctKeyIDs))
+	for keyID := range distinctKeyIDs {
+		placeholders = append(placeholders, "?")
+		queryArguments = append(queryArguments, keyID)
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT id FROM apikeys WHERE id IN (`+strings.Join(placeholders, ", ")+`)`,
+		queryArguments...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	existingKeyIDs := make(map[string]struct{}, len(distinctKeyIDs))
+	for rows.Next() {
+		var keyID string
+		if err := rows.Scan(&keyID); err != nil {
+			return nil, err
+		}
+		existingKeyIDs[keyID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return existingKeyIDs, nil
 }
 
 func (s *SQLiteStore) loadUsageDebugBodySummaries(ctx context.Context, records []UsageRecord) error {
@@ -284,6 +341,7 @@ func (s *SQLiteStore) loadUsageDebugBodySummaries(ctx context.Context, records [
 	if err != nil {
 		return err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var usageID int64
 		var debugJSON string

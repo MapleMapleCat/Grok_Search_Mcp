@@ -232,12 +232,13 @@ func (s *SQLiteStore) CreateInviteCode(ctx context.Context, createdByUserID stri
 	}
 	now := formatTime(time.Now().UTC())
 
-	_, err = s.db.ExecContext(ctx,
+	createdInviteCode, err := scanInviteCode(s.db.QueryRowContext(ctx,
 		`INSERT INTO invite_codes (
 			id, code, code_hash, code_prefix, code_ciphertext, code_nonce,
 			code_encryption_version, registration_limit, registration_count,
 			enabled, created_by_user_id, created_at, updated_at
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)`,
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, ?)
+		 RETURNING `+inviteCodeColumns,
 		inviteCodeID,
 		"",
 		keyhash.HashAPIKey(rawInviteCode),
@@ -249,16 +250,11 @@ func (s *SQLiteStore) CreateInviteCode(ctx context.Context, createdByUserID stri
 		createdByUserID,
 		now,
 		now,
-	)
+	))
 	if err != nil {
 		return nil, "", fmt.Errorf("insert invite code: %w", err)
 	}
-
-	inviteCode, err := s.getInviteCodeByID(ctx, inviteCodeID)
-	if err != nil {
-		return nil, "", err
-	}
-	return inviteCode, rawInviteCode, nil
+	return createdInviteCode, rawInviteCode, nil
 }
 
 // RevealInviteCode decrypts an invite code for an explicit administrator
@@ -288,47 +284,56 @@ func (s *SQLiteStore) RevealInviteCode(ctx context.Context, id string) (string, 
 }
 
 func (s *SQLiteStore) UpdateInviteCode(ctx context.Context, id string, updates InviteCodeUpdates) (*InviteCode, error) {
-	existingInviteCode, err := s.getInviteCodeByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
 	sets := make([]string, 0, 3)
-	args := make([]any, 0, 4)
+	arguments := make([]any, 0, 5)
+	var registrationLimit *int
 	if updates.RegistrationLimit != nil {
-		registrationLimit := *updates.RegistrationLimit
-		if registrationLimit <= 0 {
+		if *updates.RegistrationLimit <= 0 {
 			return nil, fmt.Errorf("registration_limit must be positive")
 		}
-		if registrationLimit < existingInviteCode.RegistrationCount {
-			return nil, ErrInviteCodeLimitTooLow
-		}
+		registrationLimit = updates.RegistrationLimit
 		sets = append(sets, "registration_limit = ?")
-		args = append(args, registrationLimit)
+		arguments = append(arguments, *registrationLimit)
 	}
 	if updates.Enabled != nil {
 		sets = append(sets, "enabled = ?")
-		args = append(args, boolAsInteger(*updates.Enabled))
+		arguments = append(arguments, boolAsInteger(*updates.Enabled))
 	}
 
 	if len(sets) == 0 {
-		return existingInviteCode, nil
+		return s.getInviteCodeByID(ctx, id)
 	}
 
 	sets = append(sets, "updated_at = ?")
-	args = append(args, formatTime(time.Now().UTC()))
-	args = append(args, strings.TrimSpace(id))
+	arguments = append(arguments, formatTime(time.Now().UTC()))
+	trimmedInviteCodeID := strings.TrimSpace(id)
+	arguments = append(arguments, trimmedInviteCodeID)
 
 	query := `UPDATE invite_codes SET ` + strings.Join(sets, ", ") + ` WHERE id = ?`
-	result, err := s.db.ExecContext(ctx, query, args...)
-	if err != nil {
+	if registrationLimit != nil {
+		query += ` AND registration_count <= ?`
+		arguments = append(arguments, *registrationLimit)
+	}
+	query += ` RETURNING ` + inviteCodeColumns
+
+	updatedInviteCode, err := scanInviteCode(s.db.QueryRowContext(ctx, query, arguments...))
+	if err == nil {
+		return updatedInviteCode, nil
+	}
+	if err != sql.ErrNoRows {
 		return nil, err
 	}
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
+
+	var inviteCodeExists int
+	if err := s.readDB.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM invite_codes WHERE id = ?)`, trimmedInviteCodeID,
+	).Scan(&inviteCodeExists); err != nil {
+		return nil, err
+	}
+	if inviteCodeExists == 0 {
 		return nil, ErrInviteCodeNotFound
 	}
-	return s.getInviteCodeByID(ctx, id)
+	return nil, ErrInviteCodeLimitTooLow
 }
 
 func (s *SQLiteStore) DeleteInviteCode(ctx context.Context, id string) error {

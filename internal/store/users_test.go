@@ -104,7 +104,7 @@ func TestSuccessQuotaOperationsExposeLatencyAndOutcomeMetrics(t *testing.T) {
 	if _, err := sqliteStore.ReserveSuccessCall(ctx, userID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("second reservation error = %v, want ErrQuotaSuccess", err)
 	}
-	if err := sqliteStore.ReleaseSuccessCall(ctx, reservation); err != nil {
+	if err := sqliteStore.CompleteSuccessCall(ctx, reservation, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -123,7 +123,7 @@ func TestSuccessQuotaOperationsExposeLatencyAndOutcomeMetrics(t *testing.T) {
 	}
 }
 
-func TestReserveAndReleaseSuccessCall(t *testing.T) {
+func TestReserveAndCompleteFailedSuccessCall(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
 	u, err := s.CreateUser(ctx, "u2", "h", RoleUser)
@@ -137,12 +137,140 @@ func TestReserveAndReleaseSuccessCall(t *testing.T) {
 	if _, err := s.ReserveSuccessCall(ctx, u.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
 		t.Fatalf("expected success quota on reserve, got %v", err)
 	}
-	if err := s.ReleaseSuccessCall(ctx, reservation); err != nil {
+	if err := s.CompleteSuccessCall(ctx, reservation, false); err != nil {
 		t.Fatal(err)
 	}
 	uAfter, _ := s.GetUserByID(ctx, u.ID)
 	if uAfter.SuccessCalls != 0 {
-		t.Fatalf("success_calls after release want 0 got %d", uAfter.SuccessCalls)
+		t.Fatalf("success_calls after failed completion want 0 got %d", uAfter.SuccessCalls)
+	}
+}
+
+func TestCompleteFailedSuccessCallDoesNotConsumeAnotherReservation(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+	user, err := sqliteStore.CreateUser(requestContext, "parallel-reservations", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstReservation, err := sqliteStore.ReserveSuccessCall(requestContext, user.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondReservation, err := sqliteStore.ReserveSuccessCall(requestContext, user.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !firstReservation.IsValid() || !secondReservation.IsValid() {
+		t.Fatalf("reservations must be valid: first=%+v second=%+v", firstReservation, secondReservation)
+	}
+	if firstReservation.ID == secondReservation.ID {
+		t.Fatalf("concurrent reservations reused ID %q", firstReservation.ID)
+	}
+
+	if err := sqliteStore.CompleteSuccessCall(requestContext, firstReservation, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.CompleteSuccessCall(requestContext, firstReservation, false); err != nil {
+		t.Fatal(err)
+	}
+
+	updatedUser, err := sqliteStore.GetUserByID(requestContext, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedUser.SuccessCalls != 1 {
+		t.Fatalf("repeated failed completion changed another reservation: success_calls=%d, want 1", updatedUser.SuccessCalls)
+	}
+	var remainingReservationCount int
+	if err := sqliteStore.db.QueryRowContext(requestContext,
+		`SELECT COUNT(*) FROM success_quota_reservations WHERE id = ? AND user_id = ? AND period = ?`,
+		secondReservation.ID,
+		secondReservation.UserID,
+		secondReservation.Period,
+	).Scan(&remainingReservationCount); err != nil {
+		t.Fatal(err)
+	}
+	if remainingReservationCount != 1 {
+		t.Fatalf("second reservation count = %d, want 1", remainingReservationCount)
+	}
+}
+
+func TestCompleteSuccessfulSuccessCallKeepsCountAndIsIdempotent(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+	user, err := sqliteStore.CreateUser(requestContext, "successful-reservation", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reservation, err := sqliteStore.ReserveSuccessCall(requestContext, user.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sqliteStore.CompleteSuccessCall(requestContext, reservation, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.CompleteSuccessCall(requestContext, reservation, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.CompleteSuccessCall(requestContext, reservation, false); err != nil {
+		t.Fatal(err)
+	}
+
+	updatedUser, err := sqliteStore.GetUserByID(requestContext, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedUser.SuccessCalls != 1 {
+		t.Fatalf("successful or repeated completion changed success_calls to %d, want 1", updatedUser.SuccessCalls)
+	}
+	var reservationCount int
+	if err := sqliteStore.db.QueryRowContext(requestContext,
+		`SELECT COUNT(*) FROM success_quota_reservations WHERE id = ?`, reservation.ID,
+	).Scan(&reservationCount); err != nil {
+		t.Fatal(err)
+	}
+	if reservationCount != 0 {
+		t.Fatalf("completed reservation count = %d, want 0", reservationCount)
+	}
+}
+
+func TestReserveSuccessCallRollsBackIncrementWhenReservationInsertFails(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	requestContext := context.Background()
+	user, err := sqliteStore.CreateUser(requestContext, "reservation-insert-failure", "hash", RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqliteStore.db.ExecContext(requestContext, `
+		CREATE TRIGGER reject_success_quota_reservation
+		BEFORE INSERT ON success_quota_reservations
+		BEGIN
+			SELECT RAISE(ABORT, 'injected reservation insert failure');
+		END`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := sqliteStore.ReserveSuccessCall(requestContext, user.ID, 1); err == nil {
+		t.Fatal("reservation insert failure should fail the quota reservation")
+	}
+	updatedUser, err := sqliteStore.GetUserByID(requestContext, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedUser.SuccessCalls != 0 {
+		t.Fatalf("failed reservation insert left success_calls=%d, want 0", updatedUser.SuccessCalls)
+	}
+	var reservationCount int
+	if err := sqliteStore.db.QueryRowContext(requestContext,
+		`SELECT COUNT(*) FROM success_quota_reservations WHERE user_id = ?`, user.ID,
+	).Scan(&reservationCount); err != nil {
+		t.Fatal(err)
+	}
+	if reservationCount != 0 {
+		t.Fatalf("failed reservation insert persisted %d rows, want 0", reservationCount)
 	}
 }
 
@@ -220,39 +348,83 @@ func TestCreateAndCurrentModeRegistrationFailClosedWithoutDefaultTier(t *testing
 	}
 }
 
-func TestSuccessQuotaResetsEachUTCMonth(t *testing.T) {
-	s := openTestDB(t)
+func TestOldSuccessQuotaReadDoesNotWriteOrLoseConcurrentReservation(t *testing.T) {
+	sqliteStore := openTestDB(t)
 	requestContext := context.Background()
 	currentPeriod := currentSuccessQuotaPeriod()
 	previousPeriod := nowUTC().AddDate(0, -1, 0).Format(successQuotaPeriodLayout)
 
-	user, err := s.CreateUser(requestContext, "monthly-quota", "hash", RoleUser)
+	user, err := sqliteStore.CreateUser(requestContext, "monthly-quota", "hash", RoleUser)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.ExecContext(requestContext,
-		`UPDATE users SET success_calls = 1, success_period = ? WHERE id = ?`,
+	if _, err := sqliteStore.db.ExecContext(requestContext,
+		`UPDATE users SET success_calls = 17, success_period = ? WHERE id = ?`,
 		previousPeriod,
 		user.ID,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.ReserveSuccessCall(requestContext, user.ID, 1); err != nil {
-		t.Fatalf("new month should reset quota before reserve: %v", err)
-	}
-	if _, err := s.ReserveSuccessCall(requestContext, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
-		t.Fatalf("expected current-month quota exhaustion, got %v", err)
-	}
-	updatedUser, err := s.GetUserByID(requestContext, user.ID)
+
+	primaryWriteConnection, err := sqliteStore.db.Conn(requestContext)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != currentPeriod {
-		t.Fatalf("monthly reset should leave one current-period call, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
+	defer primaryWriteConnection.Close()
+
+	reservationResult := make(chan error, 1)
+	go func() {
+		_, reserveErr := sqliteStore.ReserveSuccessCall(requestContext, user.ID, 1)
+		reservationResult <- reserveErr
+	}()
+
+	readContext, cancelRead := context.WithTimeout(requestContext, time.Second)
+	defer cancelRead()
+	userView, err := sqliteStore.GetUserByID(readContext, user.ID)
+	if err != nil {
+		t.Fatalf("old-period read waited for or wrote through the primary connection: %v", err)
+	}
+	if userView.SuccessCalls != 0 || userView.SuccessPeriod != currentPeriod {
+		t.Fatalf("old-period view = calls=%d period=%q, want calls=0 period=%q", userView.SuccessCalls, userView.SuccessPeriod, currentPeriod)
+	}
+
+	var storedCalls int64
+	var storedPeriod string
+	if err := sqliteStore.readDB.QueryRowContext(requestContext,
+		`SELECT success_calls, success_period FROM users WHERE id = ?`, user.ID,
+	).Scan(&storedCalls, &storedPeriod); err != nil {
+		t.Fatal(err)
+	}
+	if storedCalls != 17 || storedPeriod != previousPeriod {
+		t.Fatalf("read changed stored quota to calls=%d period=%q", storedCalls, storedPeriod)
+	}
+
+	if err := primaryWriteConnection.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-reservationResult:
+		if err != nil {
+			t.Fatalf("reserve current-period quota: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for quota reservation")
+	}
+
+	if _, err := sqliteStore.ReserveSuccessCall(requestContext, user.ID, 1); !errors.Is(err, ErrQuotaSuccess) {
+		t.Fatalf("expected current-month quota exhaustion, got %v", err)
+	}
+	if err := sqliteStore.readDB.QueryRowContext(requestContext,
+		`SELECT success_calls, success_period FROM users WHERE id = ?`, user.ID,
+	).Scan(&storedCalls, &storedPeriod); err != nil {
+		t.Fatal(err)
+	}
+	if storedCalls != 1 || storedPeriod != currentPeriod {
+		t.Fatalf("final stored quota = calls=%d period=%q, want calls=1 period=%q", storedCalls, storedPeriod, currentPeriod)
 	}
 }
 
-func TestReleaseSuccessCallPreservesLaterMonthReservation(t *testing.T) {
+func TestCompleteSuccessCallPreservesLaterMonthReservation(t *testing.T) {
 	sqliteStore := openTestDB(t)
 	requestContext := context.Background()
 	currentPeriod := currentSuccessQuotaPeriod()
@@ -262,11 +434,20 @@ func TestReleaseSuccessCallPreservesLaterMonthReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	previousReservation := SuccessQuotaReservation{UserID: user.ID, Period: previousPeriod}
+	previousReservation := SuccessQuotaReservation{ID: "previous-reservation", UserID: user.ID, Period: previousPeriod}
 	if _, err := sqliteStore.db.ExecContext(requestContext,
 		`UPDATE users SET success_calls = 1, success_period = ? WHERE id = ?`,
 		previousPeriod,
 		user.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqliteStore.db.ExecContext(requestContext,
+		`INSERT INTO success_quota_reservations (id, user_id, period, created_at) VALUES (?, ?, ?, ?)`,
+		previousReservation.ID,
+		previousReservation.UserID,
+		previousReservation.Period,
+		formatTime(nowUTC()),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +459,7 @@ func TestReleaseSuccessCallPreservesLaterMonthReservation(t *testing.T) {
 		t.Fatalf("current reservation = %+v, want user=%q period=%s", currentReservation, user.ID, currentPeriod)
 	}
 
-	if err := sqliteStore.ReleaseSuccessCall(requestContext, previousReservation); err != nil {
+	if err := sqliteStore.CompleteSuccessCall(requestContext, previousReservation, false); err != nil {
 		t.Fatal(err)
 	}
 	updatedUser, err := sqliteStore.GetUserByID(requestContext, user.ID)
@@ -288,9 +469,33 @@ func TestReleaseSuccessCallPreservesLaterMonthReservation(t *testing.T) {
 	if updatedUser.SuccessCalls != 1 || updatedUser.SuccessPeriod != currentPeriod {
 		t.Fatalf("releasing the previous period must preserve the current reservation, got calls=%d period=%q", updatedUser.SuccessCalls, updatedUser.SuccessPeriod)
 	}
+	var previousReservationCount int
+	if err := sqliteStore.db.QueryRowContext(requestContext,
+		`SELECT COUNT(*) FROM success_quota_reservations WHERE id = ? AND user_id = ? AND period = ?`,
+		previousReservation.ID,
+		previousReservation.UserID,
+		previousReservation.Period,
+	).Scan(&previousReservationCount); err != nil {
+		t.Fatal(err)
+	}
+	if previousReservationCount != 0 {
+		t.Fatalf("previous reservation count = %d, want 0", previousReservationCount)
+	}
+	var currentReservationCount int
+	if err := sqliteStore.db.QueryRowContext(requestContext,
+		`SELECT COUNT(*) FROM success_quota_reservations WHERE id = ? AND user_id = ? AND period = ?`,
+		currentReservation.ID,
+		currentReservation.UserID,
+		currentReservation.Period,
+	).Scan(&currentReservationCount); err != nil {
+		t.Fatal(err)
+	}
+	if currentReservationCount != 1 {
+		t.Fatalf("current reservation count = %d, want 1", currentReservationCount)
+	}
 }
 
-func TestReleaseSuccessCallRejectsInvalidReservation(t *testing.T) {
+func TestCompleteSuccessCallRejectsInvalidReservation(t *testing.T) {
 	sqliteStore := openTestDB(t)
 	requestContext := context.Background()
 	user, err := sqliteStore.CreateUser(requestContext, "invalid-release-token", "hash", RoleUser)
@@ -301,8 +506,8 @@ func TestReleaseSuccessCallRejectsInvalidReservation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	invalidReservation := SuccessQuotaReservation{UserID: user.ID, Period: "January"}
-	if err := sqliteStore.ReleaseSuccessCall(requestContext, invalidReservation); err == nil {
+	invalidReservation := SuccessQuotaReservation{ID: "invalid-reservation", UserID: user.ID, Period: "January"}
+	if err := sqliteStore.CompleteSuccessCall(requestContext, invalidReservation, false); err == nil {
 		t.Fatal("invalid reservation should be rejected")
 	}
 	updatedUser, err := sqliteStore.GetUserByID(requestContext, user.ID)

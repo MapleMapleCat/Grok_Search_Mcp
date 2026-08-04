@@ -3,10 +3,32 @@ package store
 import (
 	"context"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type delayedUsageDebugStore struct {
+	*SQLiteStore
+	primaryCommitted chan struct{}
+	continueDebug    chan struct{}
+}
+
+func (store *delayedUsageDebugStore) RecordUsageBatch(ctx context.Context, records []UsageRecord) error {
+	persistedRecords, err := store.persistPrimaryUsageBatch(ctx, records)
+	if err != nil {
+		return err
+	}
+	close(store.primaryCommitted)
+
+	select {
+	case <-store.continueDebug:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return store.persistUsageDebugRecords(ctx, persistedRecords)
+}
 
 func TestRecordUsageBatchPersistsRowsAndCoalescesAPIKeyUpdates(t *testing.T) {
 	sqliteStore := openTestDB(t)
@@ -120,6 +142,61 @@ func TestRecordUsageBatchPersistsDebugRecordsWithoutRunningCleanup(t *testing.T)
 		t.Fatalf("store invoked writer-owned cleanup %d times", cleanupCount.Load())
 	}
 	assertDebugTableRowCount(t, sqliteStore, 2)
+}
+
+func TestLateUsageDebugWriteSkipsKeyDeletedAfterPrimaryCommit(t *testing.T) {
+	sqliteStore := openTestDB(t)
+	ctx := context.Background()
+	userID := testUserID(t, sqliteStore)
+	apiKey, _, err := sqliteStore.CreateKey(ctx, userID, "late-debug-key", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	delayedStore := &delayedUsageDebugStore{
+		SQLiteStore:      sqliteStore,
+		primaryCommitted: make(chan struct{}),
+		continueDebug:    make(chan struct{}),
+	}
+	writer := newAsyncUsageWriterWithBatch(delayedStore, 1, 5*time.Second, 5*time.Second, 1, time.Millisecond)
+	var releaseDebugOnce sync.Once
+	releaseDebug := func() {
+		releaseDebugOnce.Do(func() { close(delayedStore.continueDebug) })
+	}
+	t.Cleanup(func() {
+		releaseDebug()
+		writer.Close()
+	})
+
+	var cleanupCount atomic.Int64
+	writer.Enqueue(UsageRecord{
+		KeyID:     apiKey.ID,
+		ToolName:  "grok_web_search",
+		Timestamp: time.Now().UTC(),
+		Success:   true,
+		DebugJSON: `{"sensitive":true}`,
+		Cleanup: func() {
+			cleanupCount.Add(1)
+		},
+	})
+
+	select {
+	case <-delayedStore.primaryCommitted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the primary usage commit")
+	}
+	assertTableRowCount(t, sqliteStore, "usage_log", 1)
+
+	if err := sqliteStore.DeleteKey(ctx, apiKey.ID); err != nil {
+		t.Fatalf("DeleteKey: %v", err)
+	}
+	releaseDebug()
+	writer.Close()
+
+	assertDebugTableRowCount(t, sqliteStore, 0)
+	if actualCleanupCount := cleanupCount.Load(); actualCleanupCount != 1 {
+		t.Fatalf("cleanup count = %d, want 1", actualCleanupCount)
+	}
 }
 
 func assertDebugTableRowCount(t *testing.T, sqliteStore *SQLiteStore, expectedCount int) {

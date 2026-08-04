@@ -112,95 +112,264 @@ func (store *SQLiteStore) compactPrimaryUsage(
 	hourlyCutoff time.Time,
 	dailyCutoff time.Time,
 ) (UsageMaintenanceResult, error) {
+	result := UsageMaintenanceResult{}
+
+	var rawSearchStart time.Time
+	for {
+		bucketStart, found, err := store.findNextRawUsageHour(ctx, rawSearchStart, rawCutoff)
+		if err != nil {
+			return UsageMaintenanceResult{}, err
+		}
+		if !found {
+			break
+		}
+
+		rowsCompacted, err := store.compactRawUsageHour(ctx, bucketStart)
+		if err != nil {
+			return UsageMaintenanceResult{}, err
+		}
+		result.RawRowsCompacted += rowsCompacted
+		rawSearchStart = bucketStart.Add(time.Hour)
+	}
+
+	var hourlySearchStart time.Time
+	for {
+		bucketStart, found, err := store.findNextHourlyUsageDay(ctx, hourlySearchStart, hourlyCutoff)
+		if err != nil {
+			return UsageMaintenanceResult{}, err
+		}
+		if !found {
+			break
+		}
+
+		rowsCompacted, err := store.compactHourlyUsageDay(ctx, bucketStart)
+		if err != nil {
+			return UsageMaintenanceResult{}, err
+		}
+		result.HourlyRowsCompacted += rowsCompacted
+		hourlySearchStart = bucketStart.Add(24 * time.Hour)
+	}
+
+	var dailySearchStart time.Time
+	for {
+		bucketStart, found, err := store.findNextExpiredDailyUsageDay(ctx, dailySearchStart, dailyCutoff)
+		if err != nil {
+			return UsageMaintenanceResult{}, err
+		}
+		if !found {
+			break
+		}
+
+		rowsDeleted, err := store.deleteDailyUsageDay(ctx, bucketStart)
+		if err != nil {
+			return UsageMaintenanceResult{}, err
+		}
+		result.DailyRowsDeleted += rowsDeleted
+		dailySearchStart = bucketStart.Add(24 * time.Hour)
+	}
+
+	return result, nil
+}
+
+func (store *SQLiteStore) findNextRawUsageHour(
+	ctx context.Context,
+	searchStart time.Time,
+	cutoff time.Time,
+) (time.Time, bool, error) {
+	query := `SELECT MIN(timestamp) FROM usage_log WHERE timestamp < ?`
+	queryArguments := []any{formatTime(cutoff)}
+	if !searchStart.IsZero() {
+		query = `SELECT MIN(timestamp) FROM usage_log WHERE timestamp >= ? AND timestamp < ?`
+		queryArguments = []any{formatTime(searchStart), formatTime(cutoff)}
+	}
+
+	var firstTimestamp sql.NullString
+	if err := store.readDB.QueryRowContext(ctx, query, queryArguments...).Scan(&firstTimestamp); err != nil {
+		return time.Time{}, false, fmt.Errorf("find next raw usage hour: %w", err)
+	}
+	if !firstTimestamp.Valid {
+		return time.Time{}, false, nil
+	}
+
+	parsedTimestamp, err := parseTime(firstTimestamp.String)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse raw usage timestamp %q: %w", firstTimestamp.String, err)
+	}
+	return parsedTimestamp.UTC().Truncate(time.Hour), true, nil
+}
+
+func (store *SQLiteStore) compactRawUsageHour(ctx context.Context, bucketStart time.Time) (int64, error) {
+	bucketEnd := bucketStart.Add(time.Hour)
 	transaction, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return UsageMaintenanceResult{}, err
+		return 0, fmt.Errorf("begin raw usage hour %s: %w", formatTime(bucketStart), err)
 	}
-	defer transaction.Rollback()
+	defer func() { _ = transaction.Rollback() }()
 
 	if _, err := transaction.ExecContext(ctx, `
 		INSERT INTO usage_hourly_rollups (
 			key_id, bucket_start, tool_name, total_calls, success_calls, duration_ms_total
 		)
 		SELECT key_id,
-		       strftime('%Y-%m-%d %H:00:00', timestamp),
+		       ?,
 		       tool_name,
 		       COUNT(*),
 		       COALESCE(SUM(success), 0),
 		       COALESCE(SUM(duration_ms), 0)
 		FROM usage_log
-		WHERE timestamp < ?
-		GROUP BY key_id, strftime('%Y-%m-%d %H:00:00', timestamp), tool_name
+		WHERE timestamp >= ? AND timestamp < ?
+		GROUP BY key_id, tool_name
 		ON CONFLICT(key_id, bucket_start, tool_name) DO UPDATE SET
 			total_calls = total_calls + excluded.total_calls,
 			success_calls = success_calls + excluded.success_calls,
 			duration_ms_total = duration_ms_total + excluded.duration_ms_total`,
-		formatTime(rawCutoff),
+		formatTime(bucketStart),
+		formatTime(bucketStart),
+		formatTime(bucketEnd),
 	); err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("roll up raw usage by hour: %w", err)
+		return 0, fmt.Errorf("roll up raw usage hour %s: %w", formatTime(bucketStart), err)
 	}
 
 	rawDeleteResult, err := transaction.ExecContext(ctx,
-		`DELETE FROM usage_log WHERE timestamp < ?`,
-		formatTime(rawCutoff),
+		`DELETE FROM usage_log WHERE timestamp >= ? AND timestamp < ?`,
+		formatTime(bucketStart),
+		formatTime(bucketEnd),
 	)
 	if err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("delete compacted raw usage: %w", err)
+		return 0, fmt.Errorf("delete compacted raw usage hour %s: %w", formatTime(bucketStart), err)
 	}
+
+	rowsCompacted, err := rawDeleteResult.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count compacted raw usage hour %s: %w", formatTime(bucketStart), err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return 0, fmt.Errorf("commit raw usage hour %s: %w", formatTime(bucketStart), err)
+	}
+	return rowsCompacted, nil
+}
+
+func (store *SQLiteStore) findNextHourlyUsageDay(
+	ctx context.Context,
+	searchStart time.Time,
+	cutoff time.Time,
+) (time.Time, bool, error) {
+	query := `SELECT MIN(bucket_start) FROM usage_hourly_rollups WHERE bucket_start < ?`
+	queryArguments := []any{formatTime(cutoff)}
+	if !searchStart.IsZero() {
+		query = `SELECT MIN(bucket_start) FROM usage_hourly_rollups WHERE bucket_start >= ? AND bucket_start < ?`
+		queryArguments = []any{formatTime(searchStart), formatTime(cutoff)}
+	}
+
+	var firstBucketStart sql.NullString
+	if err := store.readDB.QueryRowContext(ctx, query, queryArguments...).Scan(&firstBucketStart); err != nil {
+		return time.Time{}, false, fmt.Errorf("find next hourly usage day: %w", err)
+	}
+	if !firstBucketStart.Valid {
+		return time.Time{}, false, nil
+	}
+
+	parsedBucketStart, err := parseTime(firstBucketStart.String)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse hourly usage bucket %q: %w", firstBucketStart.String, err)
+	}
+	return truncateToUTCDay(parsedBucketStart), true, nil
+}
+
+func (store *SQLiteStore) compactHourlyUsageDay(ctx context.Context, bucketStart time.Time) (int64, error) {
+	bucketEnd := bucketStart.Add(24 * time.Hour)
+	transaction, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin hourly usage day %s: %w", formatTime(bucketStart), err)
+	}
+	defer func() { _ = transaction.Rollback() }()
 
 	if _, err := transaction.ExecContext(ctx, `
 		INSERT INTO usage_daily_rollups (
 			key_id, bucket_start, tool_name, total_calls, success_calls, duration_ms_total
 		)
 		SELECT key_id,
-		       strftime('%Y-%m-%d 00:00:00', bucket_start),
+		       ?,
 		       tool_name,
 		       SUM(total_calls),
 		       SUM(success_calls),
 		       SUM(duration_ms_total)
 		FROM usage_hourly_rollups
-		WHERE bucket_start < ?
-		GROUP BY key_id, strftime('%Y-%m-%d 00:00:00', bucket_start), tool_name
+		WHERE bucket_start >= ? AND bucket_start < ?
+		GROUP BY key_id, tool_name
 		ON CONFLICT(key_id, bucket_start, tool_name) DO UPDATE SET
 			total_calls = total_calls + excluded.total_calls,
 			success_calls = success_calls + excluded.success_calls,
 			duration_ms_total = duration_ms_total + excluded.duration_ms_total`,
-		formatTime(hourlyCutoff),
+		formatTime(bucketStart),
+		formatTime(bucketStart),
+		formatTime(bucketEnd),
 	); err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("roll up hourly usage by day: %w", err)
+		return 0, fmt.Errorf("roll up hourly usage day %s: %w", formatTime(bucketStart), err)
 	}
 
 	hourlyDeleteResult, err := transaction.ExecContext(ctx,
-		`DELETE FROM usage_hourly_rollups WHERE bucket_start < ?`,
-		formatTime(hourlyCutoff),
+		`DELETE FROM usage_hourly_rollups WHERE bucket_start >= ? AND bucket_start < ?`,
+		formatTime(bucketStart),
+		formatTime(bucketEnd),
 	)
 	if err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("delete compacted hourly usage: %w", err)
+		return 0, fmt.Errorf("delete compacted hourly usage day %s: %w", formatTime(bucketStart), err)
 	}
 
-	dailyDeleteResult, err := transaction.ExecContext(ctx,
-		`DELETE FROM usage_daily_rollups WHERE bucket_start < ?`,
-		formatTime(dailyCutoff),
-	)
+	rowsCompacted, err := hourlyDeleteResult.RowsAffected()
 	if err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("delete expired daily usage: %w", err)
+		return 0, fmt.Errorf("count compacted hourly usage day %s: %w", formatTime(bucketStart), err)
 	}
-
-	result := UsageMaintenanceResult{}
-	if result.RawRowsCompacted, err = rawDeleteResult.RowsAffected(); err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("count compacted raw usage: %w", err)
-	}
-	if result.HourlyRowsCompacted, err = hourlyDeleteResult.RowsAffected(); err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("count compacted hourly usage: %w", err)
-	}
-	if result.DailyRowsDeleted, err = dailyDeleteResult.RowsAffected(); err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("count deleted daily usage: %w", err)
-	}
-
 	if err := transaction.Commit(); err != nil {
-		return UsageMaintenanceResult{}, fmt.Errorf("commit usage maintenance: %w", err)
+		return 0, fmt.Errorf("commit hourly usage day %s: %w", formatTime(bucketStart), err)
 	}
-	return result, nil
+	return rowsCompacted, nil
+}
+
+func (store *SQLiteStore) findNextExpiredDailyUsageDay(
+	ctx context.Context,
+	searchStart time.Time,
+	cutoff time.Time,
+) (time.Time, bool, error) {
+	query := `SELECT MIN(bucket_start) FROM usage_daily_rollups WHERE bucket_start < ?`
+	queryArguments := []any{formatTime(cutoff)}
+	if !searchStart.IsZero() {
+		query = `SELECT MIN(bucket_start) FROM usage_daily_rollups WHERE bucket_start >= ? AND bucket_start < ?`
+		queryArguments = []any{formatTime(searchStart), formatTime(cutoff)}
+	}
+
+	var firstBucketStart sql.NullString
+	if err := store.readDB.QueryRowContext(ctx, query, queryArguments...).Scan(&firstBucketStart); err != nil {
+		return time.Time{}, false, fmt.Errorf("find next expired daily usage day: %w", err)
+	}
+	if !firstBucketStart.Valid {
+		return time.Time{}, false, nil
+	}
+
+	parsedBucketStart, err := parseTime(firstBucketStart.String)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse daily usage bucket %q: %w", firstBucketStart.String, err)
+	}
+	return truncateToUTCDay(parsedBucketStart), true, nil
+}
+
+func (store *SQLiteStore) deleteDailyUsageDay(ctx context.Context, bucketStart time.Time) (int64, error) {
+	bucketEnd := bucketStart.Add(24 * time.Hour)
+	deleteResult, err := store.db.ExecContext(ctx,
+		`DELETE FROM usage_daily_rollups WHERE bucket_start >= ? AND bucket_start < ?`,
+		formatTime(bucketStart),
+		formatTime(bucketEnd),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired daily usage day %s: %w", formatTime(bucketStart), err)
+	}
+
+	rowsDeleted, err := deleteResult.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count deleted daily usage day %s: %w", formatTime(bucketStart), err)
+	}
+	return rowsDeleted, nil
 }
 
 func checkpointWAL(ctx context.Context, database *sql.DB) (WALCheckpointResult, error) {

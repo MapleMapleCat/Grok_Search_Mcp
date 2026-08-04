@@ -74,7 +74,7 @@ func TestSQLiteMetricsCollectOnlyWhileEnabled(t *testing.T) {
 	}
 
 	sqliteStore.SetMetricsEnabled(false)
-	if err := sqliteStore.ReleaseSuccessCall(requestContext, reservation); err != nil {
+	if err := sqliteStore.CompleteSuccessCall(requestContext, reservation, false); err != nil {
 		t.Fatal(err)
 	}
 	if metrics := sqliteStore.SQLiteMetrics(); !reflect.DeepEqual(metrics, SQLiteMetricsSnapshot{}) {
@@ -92,8 +92,8 @@ func TestSQLiteMetricsCountRejectedQuotaReleaseAsError(t *testing.T) {
 	sqliteStore := openTestDB(t)
 	sqliteStore.SetMetricsEnabled(true)
 
-	invalidReservation := SuccessQuotaReservation{UserID: "user-1", Period: "January"}
-	if err := sqliteStore.ReleaseSuccessCall(context.Background(), invalidReservation); err == nil {
+	invalidReservation := SuccessQuotaReservation{ID: "reservation-1", UserID: "user-1", Period: "January"}
+	if err := sqliteStore.CompleteSuccessCall(context.Background(), invalidReservation, false); err == nil {
 		t.Fatal("invalid reservation should be rejected")
 	}
 

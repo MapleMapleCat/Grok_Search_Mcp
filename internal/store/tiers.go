@@ -183,11 +183,12 @@ func (s *SQLiteStore) CreateTier(ctx context.Context, name string, rpm, successL
 		}
 	}
 
-	_, err = transaction.ExecContext(ctx,
+	createdTier, err := scanTier(transaction.QueryRowContext(ctx,
 		`INSERT INTO tiers (id, name, rpm, success_limit, is_default, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 RETURNING `+tierColumns,
 		id, name, rpm, successLimit, boolAsInteger(shouldBecomeDefault), now, now,
-	)
+	))
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return nil, ErrTierNameTaken
@@ -197,7 +198,7 @@ func (s *SQLiteStore) CreateTier(ctx context.Context, name string, rpm, successL
 	if err := transaction.Commit(); err != nil {
 		return nil, err
 	}
-	return s.GetTierByID(ctx, id)
+	return createdTier, nil
 }
 
 func (s *SQLiteStore) UpdateTier(ctx context.Context, id string, updates TierUpdates) (*Tier, error) {

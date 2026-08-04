@@ -20,7 +20,7 @@ import (
 	"github.com/MapleMapleCat/Grok_Search_Mcp/internal/usage"
 )
 
-// recordingStore 记录 Reserve/Release 调用顺序与次数，用于断言回滚逻辑。
+// recordingStore 记录 Reserve 调用参数与次数，用于断言预留逻辑。
 type recordingStore struct {
 	testsupport.Store
 
@@ -41,7 +41,7 @@ func (r *recordingStore) ReserveSuccessCall(_ context.Context, userID string, su
 		return store.SuccessQuotaReservation{}, r.reserveSuccessErr
 	}
 	if r.reserveReservation.UserID == "" {
-		r.reserveReservation = store.SuccessQuotaReservation{UserID: userID, Period: "2026-01"}
+		r.reserveReservation = store.SuccessQuotaReservation{ID: "reservation-1", UserID: userID, Period: "2026-01"}
 	}
 	return r.reserveReservation, nil
 }
@@ -94,7 +94,7 @@ func TestNoUserSkipsReserve(t *testing.T) {
 }
 
 func TestReserveSuccessAndForward(t *testing.T) {
-	expectedReservation := store.SuccessQuotaReservation{UserID: "u1", Period: "2026-01"}
+	expectedReservation := store.SuccessQuotaReservation{ID: "reservation-1", UserID: "u1", Period: "2026-01"}
 	st := &recordingStore{reserveReservation: expectedReservation}
 	called := false
 	var forwardedReservation store.SuccessQuotaReservation
@@ -126,12 +126,16 @@ func TestInvalidOrForeignReservationFailsClosed(t *testing.T) {
 		reservation store.SuccessQuotaReservation
 	}{
 		{
+			name:        "missing reservation ID",
+			reservation: store.SuccessQuotaReservation{UserID: "u1", Period: "2026-01"},
+		},
+		{
 			name:        "malformed period",
-			reservation: store.SuccessQuotaReservation{UserID: "u1", Period: "January"},
+			reservation: store.SuccessQuotaReservation{ID: "reservation-1", UserID: "u1", Period: "January"},
 		},
 		{
 			name:        "different user",
-			reservation: store.SuccessQuotaReservation{UserID: "other-user", Period: "2026-01"},
+			reservation: store.SuccessQuotaReservation{ID: "reservation-1", UserID: "other-user", Period: "2026-01"},
 		},
 	}
 

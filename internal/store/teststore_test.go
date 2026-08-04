@@ -31,7 +31,9 @@ func (TestStore) CountEnabledAdmins(context.Context) (int64, error)             
 func (TestStore) ReserveSuccessCall(context.Context, string, int) (SuccessQuotaReservation, error) {
 	return SuccessQuotaReservation{}, nil
 }
-func (TestStore) ReleaseSuccessCall(context.Context, SuccessQuotaReservation) error { return nil }
+func (TestStore) CompleteSuccessCall(context.Context, SuccessQuotaReservation, bool) error {
+	return nil
+}
 
 func (TestStore) GetTierByID(context.Context, string) (*Tier, error) { return nil, ErrTierNotFound }
 func (TestStore) GetDefaultTier(context.Context) (*Tier, error)      { return nil, ErrTierNotFound }
